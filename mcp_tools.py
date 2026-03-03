@@ -151,7 +151,8 @@ def list_files(directory: str = "/home/user") -> str:
 })
 def delete_file(path: str, recursive: bool = False) -> str:
     flag = "-rf" if recursive else ""
-    result = _sandbox.commands.run(f"rm {flag} {path}")
+    # 用单引号包裹 path 防止路径中包含空格或特殊字符引发错误
+    result = _sandbox.commands.run(f"rm {flag} '{path}'")
     if result.exit_code == 0:
         return f"已删除: {path}"
     return f"删除失败: {result.stderr}"
@@ -163,10 +164,21 @@ def delete_file(path: str, recursive: bool = False) -> str:
     "body": {"type": "string", "description": "请求体 (POST 时使用)"},
 })
 def send_http_request(url: str, method: str = "GET", body: str = "") -> str:
-    if method.upper() == "GET":
-        code = f"import requests; r = requests.get('{url}'); print(r.status_code, r.text[:500])"
-    else:
-        code = f"import requests; r = requests.post('{url}', data='''{body}'''); print(r.status_code, r.text[:500])"
+    import base64
+    # 使用 base64 编码传递参数，彻底避免单引号/三引号导致的 Python 语法注入错误
+    url_b64 = base64.b64encode(url.encode('utf-8')).decode('utf-8')
+    body_b64 = base64.b64encode(body.encode('utf-8')).decode('utf-8')
+    
+    code = f"""
+import requests, base64
+url = base64.b64decode('{url_b64}').decode('utf-8')
+body = base64.b64decode('{body_b64}').decode('utf-8')
+if '{method.upper()}' == 'GET':
+    r = requests.get(url)
+else:
+    r = requests.post(url, data=body.encode('utf-8'))
+print(r.status_code, r.text[:500])
+"""
     result = _sandbox.run_code(code)
     if result.error:
         return f"请求失败: {result.error.value}"

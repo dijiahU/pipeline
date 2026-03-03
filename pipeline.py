@@ -188,14 +188,15 @@ def tool_try_in_sandbox(tool_name, args):
         # 1. 将沙箱注入 mcp_tools
         set_sandbox(sandbox)
 
-        # 2. 记录执行前状态
-        before = sandbox.commands.run("find /home/user -type f | sort").stdout
+        # 2. 记录执行前状态（使用 md5sum 检测文件内容变化）
+        check_cmd = "find /home/user -type f -exec md5sum {} + | sort"
+        before = sandbox.commands.run(check_cmd).stdout
 
         # 3. 通过注册中心动态调用 tool（替代 if/elif）
         exec_result = call_tool(tool_name, args)
 
         # 4. 记录执行后状态
-        after = sandbox.commands.run("find /home/user -type f | sort").stdout
+        after = sandbox.commands.run(check_cmd).stdout
 
         # 5. LLM 判断安全性 <predict>
         safety = judge_safety(tool_name, args, exec_result, before, after)

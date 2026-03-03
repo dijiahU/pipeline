@@ -156,9 +156,10 @@ def execute_step(state: PipelineState) -> dict:
         sandbox = Sandbox.create(api_key=E2B_API_KEY, timeout=60)
         try:
             set_sandbox(sandbox)
-            before = sandbox.commands.run("find /home/user -type f | sort").stdout
+            check_cmd = "find /home/user -type f -exec md5sum {} + | sort"
+            before = sandbox.commands.run(check_cmd).stdout
             exec_result = call_tool(tool_name, args)
-            after = sandbox.commands.run("find /home/user -type f | sort").stdout
+            after = sandbox.commands.run(check_cmd).stdout
 
             # LLM 判断安全性
             safety: SafetyJudgment = safety_llm.invoke([
