@@ -33,15 +33,23 @@ class PlanStep(BaseModel):
     description: str = Field(description="步骤描述")
 
 class Plan(BaseModel):
+    think: str = Field(description="<think> 思考过程，分析用户意图")
     steps: list[PlanStep] = Field(description="执行步骤列表")
     reasoning: str = Field(description="规划理由")
 
 class RiskAssessment(BaseModel):
+    think: str = Field(description="<think> 评估计划安全性的思考过程")
+    memory_call: str = Field(description="<memory_call> 结合历史经验进行评估")
+    predict: str = Field(description="<predict> 预测结果：'safety risk/unsafe' 或 'without safety risk/safe'")
+    reflect: str = Field(description="<reflect> 反思：是否需要 replan，或求助人类，或安全放行")
     is_risky: bool = Field(description="是否存在安全风险")
     is_vague: bool = Field(description="任务是否过于模糊")
     reason: str = Field(description="判断理由")
 
 class SafetyJudgment(BaseModel):
+    think: str = Field(description="<think> 思考过程，对比执行前后的文件变化")
+    predict: str = Field(description="<predict> 预测结果：'safety risk/unsafe' 或 'without safety risk/safe'")
+    reflect: str = Field(description="<reflect> 结合预期判断该行为是否安全")
     is_safe: bool = Field(description="执行是否安全")
     reason: str = Field(description="判断理由")
 
@@ -90,7 +98,7 @@ def generate_plan(state: PipelineState) -> dict:
         HumanMessage(content=state["user_input"]),
     ])
 
-    print(f"\n[plan] 生成计划: {plan.reasoning}")
+    print(f"\n[plan] 生成计划:\n<think>\n{plan.think}\n</think>\nReasoning: {plan.reasoning}")
     for i, step in enumerate(plan.steps):
         print(f"  Step {i+1}: {step.tool}({step.args}) - {step.description}")
 
@@ -104,6 +112,7 @@ def detect_risk(state: PipelineState) -> dict:
         HumanMessage(content=json.dumps(state["plan"], ensure_ascii=False)),
     ])
 
+    print(f"[risk] \n<think>\n{risk.think}\n</think>\n<memory_call>\n{risk.memory_call}\n</memory_call>\n<predict>\n{risk.predict}\n</predict>\n<reflect>\n{risk.reflect}\n</reflect>")
     print(f"[risk] is_risky={risk.is_risky}, is_vague={risk.is_vague}, reason={risk.reason}")
     return {"risk": risk.model_dump()}
 
@@ -174,12 +183,19 @@ def execute_step(state: PipelineState) -> dict:
             sandbox.kill()
 
         if safety.is_safe:
-            print(f"[exec] 沙箱验证安全: {safety.reason}")
+            print(f"[exec] 沙箱验证安全:\n<think>\n{safety.think}\n</think>\n<predict>\n{safety.predict}\n</predict>\n<reflect>\n{safety.reflect}\n</reflect>\nReason: {safety.reason}")
             tool_memory[sig] = {"state": "safe", "reason": safety.reason}
             results.append({"tool": tool_name, "result": exec_result, "method": "try→safe"})
         else:
-            print(f"[exec] 沙箱验证不安全: {safety.reason}")
+            print(f"[exec] 沙箱验证不安全:\n<think>\n{safety.think}\n</think>\n<predict>\n{safety.predict}\n</predict>\n<reflect>\n{safety.reflect}\n</reflect>\nReason: {safety.reason}")
             results.append({"tool": tool_name, "result": "BLOCKED", "method": "blocked"})
+            return {
+                "step_results": results,
+                "tool_memory": tool_memory,
+                "current_step_idx": idx + 1,
+                "status": "need_human",
+                "risk": {"reason": f"沙箱拦截了 {tool_name} 的危险操作: {safety.reason}"}
+            }
 
     return {
         "step_results": results,
@@ -213,8 +229,10 @@ def route_after_risky(state: PipelineState) -> Literal["request_human", "generat
     return "generate_plan"
 
 
-def route_after_step(state: PipelineState) -> Literal["execute_step", "output_results"]:
+def route_after_step(state: PipelineState) -> Literal["execute_step", "output_results", "request_human"]:
     """执行完一个 step 后: 还有没有下一个"""
+    if state.get("status") == "need_human":
+        return "request_human"
     if state["current_step_idx"] < len(state["plan"]["steps"]):
         return "execute_step"
     return "output_results"

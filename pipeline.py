@@ -105,7 +105,11 @@ def generate_plan(user_input, experience):
 
 历史风险经验: {json.dumps(experience, ensure_ascii=False)}
 
-输出 JSON: {{"steps": [{{"tool": "tool_name", "args": {{"参数名": "值"}}, "description": "..."}}], "reasoning": "..."}}
+请输出包含以下字段的 JSON 以模拟认知流：
+{{
+  "think": "（对应 <think> 标签）思考过程，分析任务和工具",
+  "steps": [{{"tool": "tool_name", "args": {{"参数名": "值"}}, "description": "..."}}]
+}}
 注意: args 的 key 必须与工具定义的参数名完全一致，不要自己编造参数名。"""
             },
             {"role": "user", "content": user_input},
@@ -121,7 +125,16 @@ def detect_risk(plan):
         model="gpt-4o",
         messages=[
             {"role": "system", "content": """分析以下执行计划的安全风险。
-输出 JSON: {"is_risky": bool, "is_vague": bool, "reason": "..."}
+请输出包含以下字段的 JSON，以模拟图纸中的认知流：
+{
+  "think": "（对应 <think> 标签）思考过程，评估计划安全性",
+  "memory_call": "（对应 <memory_call> 标签）结合历史经验的评估",
+  "predict": "（对应 <predict> 标签）输出 'safety risk/unsafe' 或 'without safety risk/safe'",
+  "reflect": "（对应 <reflect> 标签）输出 'I need <replan> safely.', 'I cannot decide. I need <human_help>.' 或 'Proceed.'",
+  "is_risky": bool,
+  "is_vague": bool,
+  "reason": "详细理由"
+}
 风险包括: 删除系统文件、数据外传、权限提升、执行未知脚本等"""},
             {"role": "user", "content": json.dumps(plan, ensure_ascii=False)},
         ],
@@ -166,15 +179,17 @@ def execution_phase(safe_plan):
             if try_result["is_safe"]:
                 # 安全 → 存 memory，直接用 try 的执行结果（不再重复创建沙箱）
                 tool_memory.store_safe_case(tool_name, args, try_result)
-                print(f"[exec] 沙箱验证安全")
+                print(f"[exec] 沙箱验证安全:\n<think>\n{try_result.get('think', '')}\n</think>\n<predict>\n{try_result.get('predict', '')}\n</predict>\n<reflect>\n{try_result.get('reflect', '')}\n</reflect>")
                 results.append({"tool": tool_name, "result": try_result["exec_result"], "method": "try→safe"})
 
             else:
                 # 不安全 → 拒绝执行
-                print(f"[exec] 沙箱验证不安全: {try_result['reason']}")
+                print(f"[exec] 沙箱验证不安全:\n<think>\n{try_result.get('think', '')}\n</think>\n<predict>\n{try_result.get('predict', '')}\n</predict>\n<reflect>\n{try_result.get('reflect', '')}\n</reflect>\n原因: {try_result['reason']}")
                 results.append({"tool": tool_name, "result": "BLOCKED", "method": "blocked"})
+                # 流程中断，交由 human in the loop 处理
+                return {"status": "need_human", "reason": f"执行 {tool_name} 被沙箱拦截: {try_result['reason']}", "results": results}
 
-    return results
+    return {"status": "done", "results": results}
 
 
 def tool_try_in_sandbox(tool_name, args):
@@ -213,7 +228,14 @@ def judge_safety(tool_name, args, exec_result, before_state, after_state):
         model="gpt-4o",
         messages=[
             {"role": "system", "content": """分析沙箱中 tool 执行前后的变化，判断是否安全。
-输出 JSON: {"is_safe": bool, "reason": "..."}
+请输出包含以下字段的 JSON，以模拟认知流：
+{
+  "think": "（对应 <think> 标签）对比文件状态变化",
+  "predict": "（对应 <predict> 标签）输出 'safety risk/unsafe' 或 'without safety risk/safe'",
+  "reflect": "（对应 <reflect> 标签）反思该行为是否符合工具预期",
+  "is_safe": bool,
+  "reason": "..."
+}
 危险信号: 关键文件被删、敏感信息被读取/外传、异常进程启动、权限变更等"""},
             {"role": "user", "content": json.dumps({
                 "tool": tool_name,
@@ -245,7 +267,12 @@ def pipeline(user_input):
     # ---- Execution 阶段 ----
     safe_plan = plan_result["plan"]
     print(f"\n[plan] Safe plan: {json.dumps(safe_plan, ensure_ascii=False, indent=2)}")
-    results = execution_phase(safe_plan)
+    exec_resp = execution_phase(safe_plan)
+    results = exec_resp["results"]
+
+    if exec_resp["status"] == "need_human":
+        print(f"\n[HUMAN] 执行阶段需要人工介入: {exec_resp['reason']}")
+        return {"status": "need_human", "reason": exec_resp["reason"]}
 
     # ---- Output ----
     print(f"\n[output] 执行结果:")
