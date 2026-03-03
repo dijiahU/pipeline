@@ -107,8 +107,9 @@ def generate_plan(state: PipelineState) -> dict:
 
 def detect_risk(state: PipelineState) -> dict:
     """检测计划风险"""
+    experience = json.dumps(state["plan_memory"], ensure_ascii=False)
     risk: RiskAssessment = risk_llm.invoke([
-        SystemMessage(content="分析以下执行计划的安全风险。风险包括: 删除系统文件、数据外传、权限提升、执行未知脚本等。"),
+        SystemMessage(content=f"分析以下执行计划的安全风险。\n\n历史风险经验: {experience}\n\n风险包括: 删除系统文件、数据外传、权限提升、执行未知脚本等。"),
         HumanMessage(content=json.dumps(state["plan"], ensure_ascii=False)),
     ])
 
@@ -131,9 +132,20 @@ def handle_risky_plan(state: PipelineState) -> dict:
 
 
 def request_human(state: PipelineState) -> dict:
-    """请求人工介入"""
-    print(f"\n[HUMAN] 需要人工介入: {state['risk']['reason']}")
-    return {"status": "need_human"}
+    """请求人工介入，收集反馈后回到 plan 阶段"""
+    reason = state["risk"].get("reason", "未知原因") if state["risk"] else "执行阶段异常"
+    print(f"\n[HUMAN] 需要人工介入: {reason}")
+    human_feedback = input("[HUMAN] 请提供反馈 (输入 'abort' 终止): ").strip()
+    if human_feedback.lower() == "abort":
+        return {"status": "aborted"}
+    new_input = f"{state['user_input']}\n[人工反馈]: {human_feedback}"
+    return {
+        "user_input": new_input,
+        "status": "replanning",
+        "attempt": 0,
+        "current_step_idx": 0,
+        "step_results": [],
+    }
 
 
 def execute_step(state: PipelineState) -> dict:
@@ -238,6 +250,13 @@ def route_after_step(state: PipelineState) -> Literal["execute_step", "output_re
     return "output_results"
 
 
+def route_after_human(state: PipelineState) -> Literal["generate_plan", "__end__"]:
+    """人工介入后: abort 则结束，否则回到 plan 阶段重新规划"""
+    if state.get("status") == "aborted":
+        return "__end__"
+    return "generate_plan"
+
+
 # ==================== Build Graph ====================
 
 graph = StateGraph(PipelineState)
@@ -255,7 +274,7 @@ graph.add_edge(START, "generate_plan")
 graph.add_edge("generate_plan", "detect_risk")
 graph.add_conditional_edges("detect_risk", route_after_risk)
 graph.add_conditional_edges("handle_risky", route_after_risky)
-graph.add_edge("request_human", END)
+graph.add_conditional_edges("request_human", route_after_human)
 graph.add_conditional_edges("execute_step", route_after_step)
 graph.add_edge("output_results", END)
 

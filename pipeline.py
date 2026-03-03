@@ -64,7 +64,7 @@ def plan_phase(user_input, max_replan=3):
         plan = generate_plan(user_input, plan_memory.get_experience())
 
         # 2. 风险检测 <predict>
-        risk = detect_risk(plan)
+        risk = detect_risk(plan, plan_memory.get_experience())
 
         if not risk["is_risky"]:
             # 无风险 → 输出 safe plan
@@ -119,14 +119,14 @@ def generate_plan(user_input, experience):
     return json.loads(resp.choices[0].message.content)
 
 
-def detect_risk(plan):
+def detect_risk(plan, experience):
     """LLM 判断 plan 是否有安全风险 <predict>"""
     resp = client.chat.completions.create(
         model="gpt-4o",
         messages=[
-            {"role": "system", "content": """分析以下执行计划的安全风险。
+            {"role": "system", "content": f"""分析以下执行计划的安全风险。
 请输出包含以下字段的 JSON，以模拟图纸中的认知流：
-{
+{{
   "think": "（对应 <think> 标签）思考过程，评估计划安全性",
   "memory_call": "（对应 <memory_call> 标签）结合历史经验的评估",
   "predict": "（对应 <predict> 标签）输出 'safety risk/unsafe' 或 'without safety risk/safe'",
@@ -134,7 +134,8 @@ def detect_risk(plan):
   "is_risky": bool,
   "is_vague": bool,
   "reason": "详细理由"
-}
+}}
+历史风险经验: {json.dumps(experience, ensure_ascii=False)}
 风险包括: 删除系统文件、数据外传、权限提升、执行未知脚本等"""},
             {"role": "user", "content": json.dumps(plan, ensure_ascii=False)},
         ],
@@ -253,33 +254,42 @@ def judge_safety(tool_name, args, exec_result, before_state, after_state):
 # ==================== 主流程 ====================
 
 def pipeline(user_input):
-    print(f"\n{'='*60}")
-    print(f"[input] {user_input}")
-    print("="*60)
+    while True:
+        print(f"\n{'='*60}")
+        print(f"[input] {user_input}")
+        print("="*60)
 
-    # ---- Plan 阶段 ----
-    plan_result = plan_phase(user_input)
+        # ---- Plan 阶段 ----
+        plan_result = plan_phase(user_input)
 
-    if plan_result["status"] == "need_human":
-        print(f"\n[HUMAN] 需要人工介入: {plan_result['risk']}")
-        return {"status": "need_human", "reason": plan_result["risk"]}
+        if plan_result["status"] == "need_human":
+            print(f"\n[HUMAN] 需要人工介入: {plan_result['risk']}")
+            human_feedback = input("[HUMAN] 请提供反馈 (输入 'abort' 终止): ").strip()
+            if human_feedback.lower() == "abort":
+                return {"status": "aborted", "reason": plan_result["risk"]}
+            user_input = f"{user_input}\n[人工反馈]: {human_feedback}"
+            continue
 
-    # ---- Execution 阶段 ----
-    safe_plan = plan_result["plan"]
-    print(f"\n[plan] Safe plan: {json.dumps(safe_plan, ensure_ascii=False, indent=2)}")
-    exec_resp = execution_phase(safe_plan)
-    results = exec_resp["results"]
+        # ---- Execution 阶段 ----
+        safe_plan = plan_result["plan"]
+        print(f"\n[plan] Safe plan: {json.dumps(safe_plan, ensure_ascii=False, indent=2)}")
+        exec_resp = execution_phase(safe_plan)
+        results = exec_resp["results"]
 
-    if exec_resp["status"] == "need_human":
-        print(f"\n[HUMAN] 执行阶段需要人工介入: {exec_resp['reason']}")
-        return {"status": "need_human", "reason": exec_resp["reason"]}
+        if exec_resp["status"] == "need_human":
+            print(f"\n[HUMAN] 执行阶段需要人工介入: {exec_resp['reason']}")
+            human_feedback = input("[HUMAN] 请提供反馈 (输入 'abort' 终止): ").strip()
+            if human_feedback.lower() == "abort":
+                return {"status": "aborted", "reason": exec_resp["reason"], "results": results}
+            user_input = f"{user_input}\n[人工反馈]: {human_feedback}"
+            continue
 
-    # ---- Output ----
-    print(f"\n[output] 执行结果:")
-    for r in results:
-        print(f"  {r['tool']}: {r['method']} → {r['result']}")
+        # ---- Output ----
+        print(f"\n[output] 执行结果:")
+        for r in results:
+            print(f"  {r['tool']}: {r['method']} → {r['result']}")
 
-    return {"status": "done", "results": results}
+        return {"status": "done", "results": results}
 
 
 if __name__ == "__main__":
