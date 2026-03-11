@@ -1,50 +1,119 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code when working with code in this repository.
 
 ## Project Overview
 
-Agent Safety Pipeline — an LLM-based safety execution framework built on E2B cloud sandboxes. It implements a **Plan + Execution dual-verification architecture** to safely execute agent tool calls while preventing data exfiltration, file deletion, and privilege escalation.
+This repository is an agent safety pipeline built around E2B sandboxes and LLM-based decision making.
+
+The current primary implementation is no longer a simple `safe / unsafe` blocker. The main flow in `pipeline.py` is now:
+
+1. `generate_plan`
+2. `detect_step_risk`
+3. `decide_action`
+4. route to one of `act / try / replan / ask_human / refuse`
+5. write local memory and refresh exported SFT samples
+
+The goal of the current system is to make step-level action choices, not just to block dangerous plans.
 
 ## Commands
 
 ```bash
-pip install -r requirements.txt            # Install dependencies
-python pipeline.py                         # Run native OpenAI version
-python pipeline_langchain.py               # Run LangChain/LangGraph version
-python mcp_tools.py                        # Run as standalone MCP Server
+pip install -r requirements.txt
+python pipeline.py
+python pipeline.py --task "删除 /home/user 下所有 .log 文件"
+python pipeline_langchain.py
+python mcp_tools.py
+python -m py_compile pipeline.py pipeline_langchain.py mcp_tools.py
 ```
 
-Required environment variables: `E2B_API_KEY`, `OPENAI_API_KEY` (read via `os.environ.get()`)
+Required environment variables for full pipeline execution:
 
-## Architecture
+- `E2B_API_KEY`
+- `OPENAI_API_KEY`
 
-### Two-Stage Dual Verification
+Pure local reads of `memory/` artifacts do not require live API access.
 
-1. **Plan Phase** — LLM generates execution plan, performs risk assessment (`predict: safe/unsafe`), replans up to 3 times if risky, escalates to human if vague or exceeds max replans. Uses cognitive flow tags: `<think>` → `<memory_call>` → `<predict>` → `<reflect>`.
+## Current Architecture
 
-2. **Execution Phase** — Checks tool memory for previously verified safe calls (exact signature match). For new calls: executes in E2B sandbox with file state snapshots (md5sum before/after), LLM compares pre/post state to judge safety. Safe results are cached in memory; unsafe results are blocked with human escalation.
+### `pipeline.py`
 
-### Key Files
+`pipeline.py` is the canonical implementation and should be treated as the source of truth for current behavior.
 
-- **pipeline.py** — Native OpenAI API implementation with `openai.OpenAI` client, `response_format=json_object`, manual `json.loads()` parsing, and `while True` loop for human feedback. Core functions: `plan_phase()`, `generate_plan()`, `detect_risk()`, `execution_phase()`, `tool_try_in_sandbox()`, `judge_safety()`.
-- **pipeline_langchain.py** — LangChain/LangGraph version using `ChatOpenAI` + `with_structured_output(Pydantic, method="function_calling")` and `StateGraph` for declarative flow control. Pydantic models: `Plan`, `PlanStep`, `RiskAssessment`, `SafetyJudgment`. 6 graph nodes + 4 routing functions.
-- **mcp_tools.py** — Decorator-based tool registry (`@tool(name, description, params)`). Auto-extracts `required` params from function signatures. Dynamic discovery via `get_all_schemas()` and `call_tool(name, args)`. Can run as standalone MCP Server via `FastMCP`.
+Important properties:
 
-### Memory System
+- It uses explicit step-level decision routing.
+- It distinguishes `think` from `reflect`:
+  - `think`: fact-level analysis
+  - `reflect`: action-level inclination
+- It persists memory to disk under `memory/`.
+- It automatically exports SFT-style samples to `memory/sft_dataset.jsonl` after each run.
 
-- **PlanMemory** — Stores risky plans (`{task, plan, risk_reason}`) to inform future LLM reasoning. Recalled by dumping entire list as JSON into system prompt (no semantic retrieval).
-- **ToolMemory** — Caches verified safe tool calls keyed by exact signature (`tool_name:json(args)`). On hit, skips sandbox and executes directly.
+Core functions include:
 
-**Key difference**: In `pipeline.py`, both memories are global objects (persist across `pipeline()` calls within a process). In `pipeline_langchain.py`, they live in `PipelineState` and reset each `pipeline()` call. Neither version persists memory to disk.
+- `generate_plan()`
+- `detect_step_risk()`
+- `decide_action()`
+- `replan_step()`
+- `tool_try_in_sandbox()`
+- `judge_safety()`
+- `record_experience()`
+- `export_experience_to_jsonl()`
+- `persist_local_artifacts()`
 
-### pipeline.py vs pipeline_langchain.py
+### `pipeline_langchain.py`
 
-| Aspect | pipeline.py | pipeline_langchain.py |
-|--------|-------------|----------------------|
-| LLM Calls | `openai.OpenAI` + `json_object` format | `ChatOpenAI` + `with_structured_output()` |
-| Output Parsing | Manual `json.loads()` | Pydantic models (auto) |
-| Flow Control | `while True` + if/else | LangGraph `StateGraph` + conditional edges |
-| Memory Scope | Global (cross-call) | Per-invocation (state-based) |
+This is the LangChain/LangGraph variant. It is still useful as a future graph-based target, but it does not yet fully mirror the latest `pipeline.py` behavior. When in doubt, align docs and behavior with `pipeline.py` first.
 
-Both implement the same dual-verification logic; the LangGraph version is more declarative.
+### `mcp_tools.py`
+
+This module provides the shared tool registry and MCP entry point. Tools are dynamically discovered and called through the registry rather than hardcoded per tool.
+
+## Memory and Artifacts
+
+The current local artifact layout is:
+
+- `memory/experience_memory.json`
+  - raw step-level decision experience
+- `memory/tool_memory.json`
+  - exact-signature safe-call cache
+- `memory/sft_dataset.jsonl`
+  - exported SFT-style samples derived from experience memory
+
+`experience_memory.json` is the runtime source of truth.
+
+`sft_dataset.jsonl` is a derived artifact used to inspect and curate training examples. It is currently weakly labeled and should not be described as fully human-curated gold data.
+
+## Decision Semantics
+
+Current action meanings:
+
+- `act`: direct execution for low-side-effect, sufficiently clear steps
+- `try`: sandbox-first execution for steps with side effects but clear and verifiable scope
+- `replan`: replace the current step with a safer path
+- `ask_human`: request clarification, confirmation, or authorization
+- `refuse`: reject clearly unacceptable requests
+
+Do not collapse these back into a binary safe/unsafe framing when editing code or docs.
+
+## Working Guidance
+
+When modifying the project:
+
+- prefer updating `pipeline.py` first, because it is the more transparent implementation;
+- keep logs readable by phase, since the current design expects a human to understand each stage;
+- preserve local memory persistence and automatic SFT export unless the task explicitly asks to change them;
+- avoid describing old concepts like `PlanMemory` as the active design if they no longer exist in code.
+
+## Validation
+
+For changes to current behavior, validate with:
+
+1. `python -m py_compile pipeline.py pipeline_langchain.py mcp_tools.py`
+2. a manual `python pipeline.py --task "..."` run when dependencies are available
+3. inspection of:
+   - `memory/experience_memory.json`
+   - `memory/tool_memory.json`
+   - `memory/sft_dataset.jsonl`
+
+If execution cannot be completed because of network or dependency limits, say so explicitly and still validate syntax plus local artifact behavior where possible.
