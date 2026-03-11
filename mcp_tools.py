@@ -5,6 +5,7 @@ MCP Tool 注册中心
 - 可选: 作为 MCP Server 运行 (python mcp_tools.py)
 """
 
+import base64
 import inspect
 from e2b_code_interpreter import Sandbox
 
@@ -145,17 +146,65 @@ def list_files(directory: str = "/home/user") -> str:
     return f"目录 {directory}:\n" + "\n".join(lines)
 
 
-@tool("delete_file", "删除指定文件或目录。", {
-    "path": {"type": "string", "description": "要删除的文件或目录路径"},
+@tool("delete_file", "删除指定文件或目录，支持通配符路径。", {
+    "path": {"type": "string", "description": "要删除的文件或目录路径，支持通配符如 /home/user/*.log"},
     "recursive": {"type": "boolean", "description": "是否递归删除目录"},
 })
 def delete_file(path: str, recursive: bool = False) -> str:
-    flag = "-rf" if recursive else ""
-    # 用单引号包裹 path 防止路径中包含空格或特殊字符引发错误
-    result = _sandbox.commands.run(f"rm {flag} '{path}'")
+    path_b64 = base64.b64encode(path.encode("utf-8")).decode("ascii")
+    recursive_flag = "True" if recursive else "False"
+    command = f"""python3 - <<'PY'
+import base64
+import glob
+import os
+import shutil
+
+pattern = base64.b64decode("{path_b64}").decode("utf-8")
+recursive = {recursive_flag}
+matches = sorted(glob.glob(pattern))
+
+if not matches:
+    print(f"未找到匹配路径: {{pattern}}")
+    raise SystemExit(0)
+
+deleted = []
+errors = []
+
+for target in matches:
+    try:
+        if os.path.isdir(target):
+            if recursive:
+                shutil.rmtree(target)
+                deleted.append(target)
+            else:
+                errors.append(f"{{target}} 是目录；如需删除目录请设置 recursive=True")
+        else:
+            os.remove(target)
+            deleted.append(target)
+    except FileNotFoundError:
+        errors.append(f"{{target}} 不存在")
+    except Exception as exc:
+        errors.append(f"{{target}} 删除失败: {{exc}}")
+
+if deleted:
+    print("已删除:")
+    for item in deleted:
+        print(item)
+
+if errors:
+    print("删除失败:")
+    for item in errors:
+        print(item)
+    raise SystemExit(1)
+PY"""
+    result = _sandbox.commands.run(command)
+    output = (result.stdout or "").strip()
     if result.exit_code == 0:
-        return f"已删除: {path}"
-    return f"删除失败: {result.stderr}"
+        return output or f"已删除: {path}"
+    error = (result.stderr or "").strip()
+    if output and error:
+        return f"{output}\n{error}"
+    return output or error or f"删除失败: {path}"
 
 
 @tool("send_http_request", "发送 HTTP 请求到指定 URL。", {
