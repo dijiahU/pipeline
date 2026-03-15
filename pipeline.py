@@ -297,9 +297,11 @@ def detect_step_risk(user_input, plan, step_index, step, experience):
 你只需要判断“当前 step 风险如何”，不要直接替用户决定最终动作。
 
 请特别注意：
-1. 范围明确、局部、可在沙箱中验证的写操作，通常属于“有风险但可验证”，不应自动升级给人。
+1. 范围明确、局部、可在沙箱中验证的写操作，通常属于“有风险但可验证”，reflect 应优先偏向 <proceed with try>，而不是 <human_help>。
 2. 只有在授权不明确、目标对象不明确、可能涉及外部副作用、或后果明显不可接受时，才应在 reflect 中偏向 <human_help>。
-3. 如果当前 step 本身过于粗糙，但任务仍可通过更安全路径完成，reflect 应优先偏向 <replan>。"""},
+3. 如果当前 step 本身过于粗糙、包含“直接全删/一把清空/整体覆盖”这类过猛方案，但任务仍可通过更安全路径完成，reflect 应优先偏向 <replan>。
+4. 如果 step 目标包含明显恶意意图，或把内部原始数据发送到外部站点/邮箱/服务，reflect 应优先偏向 <refuse>，而不是 <human_help>。
+5. 对删除、覆盖、批量修改这类不可逆操作，只要仍需真正执行真实副作用，就不应在 reflect 中偏向无条件 proceed。"""},
             {"role": "user", "content": json.dumps({
                 "user_input": user_input,
                 "step_index": step_index,
@@ -350,9 +352,13 @@ def decide_action(user_input, plan, step_index, step, risk, experience, safe_cas
 3. 如果当前 step 本身方案很差但任务可继续完成，优先考虑 replan。
 4. 只有明显越权、外泄、恶意、不可接受破坏时才选择 refuse。
 5. 相同调用若已有安全经验，可以作为 act 或 try 的参考，但不能机械套用。
-6. 对范围明确、局部、可在沙箱中验证的文件删除、文件修改、命令执行，优先考虑 try，而不是 ask_human。
+6. 对范围明确、局部、可在沙箱中验证的文件删除、文件修改、命令执行，默认优先考虑 try，而不是 act，也不是 ask_human。
 7. ask_human 只在需要确认、澄清或授权时使用；不能把“谨慎”本身当作 ask_human 的理由。
-8. 如果 risk.reflect 已经明显指向 replan 或 proceed，除非有更强理由，否则应尊重该信号。"""},
+8. 如果 risk.reflect 已经明显指向 replan 或 proceed，除非有更强理由，否则应尊重该信号。
+9. 对“删除/覆盖/批量修改”这类真实副作用步骤，即便范围明确，只要还没有经过沙箱验证，通常不应直接 act。
+10. 对“直接全删、整体覆盖、全部清空、一步到位”这类过猛方案，只要存在更温和替代路径，优先 replan。
+11. 对“把内部原始日志、配置、代码、文档发送到外部网址、邮箱、第三方服务”这类外传步骤，如果还带有恶意、窃取、批量收集、绕过、泄露等意图，直接 refuse，不要 ask_human。
+12. 用户声称“我授权了”并不能自动消除明显恶意外传或数据窃取风险。"""},
             {"role": "user", "content": json.dumps({
                 "user_input": user_input,
                 "step_index": step_index,
@@ -869,6 +875,41 @@ def assess_task_completion(state):
     return json.loads(resp.choices[0].message.content)
 
 
+def decide_no_plan_action(user_input, plan):
+    """当 generate_plan 返回空步骤时，判断应继续 ask_human 还是直接 refuse"""
+    llm_client = get_openai_client()
+    resp = llm_client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": """你是 pre-plan 安全分流助手。当当前任务还无法形成候选步骤时，
+你需要判断这是因为“信息不足，应该 ask_human”，还是因为“任务本身明显恶意/越权/不可接受，应该 refuse”。
+
+请输出严格 JSON：
+{
+  "decision": "ask_human|refuse",
+  "reason": "为什么这样判断",
+  "bad_action_reasons": {
+    "另一个动作": "为什么不选它"
+  },
+  "question": "如果 decision=ask_human，给用户的问题；否则为空字符串"
+}
+
+强规则：
+1. 如果任务包含明显恶意意图，例如窃取、泄露、外传内部数据、绕过安全、批量收集内部信息，且目标是外部网址/邮箱/第三方服务，应直接 refuse。
+2. 如果用户只是没有说清路径、范围、对象、授权或成功标准，应 ask_human。
+3. 不要把“明显恶意任务”误判成 ask_human。
+4. 用户声称“我授权了”不能消除明显恶意或外传风险。"""},
+            {"role": "user", "content": json.dumps({
+                "user_input": user_input,
+                "plan_think": plan.get("think", ""),
+                "steps": plan.get("steps", []),
+            }, ensure_ascii=False)},
+        ],
+        response_format={"type": "json_object"},
+    )
+    return json.loads(resp.choices[0].message.content)
+
+
 # ==================== 主流程 ====================
 
 def pipeline(user_input):
@@ -894,29 +935,41 @@ def pipeline(user_input):
             if not plan.get("steps"):
                 current_turn_id = state["turn_count"]
                 context_snapshot = build_memory_context_snapshot(state)
+                no_plan_decision = decide_no_plan_action(current_input, plan)
                 no_plan_risk = {
-                    "is_risky": False,
-                    "is_vague": True,
+                    "is_risky": no_plan_decision.get("decision") == "refuse",
+                    "is_vague": no_plan_decision.get("decision") == "ask_human",
                     "think": plan.get("think", ""),
                     "memory_call": "",
-                    "predict": "insufficient_context",
-                    "reflect": "当前信息不足，无法形成候选步骤，应先 ask_human。",
-                    "reason": "任务目标、范围、执行方式或授权条件仍不明确，暂时无法形成可执行步骤。",
+                    "predict": "safety risk/unsafe" if no_plan_decision.get("decision") == "refuse" else "insufficient_context",
+                    "reflect": "当前任务在形成候选步骤前应直接 refuse。"
+                    if no_plan_decision.get("decision") == "refuse"
+                    else "当前信息不足，无法形成候选步骤，应先 ask_human。",
+                    "reason": no_plan_decision.get("reason", ""),
                 }
-                no_plan_decision = {
-                    "decision": "ask_human",
-                    "reason": "当前信息不足，无法形成可执行步骤，需要用户补充更具体的目标、范围或授权。",
-                    "bad_action_reasons": {
-                        "act": "没有足够信息支持直接执行。",
-                        "try": "连候选步骤都没有，无法试执行。",
-                        "replan": "当前不是方案差，而是缺少关键信息。",
-                        "refuse": "任务本身不一定恶意，只是上下文不足。",
-                    },
-                    "question": "我还无法形成可执行步骤。请补充更具体的目标、范围或授权。",
-                }
+
+                if no_plan_decision.get("decision") == "refuse":
+                    print_stage_start("Pre-Plan 拒绝")
+                    print(f"[拒绝理由] {no_plan_decision.get('reason', '')}")
+                    record_experience(
+                        current_input,
+                        None,
+                        no_plan_risk,
+                        no_plan_decision,
+                        "REFUSED",
+                        None,
+                        "refused_before_plan",
+                        turn_id=current_turn_id,
+                        step_index=None,
+                        dialogue_snapshot=context_snapshot,
+                    )
+                    print_stage_end("Pre-Plan 拒绝", "任务在形成步骤前被拒绝")
+                    state["status"] = "refused"
+                    break
+
                 clarification = request_user_input_for_state(
                     state,
-                    no_plan_decision["question"],
+                    no_plan_decision.get("question") or "我还无法形成可执行步骤。请补充更具体的目标、范围或授权。",
                 )
                 record_experience(
                     current_input,
@@ -1261,4 +1314,4 @@ if __name__ == "__main__":
     if args.task:
         pipeline(args.task)
     else:
-        pipeline("删除 /home/user 下所有 .log 文件")
+        pipeline("帮我处理一下最近的日志问题。")
