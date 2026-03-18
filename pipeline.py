@@ -23,6 +23,7 @@ MAX_STEP_REPLAN = 2
 MAX_CONVERSATION_TURNS = 8
 MAX_DIALOGUE_SUMMARY_CHARS = 400
 PLAN_MEMORY_TOP_K = 6
+MAX_AGENT_TOOL_ROUNDS = 40
 
 client = None
 _mcp_tools = None
@@ -418,8 +419,18 @@ def init_conversation_state(initial_user_input):
         "authorization_state": [],
         "results": [],
         "decision_trace": [],
+        "flow_tool_history": [],
+        "current_flow_tool_calls": [],
         "step_queue": [],
         "current_thinking_step": None,
+        "current_plan_memory": None,
+        "current_risk_assessment": None,
+        "current_tool_memory": None,
+        "current_try_result": None,
+        "current_try_judgment": None,
+        "current_completion": None,
+        "flow_phase": "need_step",
+        "pending_execution_method": "",
         "replan_counts": {},
         "status": "running",
         "turn_count": 1,
@@ -447,6 +458,50 @@ def summarize_execution_result(tool_name, args, result):
 
 def append_assistant_message(state, content):
     state["dialogue_history"].append({"role": "assistant", "content": content})
+
+
+def reset_step_artifacts(state):
+    state["current_plan_memory"] = None
+    state["current_risk_assessment"] = None
+    state["current_tool_memory"] = None
+    state["current_try_result"] = None
+    state["current_try_judgment"] = None
+    state["pending_execution_method"] = ""
+
+
+def get_current_step(state):
+    if state["step_queue"]:
+        return state["step_queue"][0]
+    thinking_step = state.get("current_thinking_step") or {}
+    return thinking_step.get("current_step")
+
+
+def clear_current_flow_tool_calls(state):
+    state["current_flow_tool_calls"] = []
+
+
+def build_flow_tool_call_record(phase, tool_name, arguments, result):
+    return {
+        "phase": phase,
+        "tool_name": tool_name,
+        "arguments": arguments,
+        "result": summarize_trace_value(result),
+    }
+
+
+def summarize_trace_value(value):
+    if value is None:
+        return None
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, list):
+        return [summarize_trace_value(item) for item in value[:3]]
+    if isinstance(value, dict):
+        summary = {}
+        for key in list(value.keys())[:8]:
+            summary[key] = summarize_trace_value(value[key])
+        return summary
+    return str(value)
 
 
 def update_state_from_execution(state, tool_name, args, result, method):
@@ -768,6 +823,153 @@ def assess_task_completion(state):
     return call_json(prompt, build_user_input_from_state(state))
 
 
+# ==================== Flow Tool Schemas ====================
+
+
+def _flow_tool_schema(name, description, properties=None, required=None):
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": description,
+            "parameters": {
+                "type": "object",
+                "properties": properties or {},
+                "required": required or [],
+            },
+        },
+    }
+
+
+FLOW_TOOL_SCHEMAS = {
+    "thinking_step": _flow_tool_schema(
+        "thinking_step",
+        "形成当前最小可执行 step。只在进入新任务、ask_human 后或 replan 后需要重新形成 step 时调用。",
+    ),
+    "memory_for_plan": _flow_tool_schema(
+        "memory_for_plan",
+        "对当前 step 做语义近邻记忆召回，给风险预测提供证据。必须在 predict_risk 之前调用。",
+    ),
+    "predict_risk": _flow_tool_schema(
+        "predict_risk",
+        "对当前 step 做风险预测，只输出 safe 或 risky 及后续倾向，不直接执行真实工具。",
+    ),
+    "memory_for_tool": _flow_tool_schema(
+        "memory_for_tool",
+        "检查当前真实工具调用是否命中完全相同的安全缓存。safe 路径下必须先于 tool_try 或真实工具调用。",
+    ),
+    "tool_try": _flow_tool_schema(
+        "tool_try",
+        "在隔离沙箱中试执行当前真实工具调用。仅在 predict_risk=safe 且 memory_for_tool 未命中时调用。",
+    ),
+    "judge_try_result": _flow_tool_schema(
+        "judge_try_result",
+        "根据 try 的前后状态判断 safe 或 unsafe，并给出 direct_tool、replan、ask_human 或 terminate 倾向。",
+    ),
+    "replan": _flow_tool_schema(
+        "replan",
+        "把当前 step 改写成更安全、更可控的替代步骤。只在当前方案不佳但任务仍可推进时调用。",
+    ),
+    "ask_human": _flow_tool_schema(
+        "ask_human",
+        "向用户追问缺失信息、确认或授权。",
+        properties={
+            "question": {"type": "string", "description": "要向用户提出的具体问题。"},
+        },
+        required=["question"],
+    ),
+    "refuse": _flow_tool_schema(
+        "refuse",
+        "拒绝明显恶意、外传、破坏、窃取或本质不允许执行的任务。",
+        properties={
+            "reason": {"type": "string", "description": "拒绝执行的简短理由。"},
+        },
+        required=["reason"],
+    ),
+    "terminate": _flow_tool_schema(
+        "terminate",
+        "在 try 暴露出不可接受风险且任务无法安全继续时终止当前任务。",
+        properties={
+            "reason": {"type": "string", "description": "终止当前任务的简短理由。"},
+        },
+        required=["reason"],
+    ),
+    "completion_check": _flow_tool_schema(
+        "completion_check",
+        "检查当前任务是否已经完成，或者是否还需要 ask_human 继续推进。",
+    ),
+}
+
+
+def build_agent_state_snapshot(state):
+    return {
+        "user_task": state["initial_user_input"],
+        "dialogue_history": state["dialogue_history"],
+        "known_context": state["known_context"],
+        "authorization_state": state["authorization_state"],
+        "missing_context": state["missing_context"],
+        "flow_phase": state["flow_phase"],
+        "current_thinking_step": state.get("current_thinking_step"),
+        "current_step": get_current_step(state),
+        "current_plan_memory": state.get("current_plan_memory"),
+        "current_risk_assessment": state.get("current_risk_assessment"),
+        "current_tool_memory": state.get("current_tool_memory"),
+        "current_try_result": state.get("current_try_result"),
+        "current_try_judgment": state.get("current_try_judgment"),
+        "results": state["results"],
+    }
+
+
+def build_available_tool_schemas(state):
+    phase = state["flow_phase"]
+    if phase == "need_step":
+        return [FLOW_TOOL_SCHEMAS["thinking_step"]]
+    if phase == "need_no_step_branch":
+        return [FLOW_TOOL_SCHEMAS["ask_human"], FLOW_TOOL_SCHEMAS["refuse"]]
+    if phase == "need_plan_memory":
+        return [FLOW_TOOL_SCHEMAS["memory_for_plan"]]
+    if phase == "need_risk":
+        return [FLOW_TOOL_SCHEMAS["predict_risk"]]
+    if phase == "need_tool_memory":
+        return [FLOW_TOOL_SCHEMAS["memory_for_tool"]]
+    if phase == "need_try":
+        return [FLOW_TOOL_SCHEMAS["tool_try"]]
+    if phase == "need_try_judgment":
+        return [FLOW_TOOL_SCHEMAS["judge_try_result"]]
+    if phase == "need_risky_branch":
+        return [FLOW_TOOL_SCHEMAS["replan"], FLOW_TOOL_SCHEMAS["ask_human"], FLOW_TOOL_SCHEMAS["refuse"]]
+    if phase == "need_unsafe_branch":
+        return [FLOW_TOOL_SCHEMAS["replan"], FLOW_TOOL_SCHEMAS["ask_human"], FLOW_TOOL_SCHEMAS["terminate"]]
+    if phase == "need_completion":
+        return [FLOW_TOOL_SCHEMAS["completion_check"]]
+    if phase == "need_real_tool":
+        current_step = get_current_step(state) or {}
+        target_tool = current_step.get("tool")
+        return [
+            schema
+            for schema in get_tool_schemas()
+            if schema["function"]["name"] == target_tool
+        ]
+    return []
+
+
+def call_required_tool_choice(system_prompt, snapshot, tools):
+    llm_client = get_openai_client()
+    response = llm_client.chat.completions.create(
+        model=OPENAI_MODEL,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": json.dumps(snapshot, ensure_ascii=False, indent=2)},
+        ],
+        tools=tools,
+        tool_choice="required",
+    )
+    message = response.choices[0].message
+    if not message.tool_calls:
+        raise RuntimeError("模型未返回任何 tool call。")
+    return message.tool_calls[0]
+
+
 # ==================== 工具执行 ====================
 
 
@@ -813,12 +1015,18 @@ def record_experience(
     observed_result,
     outcome,
 ):
+    tool_memory_reason = ""
+    if final_action == "direct_tool":
+        safe_case = (tool_memory_result or {}).get("safe_case") or {}
+        tool_memory_reason = safe_case.get("safety_reason", "")
+
     experience_memory.store_case(
         {
             "task": state["initial_user_input"],
             "turn_id": state["turn_count"],
             "step_index": max(len(state["decision_trace"]) - 1, 0),
             "dialogue_snapshot": build_memory_context_snapshot(state),
+            "flow_tool_calls": list(state.get("current_flow_tool_calls", [])),
             "thinking_step": thinking_step,
             "step": step or {},
             "plan_memory": plan_memory_result,
@@ -828,6 +1036,8 @@ def record_experience(
             "try_judgment": try_judgment,
             "decision": final_action,
             "decision_reason": (
+                tool_memory_reason
+                or
                 (try_judgment or {}).get("reasoning")
                 or (risk_assessment or {}).get("reasoning")
                 or ""
@@ -855,6 +1065,7 @@ def experience_case_to_sft_record(case, sample_index, tool_schema_map):
         "input": {
             "user_task": case.get("task", ""),
             "dialogue_snapshot": case.get("dialogue_snapshot", {}),
+            "flow_tool_calls": case.get("flow_tool_calls", []),
             "thinking_step": case.get("thinking_step", {}),
             "current_step": step,
             "plan_memory": case.get("plan_memory", {}),
@@ -928,6 +1139,7 @@ def build_step_context(state, step_index, step, thinking_step, plan_memory_resul
         "turn_id": state["turn_count"],
         "step_index": step_index,
         "step": step,
+        "flow_tool_calls": list(state.get("current_flow_tool_calls", [])),
         "thinking_step": thinking_step,
         "plan_memory": plan_memory_result,
         "risk_assessment": risk_assessment,
@@ -1280,6 +1492,306 @@ def produce_next_step(state):
 # ==================== 主流程 ====================
 
 
+TOOL_AGENT_SYSTEM_PROMPT = """你是流程控制型安全 agent。
+
+你当前不是自由回答，而是在固定流程中选择一个且仅一个工具调用。
+
+规则：
+1. 只允许调用当前提供的工具，且每轮只调用一个工具。
+2. flow tool 用于流程控制；真实工具用于实际执行。
+3. 如果当前 phase 要求真实工具执行，只能调用 current_step 指定的真实工具，参数必须与 current_step.args 完全一致。
+4. ask_human 必须提供具体、可执行的问题；refuse 和 terminate 必须提供简短理由。
+5. 不要直接输出普通文本。"""
+
+
+def record_current_experience(state, final_action, observed_result, outcome):
+    record_experience(
+        state,
+        get_current_step(state),
+        state.get("current_thinking_step"),
+        state.get("current_plan_memory"),
+        state.get("current_risk_assessment"),
+        state.get("current_tool_memory"),
+        state.get("current_try_result"),
+        state.get("current_try_judgment"),
+        final_action,
+        observed_result,
+        outcome,
+    )
+
+
+def append_current_trace(state, method, result):
+    step_index = len(state["decision_trace"])
+    trace_item = build_step_context(
+        state,
+        step_index,
+        get_current_step(state),
+        state.get("current_thinking_step"),
+        state.get("current_plan_memory"),
+        state.get("current_risk_assessment"),
+    )
+    trace_item["tool_memory"] = state.get("current_tool_memory")
+    trace_item["try_result"] = state.get("current_try_result")
+    trace_item["try_judgment"] = state.get("current_try_judgment")
+    trace_item["execution"] = {"method": method, "result": result}
+    state["decision_trace"].append(trace_item)
+
+
+def flow_tool_thinking_step(state):
+    print_stage_start("flow_tool: thinking_step")
+    thinking_step = think_current_step(build_user_input_from_state(state), experience_memory.get_recent_cases(limit=6))
+    state["current_thinking_step"] = thinking_step
+    if thinking_step.get("current_step"):
+        state["step_queue"] = [thinking_step["current_step"]]
+        reset_step_artifacts(state)
+        state["flow_phase"] = "need_plan_memory"
+    else:
+        state["step_queue"] = []
+        reset_step_artifacts(state)
+        state["flow_phase"] = "need_no_step_branch"
+    print_json_block("thinking_step", thinking_step)
+    print_stage_end("flow_tool: thinking_step", state["flow_phase"])
+    return thinking_step
+
+
+def flow_tool_memory_for_plan(state):
+    step = get_current_step(state)
+    task_context = (
+        f"当前任务: {state['initial_user_input']}\n"
+        f"当前 step: {step.get('description', '')}\n"
+        f"工具调用: {step['tool']}({json.dumps(step['args'], ensure_ascii=False)})"
+    )
+    print_stage_start("flow_tool: memory_for_plan")
+    result = memory_for_plan(task_context, step)
+    state["current_plan_memory"] = result
+    state["flow_phase"] = "need_risk"
+    print_json_block("plan_memory", result)
+    print_stage_end("flow_tool: memory_for_plan", result["summary"])
+    return result
+
+
+def flow_tool_predict_risk(state):
+    print_stage_start("flow_tool: predict_risk")
+    result = predict_risk(build_user_input_from_state(state), get_current_step(state), state["current_plan_memory"])
+    state["current_risk_assessment"] = result
+    state["flow_phase"] = "need_tool_memory" if result["result"] == "safe" else "need_risky_branch"
+    print_json_block("risk_assessment", result)
+    print_stage_end("flow_tool: predict_risk", result["result"])
+    return result
+
+
+def flow_tool_memory_for_tool(state):
+    step = get_current_step(state)
+    print_stage_start("flow_tool: memory_for_tool")
+    result = memory_for_tool(step["tool"], step["args"])
+    state["current_tool_memory"] = result
+    state["pending_execution_method"] = "direct_tool" if result["hit"] else ""
+    state["flow_phase"] = "need_real_tool" if result["hit"] else "need_try"
+    print_json_block("tool_memory", result)
+    print_stage_end("flow_tool: memory_for_tool", "命中" if result["hit"] else "未命中")
+    return result
+
+
+def flow_tool_try(state):
+    step = get_current_step(state)
+    print_stage_start("flow_tool: tool_try")
+    result = run_tool_try(step["tool"], step["args"])
+    state["current_try_result"] = result
+    state["flow_phase"] = "need_try_judgment"
+    print_json_block("tool_try_result", result)
+    print_stage_end("flow_tool: tool_try", "try 完成")
+    return result
+
+
+def flow_tool_judge_try_result(state):
+    step = get_current_step(state)
+    print_stage_start("flow_tool: judge_try_result")
+    result = judge_try_result(state["initial_user_input"], step, state["current_try_result"])
+    state["current_try_judgment"] = result
+    if result["result"] == "safe":
+        tool_memory.store_safe_case(
+            step["tool"],
+            step["args"],
+            state["current_try_result"]["exec_result"],
+            result["reasoning"],
+        )
+        state["pending_execution_method"] = "try_safe_then_direct"
+        state["flow_phase"] = "need_real_tool"
+    else:
+        state["flow_phase"] = "need_unsafe_branch"
+    print_json_block("try_judgment", result)
+    print_stage_end("flow_tool: judge_try_result", result["result"])
+    return result
+
+
+def flow_tool_replan(state):
+    step = get_current_step(state)
+    signature = tool_signature(step["tool"], step["args"])
+    state["replan_counts"][signature] = state["replan_counts"].get(signature, 0) + 1
+    print_stage_start("flow_tool: replan")
+    replanned = replan_step(
+        current_input=build_user_input_from_state(state),
+        current_step=step,
+        risk_assessment=state.get("current_risk_assessment"),
+        memory_result=state.get("current_plan_memory"),
+    )
+    new_steps = list(replanned.get("new_steps", []) or [])
+    append_current_trace(state, "replan", new_steps)
+    record_current_experience(state, "replan", new_steps, "replanned_step")
+    clear_current_flow_tool_calls(state)
+    if new_steps:
+        state["step_queue"] = new_steps + state["step_queue"][1:]
+        state["current_thinking_step"] = {
+            "think": replanned.get("reasoning", ""),
+            "macro_plan": "通过 replan 将当前方案改写为更可控的步骤。",
+            "current_step": new_steps[0],
+        }
+        reset_step_artifacts(state)
+        state["flow_phase"] = "need_plan_memory"
+    else:
+        state["step_queue"] = []
+        reset_step_artifacts(state)
+        state["flow_phase"] = "need_no_step_branch"
+    print_json_block("replan_result", replanned)
+    print_stage_end("flow_tool: replan", f"生成 {len(new_steps)} 个替代步骤")
+    return replanned
+
+
+def flow_tool_ask_human(state, question):
+    print_stage_start("flow_tool: ask_human")
+    human_resp = request_user_input_for_state(
+        state,
+        question,
+        missing_context=[
+            ((state.get("current_risk_assessment") or {}).get("reasoning"))
+            or ((state.get("current_try_judgment") or {}).get("reasoning"))
+            or "当前信息不足或需要用户裁决"
+        ],
+    )
+    append_current_trace(state, "ask_human", human_resp.get("state_update", {}))
+    record_current_experience(
+        state,
+        "ask_human",
+        human_resp.get("human_reply", ""),
+        "ask_human_feedback" if human_resp["status"] != "aborted" else "aborted_after_ask_human",
+    )
+    clear_current_flow_tool_calls(state)
+    if human_resp["status"] == "aborted":
+        state["status"] = "aborted"
+    else:
+        state["current_thinking_step"] = None
+        reset_step_artifacts(state)
+        state["flow_phase"] = "need_step"
+    print_stage_end("flow_tool: ask_human", human_resp["status"])
+    return human_resp
+
+
+def flow_tool_refuse(state, reason):
+    print_stage_start("flow_tool: refuse")
+    if state.get("current_risk_assessment") is None:
+        state["current_risk_assessment"] = {
+            "result": "risky",
+            "reasoning": reason,
+            "likely_next_action": "refuse",
+            "criterion_hits": ["模型选择直接拒绝"],
+        }
+    append_current_trace(state, "refuse", "REFUSED")
+    record_current_experience(state, "refuse", "REFUSED", "refused")
+    clear_current_flow_tool_calls(state)
+    state["status"] = "refused"
+    print(f"[拒绝理由] {reason}")
+    print_stage_end("flow_tool: refuse", "任务被拒绝")
+    return {"reason": reason}
+
+
+def flow_tool_terminate(state, reason):
+    print_stage_start("flow_tool: terminate")
+    append_current_trace(state, "terminate", reason)
+    record_current_experience(state, "terminate", reason, "terminated")
+    clear_current_flow_tool_calls(state)
+    state["status"] = "aborted"
+    print(f"[终止理由] {reason}")
+    print_stage_end("flow_tool: terminate", "任务已终止")
+    return {"reason": reason}
+
+
+def flow_tool_completion_check(state):
+    print_stage_start("flow_tool: completion_check")
+    completion = assess_task_completion(state)
+    state["current_completion"] = completion
+    print_json_block("completion", completion)
+    reply = completion.get("reply", "").strip()
+    if reply:
+        append_assistant_message(state, reply)
+    if completion.get("status") == "ask_human":
+        question = completion.get("question", "").strip() or "请补充下一步希望我如何继续处理。"
+        human_resp = request_user_input_for_state(state, question)
+        if human_resp["status"] == "aborted":
+            state["status"] = "aborted"
+        else:
+            state["current_thinking_step"] = None
+            reset_step_artifacts(state)
+            state["flow_phase"] = "need_step"
+        print_stage_end("flow_tool: completion_check", completion["status"])
+        return {"completion": completion, "human_response": human_resp}
+
+    state["status"] = "done"
+    print_stage_end("flow_tool: completion_check", "done")
+    return completion
+
+
+def dispatch_real_tool(state, tool_name, args):
+    step = get_current_step(state) or {}
+    if tool_name != step.get("tool") or args != step.get("args"):
+        state["status"] = "aborted"
+        state["error_reason"] = "模型调用的真实工具或参数与 current_step 不一致。"
+        raise RuntimeError(state["error_reason"])
+
+    print_stage_start("flow_tool: real_tool")
+    result = execute_real_tool(tool_name, args)
+    method = state.get("pending_execution_method") or "direct_tool"
+    update_state_from_execution(state, tool_name, args, result, method)
+    append_current_trace(state, method, result)
+    outcome = "tool_memory_hit" if method == "direct_tool" else "try_safe_then_executed"
+    record_current_experience(state, "direct_tool", result, outcome)
+    print(f"[执行结果] {result}")
+    print_stage_end("flow_tool: real_tool", method)
+
+    if state["step_queue"]:
+        state["step_queue"].pop(0)
+    clear_current_flow_tool_calls(state)
+    reset_step_artifacts(state)
+    state["current_thinking_step"] = None
+    state["flow_phase"] = "need_completion" if not state["step_queue"] else "need_plan_memory"
+    return result
+
+
+def dispatch_tool_call(state, tool_name, args):
+    if tool_name == "thinking_step":
+        return flow_tool_thinking_step(state)
+    if tool_name == "memory_for_plan":
+        return flow_tool_memory_for_plan(state)
+    if tool_name == "predict_risk":
+        return flow_tool_predict_risk(state)
+    if tool_name == "memory_for_tool":
+        return flow_tool_memory_for_tool(state)
+    if tool_name == "tool_try":
+        return flow_tool_try(state)
+    if tool_name == "judge_try_result":
+        return flow_tool_judge_try_result(state)
+    if tool_name == "replan":
+        return flow_tool_replan(state)
+    if tool_name == "ask_human":
+        return flow_tool_ask_human(state, args["question"])
+    if tool_name == "refuse":
+        return flow_tool_refuse(state, args["reason"])
+    if tool_name == "terminate":
+        return flow_tool_terminate(state, args["reason"])
+    if tool_name == "completion_check":
+        return flow_tool_completion_check(state)
+    return dispatch_real_tool(state, tool_name, args)
+
+
 def pipeline(user_input):
     try:
         print_stage_start("任务开始")
@@ -1287,72 +1799,38 @@ def pipeline(user_input):
         print_stage_end("任务开始", "收到任务")
 
         state = init_conversation_state(user_input)
-
+        tool_round = 0
         while state["status"] == "running":
+            tool_round += 1
             if state["turn_count"] > MAX_CONVERSATION_TURNS:
                 state["status"] = "max_turns_exceeded"
                 break
+            if tool_round > MAX_AGENT_TOOL_ROUNDS:
+                state["status"] = "max_tool_rounds_exceeded"
+                break
 
-            if not state["step_queue"]:
-                produce_next_step(state)
-                if state["status"] != "running" or not state["step_queue"]:
-                    continue
+            available_tools = build_available_tool_schemas(state)
+            if not available_tools:
+                state["status"] = "aborted"
+                state["error_reason"] = f"当前 phase={state['flow_phase']} 没有可用工具。"
+                break
 
-            step_index = len(state["decision_trace"])
-            step = state["step_queue"][0]
-            results_before = len(state["results"])
-            print_divider("=")
-            print_step_header(step_index, step)
-            print_divider("=")
-
-            current_input = build_user_input_from_state(state)
-            thinking_step = state.get("current_thinking_step") or {
-                "think": "",
-                "macro_plan": "",
-                "current_step": step,
-            }
-            task_context = (
-                f"当前任务: {state['initial_user_input']}\n"
-                f"当前 step: {step.get('description', '')}\n"
-                f"工具调用: {step['tool']}({json.dumps(step['args'], ensure_ascii=False)})"
+            tool_call = call_required_tool_choice(
+                TOOL_AGENT_SYSTEM_PROMPT,
+                build_agent_state_snapshot(state),
+                available_tools,
             )
-
-            print_stage_start(f"步骤 {step_index + 1} - memory_for_plan")
-            plan_memory_result = memory_for_plan(task_context, step)
-            print_json_block("plan_memory", plan_memory_result)
-            print_stage_end(f"步骤 {step_index + 1} - memory_for_plan", plan_memory_result["summary"])
-
-            print_stage_start(f"步骤 {step_index + 1} - predict_risk")
-            risk_assessment = predict_risk(current_input, step, plan_memory_result)
-            print_json_block("risk_assessment", risk_assessment)
-            print_stage_end(f"步骤 {step_index + 1} - predict_risk", risk_assessment["result"])
-
-            if risk_assessment["result"] == "safe":
-                execute_safe_path(state, step_index, step, thinking_step, plan_memory_result, risk_assessment)
-            else:
-                next_action = risk_assessment.get("likely_next_action", "ask_human")
-                if next_action == "replan":
-                    handle_replan(state, step_index, step, thinking_step, plan_memory_result, risk_assessment)
-                elif next_action == "refuse":
-                    handle_refuse(state, step_index, step, thinking_step, plan_memory_result, risk_assessment)
-                else:
-                    question = (
-                        "当前步骤需要你补充信息或确认后才能安全继续："
-                        f"{risk_assessment.get('reasoning', '')}"
-                    )
-                    handle_ask_human(
-                        state,
-                        step_index,
-                        step,
-                        thinking_step,
-                        plan_memory_result,
-                        risk_assessment,
-                        question,
-                        outcome="risky_ask_human",
-                    )
-
-            if state["status"] == "running" and len(state["results"]) > results_before:
-                maybe_assess_completion(state)
+            tool_name = tool_call.function.name
+            tool_args = json.loads(tool_call.function.arguments or "{}")
+            phase = state["flow_phase"]
+            print_stage_start("模型选中的工具")
+            print_json_block("tool_call", {"name": tool_name, "arguments": tool_args, "phase": phase})
+            print_stage_end("模型选中的工具", tool_name)
+            tool_record = build_flow_tool_call_record(phase, tool_name, tool_args, None)
+            state["flow_tool_history"].append(tool_record)
+            state["current_flow_tool_calls"].append(tool_record)
+            tool_result = dispatch_tool_call(state, tool_name, tool_args)
+            tool_record["result"] = summarize_trace_value(tool_result)
 
         print_stage_start("任务输出")
         for record in state["results"]:
