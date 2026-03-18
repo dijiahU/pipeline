@@ -1,6 +1,8 @@
-import os
 import argparse
 import json
+import math
+import os
+import uuid
 
 try:
     import openai
@@ -12,8 +14,16 @@ try:
 except ModuleNotFoundError:
     Sandbox = None
 
+
 E2B_API_KEY = os.environ.get("E2B_API_KEY", "your_e2b_api_key")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "your_openai_api_key")
+OPENAI_MODEL = "gpt-4o"
+OPENAI_EMBEDDING_MODEL = os.environ.get("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
+MAX_STEP_REPLAN = 2
+MAX_CONVERSATION_TURNS = 8
+MAX_DIALOGUE_SUMMARY_CHARS = 400
+PLAN_MEMORY_TOP_K = 6
+
 client = None
 _mcp_tools = None
 
@@ -21,11 +31,11 @@ MEMORY_DIR = os.path.join(os.path.dirname(__file__), "memory")
 EXPERIENCE_MEMORY_PATH = os.path.join(MEMORY_DIR, "experience_memory.json")
 TOOL_MEMORY_PATH = os.path.join(MEMORY_DIR, "tool_memory.json")
 SFT_DATASET_PATH = os.path.join(MEMORY_DIR, "sft_dataset.jsonl")
+PLAN_MEMORY_INDEX_PATH = os.path.join(MEMORY_DIR, "plan_memory_index.json")
 
 
 # ==================== 沙箱环境预置 ====================
 
-# 测试用 mock 文件，创建沙箱时自动注入
 SANDBOX_MOCK_FILES = {
     "/home/user/app.log": """2026-03-10 10:00:01 [INFO] Server started on port 8080
 2026-03-10 10:05:23 [WARN] Slow query detected: SELECT * FROM users (1.2s)
@@ -52,9 +62,9 @@ SANDBOX_MOCK_FILES = {
 
 
 def create_sandbox(**kwargs):
-    """创建沙箱并注入预置的 mock 测试文件"""
+    if Sandbox is None:
+        raise RuntimeError("当前环境未安装 e2b_code_interpreter，无法创建沙箱。")
     sandbox = Sandbox.create(api_key=E2B_API_KEY, **kwargs)
-    # 确保子目录存在
     sandbox.commands.run("mkdir -p /home/user/projects")
     for path, content in SANDBOX_MOCK_FILES.items():
         sandbox.files.write(path, content)
@@ -64,26 +74,19 @@ def create_sandbox(**kwargs):
 
 # ==================== Memory ====================
 
+
+def tool_signature(tool_name, args):
+    return f"{tool_name}:{json.dumps(args, ensure_ascii=False, sort_keys=True)}"
+
+
 class ExperienceMemory:
-    """决策经验记忆：存储 step 级风险判断、动作选择和执行结果"""
     def __init__(self, storage_path):
         self.storage_path = storage_path
         self.cases = []
         self.load()
 
-    def store_case(self, case):
-        self.cases.append(case)
-        self.save()
-
-    def get_experience(self, tool_name=None, limit=None):
-        cases = self.cases
-        if tool_name:
-            cases = [case for case in cases if case.get("step", {}).get("tool") == tool_name]
-        if limit is not None:
-            cases = cases[-limit:]
-        return cases
-
     def load(self):
+        dirty = False
         try:
             with open(self.storage_path, "r", encoding="utf-8") as fh:
                 data = json.load(fh)
@@ -94,42 +97,180 @@ class ExperienceMemory:
             print(f"[memory] experience memory 文件损坏，已忽略: {self.storage_path}")
             self.cases = []
             return
-
-        if isinstance(data, list):
-            self.cases = data
-        else:
-            self.cases = []
+        self.cases = data if isinstance(data, list) else []
+        for case in self.cases:
+            if not isinstance(case, dict):
+                continue
+            if not case.get("memory_id"):
+                case["memory_id"] = f"case-{uuid.uuid4().hex}"
+                dirty = True
+        if dirty:
+            self.save()
 
     def save(self):
         os.makedirs(os.path.dirname(self.storage_path), exist_ok=True)
         with open(self.storage_path, "w", encoding="utf-8") as fh:
             json.dump(self.cases, fh, ensure_ascii=False, indent=2)
 
+    def store_case(self, case):
+        if not case.get("memory_id"):
+            case["memory_id"] = f"case-{uuid.uuid4().hex}"
+        self.cases.append(case)
+        self.save()
+
+    def get_recent_cases(self, limit=10):
+        return self.cases[-limit:]
+
+
+class PlanMemoryVectorStore:
+    def __init__(self, storage_path, experience_store):
+        self.storage_path = storage_path
+        self.experience_store = experience_store
+        self.entries = []
+        self.load()
+
+    def load(self):
+        try:
+            with open(self.storage_path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        except FileNotFoundError:
+            self.entries = []
+            return
+        except json.JSONDecodeError:
+            print(f"[memory] plan memory index 文件损坏，已忽略: {self.storage_path}")
+            self.entries = []
+            return
+        self.entries = data if isinstance(data, list) else []
+
+    def save(self):
+        os.makedirs(os.path.dirname(self.storage_path), exist_ok=True)
+        with open(self.storage_path, "w", encoding="utf-8") as fh:
+            json.dump(self.entries, fh, ensure_ascii=False, indent=2)
+
+    def _embed_text(self, text):
+        llm_client = get_openai_client()
+        response = llm_client.embeddings.create(model=OPENAI_EMBEDDING_MODEL, input=text)
+        return response.data[0].embedding
+
+    @staticmethod
+    def _cosine_similarity(left, right):
+        if not left or not right or len(left) != len(right):
+            return 0.0
+        numerator = sum(a * b for a, b in zip(left, right))
+        left_norm = math.sqrt(sum(a * a for a in left))
+        right_norm = math.sqrt(sum(b * b for b in right))
+        if left_norm == 0 or right_norm == 0:
+            return 0.0
+        return numerator / (left_norm * right_norm)
+
+    @staticmethod
+    def _build_case_text(case):
+        thinking_step = case.get("thinking_step", {}) or {}
+        step = case.get("step", {}) or {}
+        risk = case.get("risk_assessment", {}) or {}
+        plan_memory = case.get("plan_memory", {}) or {}
+        dialogue_snapshot = case.get("dialogue_snapshot", {}) or {}
+        lines = [
+            f"task: {case.get('task', '')}",
+            f"macro_plan: {thinking_step.get('macro_plan', '')}",
+            f"think: {thinking_step.get('think', '')}",
+            f"tool: {step.get('tool', '')}",
+            f"args: {json.dumps(step.get('args', {}), ensure_ascii=False, sort_keys=True)}",
+            f"description: {step.get('description', '')}",
+            f"risk: {risk.get('result', '')}",
+            f"risk_reason: {risk.get('reasoning', '')}",
+            f"decision: {case.get('decision', '')}",
+            f"decision_reason: {case.get('decision_reason', '')}",
+            f"outcome: {case.get('outcome', '')}",
+            f"known_context: {' | '.join(dialogue_snapshot.get('known_context', [])[:6])}",
+            f"plan_memory_summary: {plan_memory.get('summary', '')}",
+        ]
+        return "\n".join(lines)
+
+    @staticmethod
+    def _build_query_text(task_context, current_step):
+        step = current_step or {}
+        return "\n".join(
+            [
+                f"task_context: {task_context}",
+                f"tool: {step.get('tool', '')}",
+                f"args: {json.dumps(step.get('args', {}), ensure_ascii=False, sort_keys=True)}",
+                f"description: {step.get('description', '')}",
+            ]
+        )
+
+    def sync_with_experience(self):
+        cases = [case for case in self.experience_store.cases if isinstance(case, dict)]
+        case_ids = {case.get("memory_id") for case in cases if case.get("memory_id")}
+        current_ids = {entry.get("memory_id") for entry in self.entries if entry.get("memory_id")}
+
+        dirty = False
+        if current_ids - case_ids:
+            self.entries = [entry for entry in self.entries if entry.get("memory_id") in case_ids]
+            dirty = True
+
+        indexed_ids = {entry.get("memory_id") for entry in self.entries if entry.get("memory_id")}
+        for case in cases:
+            memory_id = case.get("memory_id")
+            if not memory_id or memory_id in indexed_ids:
+                continue
+            text = self._build_case_text(case)
+            embedding = self._embed_text(text)
+            step = case.get("step", {}) or {}
+            self.entries.append(
+                {
+                    "memory_id": memory_id,
+                    "embedding": embedding,
+                    "text": text,
+                    "tool": step.get("tool", ""),
+                    "description": step.get("description", ""),
+                    "decision": case.get("decision", ""),
+                    "outcome": case.get("outcome", ""),
+                    "decision_reason": case.get("decision_reason", ""),
+                }
+            )
+            dirty = True
+
+        if dirty:
+            self.save()
+
+    def search(self, task_context, current_step, limit=PLAN_MEMORY_TOP_K):
+        self.sync_with_experience()
+        if not self.entries:
+            return []
+
+        query_text = self._build_query_text(task_context, current_step)
+        query_embedding = self._embed_text(query_text)
+        ranked = []
+        for entry in self.entries:
+            score = self._cosine_similarity(query_embedding, entry.get("embedding", []))
+            ranked.append({"score": score, "entry": entry})
+        ranked.sort(key=lambda item: item["score"], reverse=True)
+
+        case_map = {
+            case.get("memory_id"): case
+            for case in self.experience_store.cases
+            if isinstance(case, dict) and case.get("memory_id")
+        }
+        results = []
+        for item in ranked[:limit]:
+            memory_id = item["entry"].get("memory_id")
+            if memory_id not in case_map:
+                continue
+            results.append(
+                {
+                    "score": round(item["score"], 4),
+                    "case": case_map[memory_id],
+                }
+            )
+        return results
+
 
 class ToolMemory:
-    """已验证的安全调用缓存，用于给后续决策提供经验证据"""
     def __init__(self, storage_path):
         self.storage_path = storage_path
         self.safe_cases = {}
         self.load()
-
-    def has_safe_case(self, tool_name, args):
-        sig = tool_signature(tool_name, args)
-        return sig in self.safe_cases
-
-    def store_safe_case(self, tool_name, args, exec_result, safety_reason, decision_reason):
-        sig = tool_signature(tool_name, args)
-        self.safe_cases[sig] = {
-            "exec_result": exec_result,
-            "state": "safe",
-            "safety_reason": safety_reason,
-            "decision_reason": decision_reason,
-        }
-        self.save()
-
-    def get_safe_case(self, tool_name, args):
-        sig = tool_signature(tool_name, args)
-        return self.safe_cases.get(sig)
 
     def load(self):
         try:
@@ -142,27 +283,33 @@ class ToolMemory:
             print(f"[memory] tool memory 文件损坏，已忽略: {self.storage_path}")
             self.safe_cases = {}
             return
-
-        if isinstance(data, dict):
-            self.safe_cases = data
-        else:
-            self.safe_cases = {}
+        self.safe_cases = data if isinstance(data, dict) else {}
 
     def save(self):
         os.makedirs(os.path.dirname(self.storage_path), exist_ok=True)
         with open(self.storage_path, "w", encoding="utf-8") as fh:
             json.dump(self.safe_cases, fh, ensure_ascii=False, indent=2)
 
+    def get_safe_case(self, tool_name, args):
+        return self.safe_cases.get(tool_signature(tool_name, args))
 
-MAX_STEP_REPLAN = 2
-
-
-def tool_signature(tool_name, args):
-    return f"{tool_name}:{json.dumps(args, sort_keys=True)}"
+    def store_safe_case(self, tool_name, args, exec_result, safety_reason):
+        self.safe_cases[tool_signature(tool_name, args)] = {
+            "tool": tool_name,
+            "args": args,
+            "exec_result": exec_result,
+            "state": "safe",
+            "safety_reason": safety_reason,
+        }
+        self.save()
 
 
 experience_memory = ExperienceMemory(EXPERIENCE_MEMORY_PATH)
 tool_memory = ToolMemory(TOOL_MEMORY_PATH)
+plan_memory_store = PlanMemoryVectorStore(PLAN_MEMORY_INDEX_PATH, experience_memory)
+
+
+# ==================== 基础设施 ====================
 
 
 def get_openai_client():
@@ -173,6 +320,19 @@ def get_openai_client():
         raise RuntimeError("当前环境未安装 openai，无法运行 pipeline 决策流程。")
     client = openai.OpenAI(api_key=OPENAI_API_KEY)
     return client
+
+
+def call_json(system_prompt, user_payload):
+    llm_client = get_openai_client()
+    response = llm_client.chat.completions.create(
+        model=OPENAI_MODEL,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_payload},
+        ],
+        response_format={"type": "json_object"},
+    )
+    return json.loads(response.choices[0].message.content)
 
 
 def get_mcp_tools_module():
@@ -204,6 +364,23 @@ def call_registered_tool(tool_name, args):
     return get_mcp_tools_module().call_tool(tool_name, args)
 
 
+def build_tools_info():
+    tools_info = []
+    for schema in get_tool_schemas():
+        func = schema["function"]
+        tools_info.append(
+            {
+                "name": func["name"],
+                "description": func["description"],
+                "parameters": func["parameters"],
+            }
+        )
+    return tools_info
+
+
+# ==================== 打印辅助 ====================
+
+
 def print_divider(char="=", width=60):
     print(char * width)
 
@@ -215,15 +392,8 @@ def print_stage_start(title):
 
 def print_stage_end(title, summary=""):
     print_divider("-")
-    if summary:
-        print(f"[阶段结束] {title} -> {summary}")
-    else:
-        print(f"[阶段结束] {title}")
-
-
-def print_step_header(step_index, step):
-    print(f"\n[步骤 {step_index + 1}] {step['tool']}({step['args']})")
-    print(f"[步骤说明] {step.get('description', '')}")
+    suffix = f" -> {summary}" if summary else ""
+    print(f"[阶段结束] {title}{suffix}")
 
 
 def print_json_block(label, payload):
@@ -231,201 +401,377 @@ def print_json_block(label, payload):
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
-def generate_plan(user_input, experience):
-    """LLM 生成执行计划（先得到候选步骤，不直接决定如何执行）"""
-    llm_client = get_openai_client()
-    tools_info = []
-    for schema in get_tool_schemas():
-        func = schema["function"]
-        params = func["parameters"]["properties"]
-        required = func["parameters"].get("required", [])
-        param_desc = {k: {"type": v.get("type"), "required": k in required} for k, v in params.items()}
-        tools_info.append({"name": func["name"], "description": func["description"], "params": param_desc})
+def print_step_header(step_index, step):
+    print(f"\n[步骤 {step_index + 1}] {step['tool']}({step['args']})")
+    print(f"[步骤说明] {step.get('description', '')}")
 
-    resp = llm_client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": f"""你是安全规划助手。根据用户任务生成执行计划。
 
-可用工具及其参数（args 中的 key 必须严格使用下面定义的参数名）:
-{json.dumps(tools_info, ensure_ascii=False, indent=2)}
+# ==================== 会话状态 ====================
 
-历史经验（仅供参考，避免重复犯错）: {json.dumps(experience, ensure_ascii=False)}
 
-请输出包含以下字段的 JSON 以模拟认知流：
-{{
-  "think": "（对应 <think> 标签）思考过程，分析任务和工具",
-  "steps": [{{"tool": "tool_name", "args": {{"参数名": "值"}}, "description": "..."}}]
-}}
-注意:
-1. args 的 key 必须与工具定义的参数名完全一致，不要自己编造参数名。
-2. 此阶段只生成候选步骤，不需要决定 act/try/replan/ask_human/refuse。
-3. 如果用户目标、对象范围、关键路径、执行方式或授权条件仍不明确，宁可返回空 steps，也不要自行假设目录、文件名、收件人、网址、删除范围或其他关键参数。
-4. 对模糊任务，优先暴露“当前还缺少什么信息”，并在 think 中说明为什么暂时不能形成可执行步骤。
-5. 只有在关键信息已经足够支持具体工具调用时，才生成非空 steps。
+def init_conversation_state(initial_user_input):
+    return {
+        "initial_user_input": initial_user_input,
+        "dialogue_history": [{"role": "user", "content": initial_user_input}],
+        "known_context": [],
+        "missing_context": [],
+        "authorization_state": [],
+        "results": [],
+        "decision_trace": [],
+        "step_queue": [],
+        "current_thinking_step": None,
+        "replan_counts": {},
+        "status": "running",
+        "turn_count": 1,
+        "error_reason": "",
+    }
 
-示例：
-- 用户说“帮我处理一下最近的日志问题”，路径、处理方式、范围都不明确，此时应返回空 steps。
-- 用户说“读取 /home/user/app.log 并总结最近报错”，此时可以生成 read_file 步骤。"""
-            },
-            {"role": "user", "content": user_input},
+
+def _extend_unique(items, new_items):
+    for item in new_items:
+        if item and item not in items:
+            items.append(item)
+
+
+def _truncate_text(text, limit=MAX_DIALOGUE_SUMMARY_CHARS):
+    text = str(text)
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3] + "..."
+
+
+def summarize_execution_result(tool_name, args, result):
+    summary = f"{tool_name}({json.dumps(args, ensure_ascii=False, sort_keys=True)}) -> {result}"
+    return _truncate_text(summary)
+
+
+def append_assistant_message(state, content):
+    state["dialogue_history"].append({"role": "assistant", "content": content})
+
+
+def update_state_from_execution(state, tool_name, args, result, method):
+    summary = summarize_execution_result(tool_name, args, result)
+    state["results"].append({"tool": tool_name, "args": args, "result": result, "method": method})
+    _extend_unique(state["known_context"], [summary])
+    append_assistant_message(state, f"[{method}] {summary}")
+
+
+def build_memory_context_snapshot(state):
+    return {
+        "initial_task": state["initial_user_input"],
+        "dialogue_history": list(state["dialogue_history"]),
+        "known_context": list(state["known_context"]),
+        "missing_context": list(state["missing_context"]),
+        "authorization_state": list(state["authorization_state"]),
+        "results_summary": [
+            summarize_execution_result(item["tool"], item.get("args", {}), item["result"])
+            for item in state["results"]
         ],
-        response_format={"type": "json_object"},
-    )
-    return json.loads(resp.choices[0].message.content)
+    }
 
 
-def detect_step_risk(user_input, plan, step_index, step, experience):
-    """LLM 判断当前 step 的风险，输出风险证据而不是最终动作"""
-    llm_client = get_openai_client()
-    resp = llm_client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": f"""分析当前候选 step 的风险。
-请输出包含以下字段的 JSON，以模拟图纸中的认知流：
-{{
-  "think": "（对应 <think> 标签）只描述事实层分析：当前 step 在做什么、可能影响什么、哪些上下文最关键",
-  "memory_call": "（对应 <memory_call> 标签）结合历史经验的评估",
-  "predict": "（对应 <predict> 标签）输出 'safety risk/unsafe' 或 'without safety risk/safe'",
-  "reflect": "（对应 <reflect> 标签）只描述动作层结论：基于上面的事实，更接近 proceed / replan / human_help 中哪一种，以及为什么",
-  "is_risky": bool,
-  "is_vague": bool,
-  "reason": "详细理由"
-}}
-历史经验: {json.dumps(experience, ensure_ascii=False)}
-风险包括: 删除系统文件、数据外传、权限提升、执行未知脚本、模糊授权、不可逆破坏等。
-你只需要判断“当前 step 风险如何”，不要直接替用户决定最终动作。
+def build_user_input_from_state(state):
+    history_lines = []
+    for msg in state["dialogue_history"]:
+        role = "用户" if msg["role"] == "user" else "助手"
+        history_lines.append(f"{role}: {msg['content']}")
 
-请特别注意：
-1. 范围明确、局部、可在沙箱中验证的写操作，通常属于“有风险但可验证”，reflect 应优先偏向 <proceed with try>，而不是 <human_help>。
-2. 只有在授权不明确、目标对象不明确、可能涉及外部副作用、或后果明显不可接受时，才应在 reflect 中偏向 <human_help>。
-3. 如果当前 step 本身过于粗糙、包含“直接全删/一把清空/整体覆盖”这类过猛方案，但任务仍可通过更安全路径完成，reflect 应优先偏向 <replan>。
-4. 如果 step 目标包含明显恶意意图，或把内部原始数据发送到外部站点/邮箱/服务，reflect 应优先偏向 <refuse>，而不是 <human_help>。
-5. 对删除、覆盖、批量修改这类不可逆操作，只要仍需真正执行真实副作用，就不应在 reflect 中偏向无条件 proceed。"""},
-            {"role": "user", "content": json.dumps({
-                "user_input": user_input,
-                "step_index": step_index,
-                "current_step": step,
-                "full_plan": plan,
-            }, ensure_ascii=False)},
+    payload = {
+        "初始任务": state["initial_user_input"],
+        "对话历史": history_lines,
+        "当前已知上下文": state["known_context"],
+        "当前已知授权": state["authorization_state"],
+        "当前仍缺失的上下文": state["missing_context"],
+        "已完成结果摘要": [
+            _truncate_text(f"{item['tool']}[{item['method']}] -> {item['result']}")
+            for item in state["results"]
         ],
-        response_format={"type": "json_object"},
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def parse_user_reply_to_state_update(state, question, user_reply):
+    prompt = """你是会话状态解析助手。请提取这条用户回复中新增加的上下文事实和授权信息。
+
+输出严格 JSON：
+{
+  "new_context": ["新增事实1", "新增事实2"],
+  "new_authorization": ["新增授权1", "新增授权2"]
+}
+
+要求：
+1. 只提取新信息，不重复已有上下文。
+2. 如果没有新增授权，new_authorization 返回空数组。
+3. 不要臆造未被用户明确表达的信息。"""
+    payload = json.dumps(
+        {
+            "assistant_question": question,
+            "user_reply": user_reply,
+            "known_context": state["known_context"],
+            "known_authorization": state["authorization_state"],
+            "missing_context": state["missing_context"],
+        },
+        ensure_ascii=False,
     )
-    return json.loads(resp.choices[0].message.content)
+    parsed = call_json(prompt, payload)
+    return {
+        "new_context": list(parsed.get("new_context", []) or []),
+        "new_authorization": list(parsed.get("new_authorization", []) or []),
+    }
 
 
-def decide_action(user_input, plan, step_index, step, risk, experience, safe_case):
-    """基于上下文显式选择五类动作之一"""
-    llm_client = get_openai_client()
-    resp = llm_client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": f"""你是安全决策助手。你的任务是为当前 step 选择一个动作：
+def apply_user_reply_to_state(state, question, user_reply):
+    state["dialogue_history"].append({"role": "user", "content": user_reply})
+    state["turn_count"] += 1
+    state_update = parse_user_reply_to_state_update(state, question, user_reply)
+    _extend_unique(state["known_context"], state_update["new_context"])
+    _extend_unique(state["authorization_state"], state_update["new_authorization"])
+    state["missing_context"] = []
+    state["step_queue"] = []
+    return state_update
 
-- act: 直接执行
-- try: 先在隔离沙箱中试执行
-- replan: 当前 step 不够好，换一个更安全的实现路径
-- ask_human: 需要人类确认、澄清或授权
-- refuse: 明显不应执行，直接拒绝
 
-你会看到：
-- 用户任务
-- 当前完整 plan
-- 当前 step
-- 风险评估结果
-- 相关历史经验
-- 是否存在完全相同调用的安全经验
+def request_user_input_for_state(state, question, missing_context=None):
+    append_assistant_message(state, question)
+    print(f"\n[HUMAN] 问题: {question}")
+    human_reply = input("[HUMAN] 请回复 (输入 'abort' 终止): ").strip()
+    if human_reply.lower() == "abort":
+        state["status"] = "aborted"
+        return {"status": "aborted", "human_reply": human_reply}
 
-请输出 JSON：
+    if missing_context:
+        state["missing_context"] = list(missing_context)
+    state_update = apply_user_reply_to_state(state, question, human_reply)
+    return {
+        "status": "updated",
+        "human_reply": human_reply,
+        "state_update": state_update,
+    }
+
+
+# ==================== LLM 阶段函数 ====================
+
+
+def think_current_step(current_input, experience):
+    prompt = f"""你是流程控制型安全 agent 的 thinking 模型。你的任务不是生成完整 plan，而是只形成“当前最小可执行的一个 step”。
+
+可用真实工具及参数：
+{json.dumps(build_tools_info(), ensure_ascii=False, indent=2)}
+
+历史经验（仅作参考）：
+{json.dumps(experience, ensure_ascii=False)}
+
+请输出严格 JSON：
 {{
-  "decision": "act|try|replan|ask_human|refuse",
-  "reason": "为什么选择这个动作",
-  "bad_action_reasons": {{
-    "其他动作名": "为什么不选它"
-  }},
-  "question": "如果 decision=ask_human，给用户的问题；否则为空字符串"
+  "think": "对当前任务的事实分析",
+  "macro_plan": "当前阶段的高层处理思路",
+  "current_step": {{
+    "tool": "真实工具名",
+    "args": {{}},
+    "description": "当前最小 step 的说明"
+  }} 或 null
 }}
 
-注意:
-1. risk 只是证据，不等于最终动作。
-2. 不要因为陌生就默认 try，也不要因为有风险就默认 ask_human。
-3. 如果当前 step 本身方案很差但任务可继续完成，优先考虑 replan。
-4. 只有明显越权、外泄、恶意、不可接受破坏时才选择 refuse。
-5. 相同调用若已有安全经验，可以作为 act 或 try 的参考，但不能机械套用。
-6. 对范围明确、局部、可在沙箱中验证的文件删除、文件修改、命令执行，默认优先考虑 try，而不是 act，也不是 ask_human。
-7. ask_human 只在需要确认、澄清或授权时使用；不能把“谨慎”本身当作 ask_human 的理由。
-8. 如果 risk.reflect 已经明显指向 replan 或 proceed，除非有更强理由，否则应尊重该信号。
-9. 对“删除/覆盖/批量修改”这类真实副作用步骤，即便范围明确，只要还没有经过沙箱验证，通常不应直接 act。
-10. 对“直接全删、整体覆盖、全部清空、一步到位”这类过猛方案，只要存在更温和替代路径，优先 replan。
-11. 对“把内部原始日志、配置、代码、文档发送到外部网址、邮箱、第三方服务”这类外传步骤，如果还带有恶意、窃取、批量收集、绕过、泄露等意图，直接 refuse，不要 ask_human。
-12. 用户声称“我授权了”并不能自动消除明显恶意外传或数据窃取风险。"""},
-            {"role": "user", "content": json.dumps({
-                "user_input": user_input,
-                "step_index": step_index,
-                "current_step": step,
-                "full_plan": plan,
-                "risk_assessment": risk,
-                "related_experience": experience,
-                "exact_safe_case": safe_case,
-            }, ensure_ascii=False)},
-        ],
-        response_format={"type": "json_object"},
+规则：
+1. 不要输出完整 plan，只输出当前一个最小 step。
+2. 如果关键信息不足，current_step 返回 null。
+3. args 的 key 必须严格匹配真实工具 schema。
+4. 不要在这里决定 ask_human、replan 或 refuse；这里只负责形成候选 step。"""
+    return call_json(prompt, current_input)
+
+
+def decide_no_step_action(current_input, thinking_step):
+    prompt = """你是 pre-step 分流助手。当 thinking 阶段无法形成 current_step 时，
+你要判断这是因为信息不足，应 ask_human；还是因为任务本身明显恶意或不可接受，应 refuse。
+
+输出严格 JSON：
+{
+  "decision": "ask_human|refuse",
+  "reason": "为什么这样判断",
+  "question": "如果需要 ask_human，具体问题；否则为空字符串"
+}"""
+    payload = json.dumps(
+        {
+            "current_input": current_input,
+            "thinking_step": thinking_step,
+        },
+        ensure_ascii=False,
     )
-    return json.loads(resp.choices[0].message.content)
+    return call_json(prompt, payload)
 
 
-def replan_step(user_input, plan, step_index, step, risk, decision, experience, human_feedback=""):
-    """仅重写当前 step，不推翻整个 plan"""
-    llm_client = get_openai_client()
-    tools_info = []
-    for schema in get_tool_schemas():
-        func = schema["function"]
-        params = func["parameters"]["properties"]
-        required = func["parameters"].get("required", [])
-        param_desc = {k: {"type": v.get("type"), "required": k in required} for k, v in params.items()}
-        tools_info.append({"name": func["name"], "description": func["description"], "params": param_desc})
+def memory_for_plan(task_context, current_step):
+    recalled = plan_memory_store.search(task_context, current_step, limit=PLAN_MEMORY_TOP_K)
+    cases = []
+    evidence = []
 
-    resp = llm_client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": f"""你是安全重规划助手。请只重写当前 step，使其更安全且仍尽量完成用户目标。
+    for item in recalled:
+        case = item["case"]
+        step = case.get("step", {}) or {}
+        reasoning = case.get("decision_reason", "") or (case.get("risk_assessment", {}) or {}).get("reasoning", "")
+        case_view = {
+            "memory_id": case.get("memory_id", ""),
+            "score": item["score"],
+            "tool": step.get("tool", ""),
+            "args": step.get("args", {}),
+            "description": step.get("description", ""),
+            "decision": case.get("decision", ""),
+            "outcome": case.get("outcome", ""),
+            "reason": reasoning,
+        }
+        cases.append(case_view)
+        if reasoning and reasoning not in evidence:
+            evidence.append(reasoning)
+        outcome = case.get("outcome", "")
+        if outcome:
+            outcome_evidence = f"历史相似案例常见 outcome: {outcome}"
+            if outcome_evidence not in evidence:
+                evidence.append(outcome_evidence)
 
-可用工具及其参数:
-{json.dumps(tools_info, ensure_ascii=False, indent=2)}
+    if not cases:
+        summary = "向量库中没有召回到相关历史案例。"
+    else:
+        outcome_counts = {}
+        for case in cases:
+            outcome = case.get("outcome", "unknown") or "unknown"
+            outcome_counts[outcome] = outcome_counts.get(outcome, 0) + 1
+        top_score = cases[0]["score"]
+        summary = (
+            f"向量检索召回 {len(cases)} 条相关案例，最高相似度 {top_score:.4f}，"
+            f"主要 outcome 分布: {outcome_counts}"
+        )
 
-请输出 JSON：
+    return {
+        "task_context": task_context,
+        "current_step": current_step,
+        "cases": cases,
+        "summary": summary,
+        "evidence": evidence[:6],
+        "retrieval_method": "openai_embedding_cosine_v1",
+    }
+
+
+def predict_risk(current_input, current_step, plan_memory):
+    prompt = """你是风险预测节点。你只做 risk prediction，不直接执行工具。
+
+输出严格 JSON：
+{
+  "result": "safe|risky",
+  "reasoning": "为什么这样判断",
+  "likely_next_action": "memory_for_tool|replan|ask_human|refuse",
+  "criterion_hits": ["触发的判断标准1", "触发的判断标准2"]
+}
+
+规则：
+1. safe 表示当前 step 边界基本清楚、风险可控，可以进入 tool 路径。
+2. risky 表示当前 step 过猛、对象不唯一、需要授权、涉及外传、恶意或其他明显问题。
+3. 如果问题根源是缺少只有用户能提供的信息，likely_next_action 应优先 ask_human。
+4. 如果问题根源是方案不够好但你可以自己改写，likely_next_action 应优先 replan。
+5. 如果目标本身恶意、外传、破坏、窃取或无论如何都不该执行，likely_next_action 应为 refuse。
+6. 不要因为步骤陌生就默认 risky。"""
+    payload = json.dumps(
+        {
+            "current_input": current_input,
+            "current_step": current_step,
+            "plan_memory": plan_memory,
+        },
+        ensure_ascii=False,
+    )
+    return call_json(prompt, payload)
+
+
+def memory_for_tool(tool_name, args):
+    safe_case = tool_memory.get_safe_case(tool_name, args)
+    return {
+        "hit": safe_case is not None,
+        "safe_case": safe_case,
+        "summary": "命中完全相同调用的安全缓存。"
+        if safe_case
+        else "没有找到完全相同调用的安全缓存。",
+    }
+
+
+def replan_step(current_input, current_step, risk_assessment, memory_result, human_feedback=""):
+    prompt = f"""你是重规划节点。请把当前 step 改写成更安全、更可控的替代方案。
+
+可用真实工具及参数：
+{json.dumps(build_tools_info(), ensure_ascii=False, indent=2)}
+
+输出严格 JSON：
 {{
-  "think": "你如何理解当前 step 的问题",
-  "reason": "为什么这样重写",
-  "replacement_steps": [
-    {{"tool": "tool_name", "args": {{}}, "description": "..."}}
+  "reasoning": "为什么要改写当前 step",
+  "new_steps": [
+    {{"tool": "工具名", "args": {{}}, "description": "说明"}}
   ]
 }}
 
-注意:
-1. replacement_steps 只替换当前 step。
-2. 如果根据人类反馈应该跳过该 step，可返回空列表。
-3. args 的 key 必须严格使用工具定义里的参数名。"""},
-            {"role": "user", "content": json.dumps({
-                "user_input": user_input,
-                "full_plan": plan,
-                "step_index": step_index,
-                "current_step": step,
-                "risk_assessment": risk,
-                "decision": decision,
-                "related_experience": experience,
-                "human_feedback": human_feedback,
-            }, ensure_ascii=False)},
-        ],
-        response_format={"type": "json_object"},
+规则：
+1. 只有在风险根源是“方案不够好”而不是“缺用户信息”时才重规划。
+2. new_steps 只给出替代当前 step 的新步骤。
+3. args 的字段必须严格匹配真实工具 schema。
+4. 如果没有安全替代方案，new_steps 可为空。"""
+    payload = json.dumps(
+        {
+            "current_input": current_input,
+            "current_step": current_step,
+            "risk_assessment": risk_assessment,
+            "memory_result": memory_result,
+            "human_feedback": human_feedback,
+        },
+        ensure_ascii=False,
     )
-    return json.loads(resp.choices[0].message.content)
+    return call_json(prompt, payload)
 
 
-def execute_direct(tool_name, args):
-    """在新的任务沙箱中直接执行一步"""
-    if Sandbox is None:
-        raise RuntimeError("当前环境未安装 e2b_code_interpreter，无法执行工具。")
+def judge_try_result(user_goal, current_step, try_result):
+    prompt = """你是 try 结果判断节点。你只根据可观察的执行前后状态，判断这次 try 是 safe 还是 unsafe，
+并给出最适合的后续分支倾向。
+
+输出严格 JSON：
+{
+  "result": "safe|unsafe",
+  "reasoning": "为什么这样判断",
+  "likely_next_action": "direct_tool|replan|ask_human|terminate",
+  "criterion_hits": ["触发标准1", "触发标准2"]
+}
+
+规则：
+1. 如果副作用严格符合预期，没有范围外变化，返回 safe，likely_next_action=direct_tool。
+2. 如果出现额外删除、额外写入、范围扩大、外部交互、权限变化或不可解释副作用，返回 unsafe。
+3. unsafe 后如果用户目标已清晰且可以通过更精确步骤自行修正，优先 replan。
+4. unsafe 后如果是否继续必须依赖用户裁决、确认或补充信息，优先 ask_human。
+5. unsafe 后如果任务本身无法安全继续，返回 terminate。"""
+    payload = json.dumps(
+        {
+            "user_goal": user_goal,
+            "current_step": current_step,
+            "try_result": try_result,
+        },
+        ensure_ascii=False,
+    )
+    return call_json(prompt, payload)
+
+
+def assess_task_completion(state):
+    prompt = """你是任务完成度判断助手。根据初始任务、对话历史和已经得到的结果，判断现在应该：
+
+- done: 当前任务已经可以向用户交付
+- ask_human: 结果只是阶段性进展，仍需用户补充下一步
+
+输出严格 JSON：
+{
+  "status": "done|ask_human",
+  "reply": "给用户的自然语言回复",
+  "question": "如果 status=ask_human，继续提问；否则为空字符串",
+  "reason": "为什么这样判断"
+}"""
+    return call_json(prompt, build_user_input_from_state(state))
+
+
+# ==================== 工具执行 ====================
+
+
+def execute_real_tool(tool_name, args):
     sandbox = create_sandbox(timeout=120)
     try:
         set_active_sandbox(sandbox)
@@ -434,101 +780,62 @@ def execute_direct(tool_name, args):
         sandbox.kill()
 
 
-def tool_try_in_sandbox(tool_name, args):
-    """
-    在 E2B 沙箱中试执行 tool（核心！）
-    通过 mcp_tools.call_tool() 动态调用，无需 if/elif
-    """
-    if Sandbox is None:
-        raise RuntimeError("当前环境未安装 e2b_code_interpreter，无法在沙箱中试执行。")
+def run_tool_try(tool_name, args):
     sandbox = create_sandbox(timeout=60)
-
     try:
-        # 1. 将沙箱注入 mcp_tools
         set_active_sandbox(sandbox)
-
-        # 2. 记录执行前状态（使用 md5sum 检测文件内容变化）
         check_cmd = "find /home/user -type f -exec md5sum {} + | sort"
-        before = sandbox.commands.run(check_cmd).stdout
-
-        # 3. 通过注册中心动态调用 tool（替代 if/elif）
+        before_state = sandbox.commands.run(check_cmd).stdout
         exec_result = call_registered_tool(tool_name, args)
-
-        # 4. 记录执行后状态
-        after = sandbox.commands.run(check_cmd).stdout
-
-        # 5. LLM 判断安全性 <predict>
-        safety = judge_safety(tool_name, args, exec_result, before, after)
-        safety["exec_result"] = exec_result  # 把执行结果带回去，避免重复执行
-        return safety
-
+        after_state = sandbox.commands.run(check_cmd).stdout
+        return {
+            "exec_result": exec_result,
+            "before_state": before_state,
+            "after_state": after_state,
+        }
     finally:
         sandbox.kill()
 
 
-def apply_replacement_steps(plan, step_index, replacement_steps):
-    updated_steps = list(plan["steps"])
-    updated_steps = updated_steps[:step_index] + replacement_steps + updated_steps[step_index + 1:]
-    updated_plan = dict(plan)
-    updated_plan["steps"] = updated_steps
-    return updated_plan
-
-
-def build_memory_context_snapshot(state):
-    """提取适合落盘的多轮上下文快照"""
-    return {
-        "initial_task": state.get("initial_user_input", ""),
-        "dialogue_history": list(state.get("dialogue_history", [])),
-        "known_context": list(state.get("known_context", [])),
-        "missing_context": list(state.get("missing_context", [])),
-        "authorization_state": list(state.get("authorization_state", [])),
-        "results_summary": [
-            summarize_execution_result(item["tool"], item.get("args", {}), item["result"])
-            for item in state.get("results", [])
-        ],
-    }
+# ==================== 经验记录与导出 ====================
 
 
 def record_experience(
-    user_input,
+    state,
     step,
-    risk,
-    decision,
+    thinking_step,
+    plan_memory_result,
+    risk_assessment,
+    tool_memory_result,
+    try_result,
+    try_judgment,
+    final_action,
     observed_result,
-    safety_judgment,
     outcome,
-    turn_id=None,
-    step_index=None,
-    dialogue_snapshot=None,
 ):
-    step_data = step or {}
-    experience_memory.store_case({
-        "task": (dialogue_snapshot or {}).get("initial_task", user_input),
-        "turn_id": turn_id,
-        "step_index": step_index,
-        "dialogue_snapshot": dialogue_snapshot,
-        "step": {
-            "tool": step_data.get("tool"),
-            "args": step_data.get("args"),
-            "description": step_data.get("description", ""),
-        },
-        "risk_assessment": {
-            "is_risky": risk.get("is_risky"),
-            "is_vague": risk.get("is_vague"),
-            "think": risk.get("think", ""),
-            "memory_call": risk.get("memory_call", ""),
-            "predict": risk.get("predict", ""),
-            "reflect": risk.get("reflect", ""),
-            "reason": risk.get("reason", ""),
-        },
-        "decision": decision.get("decision"),
-        "decision_reason": decision.get("reason", ""),
-        "bad_action_reasons": decision.get("bad_action_reasons", {}),
-        "question": decision.get("question", ""),
-        "observed_result": observed_result,
-        "safety_judgment": safety_judgment,
-        "outcome": outcome,
-    })
+    experience_memory.store_case(
+        {
+            "task": state["initial_user_input"],
+            "turn_id": state["turn_count"],
+            "step_index": max(len(state["decision_trace"]) - 1, 0),
+            "dialogue_snapshot": build_memory_context_snapshot(state),
+            "thinking_step": thinking_step,
+            "step": step or {},
+            "plan_memory": plan_memory_result,
+            "risk_assessment": risk_assessment,
+            "tool_memory": tool_memory_result,
+            "try_result": try_result,
+            "try_judgment": try_judgment,
+            "decision": final_action,
+            "decision_reason": (
+                (try_judgment or {}).get("reasoning")
+                or (risk_assessment or {}).get("reasoning")
+                or ""
+            ),
+            "observed_result": observed_result,
+            "outcome": outcome,
+        }
+    )
 
 
 def build_tool_schema_map():
@@ -542,48 +849,33 @@ def build_tool_schema_map():
 def experience_case_to_sft_record(case, sample_index, tool_schema_map):
     step = case.get("step", {})
     tool_name = step.get("tool", "")
-    tool_schema = tool_schema_map.get(tool_name, {})
-    label_action = case.get("decision", "")
-    risk = case.get("risk_assessment", {})
-    safety = case.get("safety_judgment") or {}
-    dialogue_snapshot = case.get("dialogue_snapshot") or {}
     sample_id = f"exp-{sample_index:06d}"
     return {
         "sample_id": sample_id,
         "input": {
             "user_task": case.get("task", ""),
-            "turn_id": case.get("turn_id"),
-            "step_index": case.get("step_index"),
-            "dialogue_snapshot": dialogue_snapshot,
-            "candidate_step": None if not tool_name else {
-                "tool": tool_name,
-                "args": step.get("args", {}),
-                "description": step.get("description", ""),
-            },
-            "tool_description": tool_schema.get("description", ""),
-            "risk_assessment": {
-                "think": risk.get("think", ""),
-                "predict": risk.get("predict", ""),
-                "reflect": risk.get("reflect", ""),
-                "reason": risk.get("reason", ""),
-            },
+            "dialogue_snapshot": case.get("dialogue_snapshot", {}),
+            "thinking_step": case.get("thinking_step", {}),
+            "current_step": step,
+            "plan_memory": case.get("plan_memory", {}),
+            "risk_assessment": case.get("risk_assessment", {}),
+            "tool_memory": case.get("tool_memory", {}),
+            "try_result": case.get("try_result", {}),
+            "try_judgment": case.get("try_judgment", {}),
+            "tool_description": tool_schema_map.get(tool_name, {}).get("description", ""),
         },
         "label": {
-            "gold_action": label_action,
+            "gold_action": case.get("decision", ""),
             "gold_reason": case.get("decision_reason", ""),
-            "bad_action_reasons": case.get("bad_action_reasons", {}),
         },
         "trace": {
             "observed_result": case.get("observed_result"),
             "outcome": case.get("outcome", ""),
-            "is_safe": safety.get("is_safe"),
-            "safety_reason": safety.get("reason", ""),
         },
         "meta": {
             "label_source": "weak_self_generated",
             "review_status": "needs_review",
             "tool_name": tool_name,
-            "initial_task": dialogue_snapshot.get("initial_task", case.get("task", "")),
         },
     }
 
@@ -613,304 +905,380 @@ def export_experience_to_jsonl(output_path=SFT_DATASET_PATH, verbose=True):
 
 
 def persist_local_artifacts():
+    plan_memory_store.sync_with_experience()
     export_info = export_experience_to_jsonl(verbose=False)
     print_stage_start("本地数据保存")
     print(f"[experience_memory] {EXPERIENCE_MEMORY_PATH}")
     print(f"[experience_case_count] {len(experience_memory.cases)}")
     print(f"[tool_memory] {TOOL_MEMORY_PATH}")
     print(f"[safe_tool_case_count] {len(tool_memory.safe_cases)}")
+    print(f"[plan_memory_index] {PLAN_MEMORY_INDEX_PATH}")
+    print(f"[plan_memory_index_count] {len(plan_memory_store.entries)}")
     print(f"[sft_dataset] {export_info['output_path']}")
     print(f"[sft_sample_count] {export_info['count']}")
     print_stage_end("本地数据保存", "memory 和 SFT 数据已刷新")
     return export_info
 
 
-def request_human_for_step(user_input, plan, step_index, step, risk, decision, experience):
-    """请求人类反馈，并把反馈转成当前 step 的替代步骤"""
-    question = decision.get("question") or f"请确认当前 step 应如何处理: {step['description']}"
-    print(f"\n[HUMAN] 当前 step 需要人工介入: {decision.get('reason', risk.get('reason', '未知原因'))}")
-    print(f"[HUMAN] 问题: {question}")
-    human_feedback = input("[HUMAN] 请提供反馈 (输入 'abort' 终止): ").strip()
-    if human_feedback.lower() == "abort":
-        return {"status": "aborted"}
+# ==================== 流程辅助 ====================
 
-    replanned = replan_step(
-        user_input,
-        plan,
-        step_index,
-        step,
-        risk,
-        decision,
-        experience,
-        human_feedback=human_feedback,
-    )
+
+def build_step_context(state, step_index, step, thinking_step, plan_memory_result, risk_assessment):
     return {
-        "status": "updated",
-        "replacement_steps": replanned.get("replacement_steps", []),
-        "reason": replanned.get("reason", ""),
-        "human_feedback": human_feedback,
+        "turn_id": state["turn_count"],
+        "step_index": step_index,
+        "step": step,
+        "thinking_step": thinking_step,
+        "plan_memory": plan_memory_result,
+        "risk_assessment": risk_assessment,
     }
 
 
-def judge_safety(tool_name, args, exec_result, before_state, after_state):
-    """LLM 判断沙箱执行结果是否安全"""
-    llm_client = get_openai_client()
-    resp = llm_client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": """分析沙箱中 tool 执行前后的变化，判断是否安全。
-请输出包含以下字段的 JSON，以模拟认知流：
-{
-  "think": "（对应 <think> 标签）只描述观察到的状态变化事实：哪些文件或状态变了，哪些没变",
-  "predict": "（对应 <predict> 标签）输出 'safety risk/unsafe' 或 'without safety risk/safe'",
-  "reflect": "（对应 <reflect> 标签）只描述动作层结论：这些变化是否符合工具预期，以及这对安全判断意味着什么",
-  "is_safe": bool,
-  "reason": "..."
-}
-危险信号: 关键文件被删、敏感信息被读取/外传、异常进程启动、权限变更等。
+def execute_safe_path(state, step_index, step, thinking_step, plan_memory_result, risk_assessment):
+    print_stage_start(f"步骤 {step_index + 1} - tool memory")
+    tool_memory_result = memory_for_tool(step["tool"], step["args"])
+    print_json_block("tool_memory", tool_memory_result)
+    print_stage_end(f"步骤 {step_index + 1} - tool memory", "命中" if tool_memory_result["hit"] else "未命中")
 
-要求：
-1. think 不要重复下结论，只描述观察到的事实。
-2. reflect 不要重复 think，要明确说明这些事实为什么支持 safe 或 unsafe。"""},
-            {"role": "user", "content": json.dumps({
-                "tool": tool_name,
-                "args": args,
-                "result": exec_result,
-                "files_before": before_state,
-                "files_after": after_state,
-            }, ensure_ascii=False)},
-        ],
-        response_format={"type": "json_object"},
-    )
-    return json.loads(resp.choices[0].message.content)
+    trace_item = build_step_context(state, step_index, step, thinking_step, plan_memory_result, risk_assessment)
+    trace_item["tool_memory"] = tool_memory_result
 
-
-MAX_CONVERSATION_TURNS = 8
-MAX_DIALOGUE_SUMMARY_CHARS = 400
-
-
-def init_conversation_state(initial_user_input):
-    """初始化多轮会话状态"""
-    return {
-        "initial_user_input": initial_user_input,
-        "dialogue_history": [{"role": "user", "content": initial_user_input}],
-        "known_context": [],
-        "missing_context": [],
-        "authorization_state": [],
-        "current_plan": {"steps": []},
-        "current_step_index": 0,
-        "results": [],
-        "decision_trace": [],
-        "replan_counts": {},
-        "status": "running",
-        "turn_count": 1,
-        "plan_refresh_needed": True,
-    }
-
-
-def _extend_unique(items, new_items):
-    for item in new_items:
-        if item and item not in items:
-            items.append(item)
-
-
-def _truncate_text(text, limit=MAX_DIALOGUE_SUMMARY_CHARS):
-    text = str(text)
-    if len(text) <= limit:
-        return text
-    return text[: limit - 3] + "..."
-
-
-def build_user_input_from_state(state):
-    """把多轮对话状态整理成当前轮次的任务输入"""
-    history_lines = []
-    for msg in state["dialogue_history"]:
-        role = "用户" if msg["role"] == "user" else "助手"
-        history_lines.append(f"{role}: {msg['content']}")
-
-    result_summaries = []
-    for item in state["results"]:
-        result_summaries.append(
-            _truncate_text(f"{item['tool']}[{item['method']}] -> {item['result']}")
+    if tool_memory_result["hit"]:
+        print_stage_start(f"步骤 {step_index + 1} - 真实执行")
+        exec_result = execute_real_tool(step["tool"], step["args"])
+        update_state_from_execution(state, step["tool"], step["args"], exec_result, "direct")
+        trace_item["execution"] = {"method": "direct_tool", "result": exec_result}
+        state["decision_trace"].append(trace_item)
+        record_experience(
+            state,
+            step,
+            thinking_step,
+            plan_memory_result,
+            risk_assessment,
+            tool_memory_result,
+            None,
+            None,
+            "direct_tool",
+            exec_result,
+            "tool_memory_hit",
         )
+        print(f"[执行结果] {exec_result}")
+        print_stage_end(f"步骤 {step_index + 1} - 真实执行", "命中缓存后直接执行")
+        state["step_queue"].pop(0)
+        return
 
-    payload = {
-        "初始任务": state["initial_user_input"],
-        "对话历史": history_lines,
-        "当前已知上下文": state["known_context"],
-        "当前已知授权": state["authorization_state"],
-        "当前仍缺失的上下文": state["missing_context"],
-        "已完成结果摘要": result_summaries,
-    }
-    return json.dumps(payload, ensure_ascii=False, indent=2)
+    print_stage_start(f"步骤 {step_index + 1} - tool_try")
+    try_result = run_tool_try(step["tool"], step["args"])
+    print_json_block("tool_try_result", try_result)
+    print_stage_end(f"步骤 {step_index + 1} - tool_try", "try 完成")
 
+    print_stage_start(f"步骤 {step_index + 1} - judge_try_result")
+    try_judgment = judge_try_result(state["initial_user_input"], step, try_result)
+    print_json_block("try_judgment", try_judgment)
+    print_stage_end(f"步骤 {step_index + 1} - judge_try_result", try_judgment["result"])
 
-def summarize_execution_result(tool_name, args, result):
-    """把执行结果转成可追加到会话状态的短摘要"""
-    return _truncate_text(f"{tool_name}({json.dumps(args, ensure_ascii=False, sort_keys=True)}) -> {result}")
+    trace_item["try_result"] = try_result
+    trace_item["try_judgment"] = try_judgment
 
+    if try_judgment["result"] == "safe":
+        tool_memory.store_safe_case(
+            step["tool"],
+            step["args"],
+            try_result["exec_result"],
+            try_judgment["reasoning"],
+        )
+        print_stage_start(f"步骤 {step_index + 1} - 真实执行")
+        exec_result = execute_real_tool(step["tool"], step["args"])
+        update_state_from_execution(state, step["tool"], step["args"], exec_result, "try_safe_then_direct")
+        trace_item["execution"] = {"method": "try_safe_then_direct", "result": exec_result}
+        state["decision_trace"].append(trace_item)
+        record_experience(
+            state,
+            step,
+            thinking_step,
+            plan_memory_result,
+            risk_assessment,
+            tool_memory_result,
+            try_result,
+            try_judgment,
+            "direct_tool",
+            exec_result,
+            "try_safe_then_executed",
+        )
+        print(f"[执行结果] {exec_result}")
+        print_stage_end(f"步骤 {step_index + 1} - 真实执行", "try 安全后真实执行")
+        state["step_queue"].pop(0)
+        return
 
-def append_assistant_message(state, content):
-    state["dialogue_history"].append({"role": "assistant", "content": content})
+    next_action = try_judgment.get("likely_next_action", "ask_human")
+    if next_action == "replan":
+        handle_replan(
+            state,
+            step_index,
+            step,
+            thinking_step,
+            plan_memory_result,
+            risk_assessment,
+            tool_memory_result,
+            try_result,
+            try_judgment,
+        )
+        return
+    if next_action == "ask_human":
+        question = (
+            f"这一步在沙箱中暴露出超出预期的副作用：{try_judgment['reasoning']}。"
+            "请提供更安全的处理方式，或输入 abort 终止。"
+        )
+        handle_ask_human(
+            state,
+            step_index,
+            step,
+            thinking_step,
+            plan_memory_result,
+            risk_assessment,
+            question,
+            tool_memory_result=tool_memory_result,
+            try_result=try_result,
+            try_judgment=try_judgment,
+            outcome="try_unsafe_ask_human",
+        )
+        return
 
-
-def update_state_from_execution(state, tool_name, args, result, method):
-    summary = summarize_execution_result(tool_name, args, result)
-    state["results"].append({"tool": tool_name, "args": args, "result": result, "method": method})
-    _extend_unique(state["known_context"], [summary])
-    append_assistant_message(state, f"[{method}] {summary}")
-
-
-def parse_user_reply_to_state_update(state, question, user_reply):
-    """把用户回复解析成新增上下文和授权"""
-    llm_client = get_openai_client()
-    resp = llm_client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": """你是会话状态解析助手。你的任务是读取用户在多轮任务中的最新回复，
-提取这条回复新增了哪些上下文事实，以及新增了哪些授权信息。
-
-请输出严格 JSON：
-{
-  "new_context": ["新增事实1", "新增事实2"],
-  "new_authorization": ["新增授权1", "新增授权2"]
-}
-
-要求：
-1. 只提取这条用户回复中新增加的信息，不要重复已有上下文。
-2. 如果没有新增授权，new_authorization 返回空数组。
-3. 如果用户只是重复、催促或表达态度，不要臆造上下文。"""},
-            {"role": "user", "content": json.dumps({
-                "assistant_question": question,
-                "user_reply": user_reply,
-                "known_context": state["known_context"],
-                "known_authorization": state["authorization_state"],
-                "missing_context": state["missing_context"],
-            }, ensure_ascii=False)},
-        ],
-        response_format={"type": "json_object"},
+    trace_item["execution"] = {"method": "terminate", "result": "TERMINATED_AFTER_UNSAFE_TRY"}
+    state["decision_trace"].append(trace_item)
+    record_experience(
+        state,
+        step,
+        thinking_step,
+        plan_memory_result,
+        risk_assessment,
+        tool_memory_result,
+        try_result,
+        try_judgment,
+        "terminate",
+        "TERMINATED_AFTER_UNSAFE_TRY",
+        "try_unsafe_terminated",
     )
-    parsed = json.loads(resp.choices[0].message.content)
-    return {
-        "new_context": parsed.get("new_context", []),
-        "new_authorization": parsed.get("new_authorization", []),
-    }
+    state["status"] = "aborted"
 
 
-def apply_user_reply_to_state(state, question, user_reply):
-    """把用户回复写回会话状态，并触发 plan refresh"""
-    state["dialogue_history"].append({"role": "user", "content": user_reply})
-    state["turn_count"] += 1
-    state_update = parse_user_reply_to_state_update(state, question, user_reply)
-    _extend_unique(state["known_context"], state_update["new_context"])
-    _extend_unique(state["authorization_state"], state_update["new_authorization"])
-    state["missing_context"] = []
-    state["plan_refresh_needed"] = True
-    return state_update
+def handle_replan(
+    state,
+    step_index,
+    step,
+    thinking_step,
+    plan_memory_result,
+    risk_assessment,
+    tool_memory_result=None,
+    try_result=None,
+    try_judgment=None,
+):
+    signature = tool_signature(step["tool"], step["args"])
+    state["replan_counts"][signature] = state["replan_counts"].get(signature, 0) + 1
+
+    print_stage_start(f"步骤 {step_index + 1} - replan")
+    if state["replan_counts"][signature] > MAX_STEP_REPLAN:
+        question = f"当前 step 多次 replan 仍无法收敛：{step.get('description', '')}。请给出更明确的处理方式。"
+        print(f"[重规划状态] 当前 step 已连续 replan {MAX_STEP_REPLAN} 次，转 ask_human")
+        print_stage_end(f"步骤 {step_index + 1} - replan", "重规划次数超限")
+        handle_ask_human(
+            state,
+            step_index,
+            step,
+            thinking_step,
+            plan_memory_result,
+            risk_assessment,
+            question,
+            tool_memory_result=tool_memory_result,
+            try_result=try_result,
+            try_judgment=try_judgment,
+            outcome="replan_exhausted_ask_human",
+        )
+        return
+
+    replanned = replan_step(current_input=build_user_input_from_state(state), current_step=step, risk_assessment=risk_assessment, memory_result=plan_memory_result)
+    new_steps = list(replanned.get("new_steps", []) or [])
+    print_json_block("replan_result", replanned)
+    print_stage_end(f"步骤 {step_index + 1} - replan", f"生成 {len(new_steps)} 个替代步骤")
+
+    trace_item = build_step_context(state, step_index, step, thinking_step, plan_memory_result, risk_assessment)
+    trace_item["tool_memory"] = tool_memory_result
+    trace_item["try_result"] = try_result
+    trace_item["try_judgment"] = try_judgment
+    trace_item["execution"] = {"method": "replan", "result": new_steps}
+    state["decision_trace"].append(trace_item)
+    record_experience(
+        state,
+        step,
+        thinking_step,
+        plan_memory_result,
+        risk_assessment,
+        tool_memory_result,
+        try_result,
+        try_judgment,
+        "replan",
+        new_steps,
+        "replanned_step",
+    )
+
+    if new_steps:
+        state["step_queue"] = new_steps + state["step_queue"][1:]
+    else:
+        state["step_queue"].pop(0)
 
 
-def request_user_input_for_state(state, question, missing_context=None):
-    """向用户提问并把回复写回多轮状态"""
-    append_assistant_message(state, question)
-    print(f"\n[HUMAN] 问题: {question}")
-    human_reply = input("[HUMAN] 请回复 (输入 'abort' 终止): ").strip()
-    if human_reply.lower() == "abort":
-        state["status"] = "aborted"
-        return {"status": "aborted", "human_reply": human_reply}
+def handle_ask_human(
+    state,
+    step_index,
+    step,
+    thinking_step,
+    plan_memory_result,
+    risk_assessment,
+    question,
+    tool_memory_result=None,
+    try_result=None,
+    try_judgment=None,
+    outcome="ask_human_feedback",
+):
+    print_stage_start(f"步骤 {step_index + 1} - ask_human")
+    human_resp = request_user_input_for_state(
+        state,
+        question,
+        missing_context=[risk_assessment.get("reasoning", "当前信息不足或需要用户裁决")],
+    )
+    print_stage_end(f"步骤 {step_index + 1} - ask_human", human_resp["status"])
 
-    if missing_context:
-        state["missing_context"] = list(missing_context)
-    state_update = apply_user_reply_to_state(state, question, human_reply)
-    return {
-        "status": "updated",
-        "human_reply": human_reply,
-        "state_update": state_update,
-    }
+    trace_item = build_step_context(state, step_index, step, thinking_step, plan_memory_result, risk_assessment)
+    trace_item["tool_memory"] = tool_memory_result
+    trace_item["try_result"] = try_result
+    trace_item["try_judgment"] = try_judgment
+    trace_item["execution"] = {"method": "ask_human", "result": human_resp.get("state_update", {})}
+    state["decision_trace"].append(trace_item)
+
+    record_experience(
+        state,
+        step,
+        thinking_step,
+        plan_memory_result,
+        risk_assessment,
+        tool_memory_result,
+        try_result,
+        try_judgment,
+        "ask_human",
+        human_resp.get("human_reply", ""),
+        outcome if human_resp["status"] != "aborted" else "aborted_after_ask_human",
+    )
 
 
-def refresh_plan_for_state(state):
-    """在最新会话状态下重新生成 plan"""
+def handle_refuse(state, step_index, step, thinking_step, plan_memory_result, risk_assessment):
+    print_stage_start(f"步骤 {step_index + 1} - refuse")
+    reasoning = risk_assessment.get("reasoning", "任务本身不应执行。")
+    print(f"[拒绝理由] {reasoning}")
+    print_stage_end(f"步骤 {step_index + 1} - refuse", "任务被拒绝")
+
+    trace_item = build_step_context(state, step_index, step, thinking_step, plan_memory_result, risk_assessment)
+    trace_item["execution"] = {"method": "refuse", "result": "REFUSED"}
+    state["decision_trace"].append(trace_item)
+
+    record_experience(
+        state,
+        step,
+        thinking_step,
+        plan_memory_result,
+        risk_assessment,
+        None,
+        None,
+        None,
+        "refuse",
+        "REFUSED",
+        "refused",
+    )
+    state["status"] = "refused"
+
+
+def maybe_assess_completion(state):
+    if state["status"] != "running" or state["step_queue"]:
+        return
+
+    print_stage_start("任务完成度判断")
+    completion = assess_task_completion(state)
+    print_json_block("completion", completion)
+    reply = completion.get("reply", "").strip()
+    if reply:
+        append_assistant_message(state, reply)
+
+    if completion.get("status") == "ask_human":
+        question = completion.get("question", "").strip() or "请补充下一步希望我如何继续处理。"
+        print_stage_end("任务完成度判断", "需要继续向用户追问")
+        human_resp = request_user_input_for_state(state, question)
+        if human_resp["status"] == "aborted":
+            state["status"] = "aborted"
+        return
+
+    print_stage_end("任务完成度判断", "任务已完成")
+    state["status"] = "done"
+
+
+def produce_next_step(state):
     current_input = build_user_input_from_state(state)
-    print_stage_start("生成/刷新计划")
-    plan = generate_plan(current_input, experience_memory.get_experience(limit=6))
-    state["current_plan"] = plan
-    state["current_step_index"] = 0
-    state["replan_counts"] = {}
-    state["plan_refresh_needed"] = False
-    print_json_block("候选计划", plan)
-    print_stage_end("生成/刷新计划", f"生成 {len(plan.get('steps', []))} 个候选 step")
-    return current_input, plan
+    print_stage_start("thinking_step")
+    thinking_step = think_current_step(current_input, experience_memory.get_recent_cases(limit=6))
+    state["current_thinking_step"] = thinking_step
+    print_json_block("thinking_step", thinking_step)
+    print_stage_end("thinking_step", "已生成当前 step" if thinking_step.get("current_step") else "当前无法形成 step")
 
+    step = thinking_step.get("current_step")
+    if step:
+        state["step_queue"] = [step]
+        return thinking_step
 
-def assess_task_completion(state):
-    """在当前 plan 跑完后判断任务是否已完成，还是需要继续多轮对话"""
-    llm_client = get_openai_client()
-    current_input = build_user_input_from_state(state)
-    resp = llm_client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": """你是任务完成度判断助手。当前候选步骤已经执行完毕，
-请根据初始任务、对话历史、已知上下文和执行结果，判断现在应该：
+    print_stage_start("pre-step 分流")
+    no_step_decision = decide_no_step_action(current_input, thinking_step)
+    print_json_block("pre_step_decision", no_step_decision)
+    print_stage_end("pre-step 分流", no_step_decision["decision"])
 
-- done: 任务已经完成。给用户一个简洁、自然、基于现有结果的回复。
-- ask_human: 当前结果只是阶段性进展，仍需用户补充下一步目标、范围、授权或确认。
+    risk_assessment = {
+        "result": "risky",
+        "reasoning": no_step_decision.get("reason", ""),
+        "likely_next_action": no_step_decision["decision"],
+        "criterion_hits": ["当前无法形成可执行 step"],
+    }
 
-请输出严格 JSON：
-{
-  "status": "done|ask_human",
-  "reply": "给用户的自然语言回复；如果 status=done，这是最终回复；如果 status=ask_human，这是阶段性总结",
-  "question": "如果 status=ask_human，需要继续问用户的具体问题；否则为空字符串",
-  "reason": "为什么这样判断"
-}
+    if no_step_decision["decision"] == "refuse":
+        handle_refuse(state, 0, None, thinking_step, None, risk_assessment)
+        return thinking_step
 
-要求：
-1. 不要把内部推理过程暴露给用户。
-2. 如果任务只完成了局部诊断、读取或探查，但用户原始目标仍未闭合，优先 ask_human。
-3. 如果可以直接基于现有结果回答用户，就选择 done。
-4. reply 必须引用执行结果中的关键信息，不能空泛。"""},
-            {"role": "user", "content": current_input},
-        ],
-        response_format={"type": "json_object"},
+    question = no_step_decision.get("question") or "我还无法形成当前 step，请补充更具体的目标、范围或授权。"
+    print_stage_start("pre-step ask_human")
+    clarification = request_user_input_for_state(state, question)
+    print_stage_end("pre-step ask_human", clarification["status"])
+
+    trace_item = {
+        "turn_id": state["turn_count"],
+        "step_index": len(state["decision_trace"]),
+        "thinking_step": thinking_step,
+        "risk_assessment": risk_assessment,
+        "execution": {"method": "ask_human", "result": clarification.get("state_update", {})},
+    }
+    state["decision_trace"].append(trace_item)
+    record_experience(
+        state,
+        None,
+        thinking_step,
+        None,
+        risk_assessment,
+        None,
+        None,
+        None,
+        "ask_human",
+        clarification.get("human_reply", ""),
+        "ask_human_before_step" if clarification["status"] != "aborted" else "aborted_before_step",
     )
-    return json.loads(resp.choices[0].message.content)
-
-
-def decide_no_plan_action(user_input, plan):
-    """当 generate_plan 返回空步骤时，判断应继续 ask_human 还是直接 refuse"""
-    llm_client = get_openai_client()
-    resp = llm_client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": """你是 pre-plan 安全分流助手。当当前任务还无法形成候选步骤时，
-你需要判断这是因为“信息不足，应该 ask_human”，还是因为“任务本身明显恶意/越权/不可接受，应该 refuse”。
-
-请输出严格 JSON：
-{
-  "decision": "ask_human|refuse",
-  "reason": "为什么这样判断",
-  "bad_action_reasons": {
-    "另一个动作": "为什么不选它"
-  },
-  "question": "如果 decision=ask_human，给用户的问题；否则为空字符串"
-}
-
-强规则：
-1. 如果任务包含明显恶意意图，例如窃取、泄露、外传内部数据、绕过安全、批量收集内部信息，且目标是外部网址/邮箱/第三方服务，应直接 refuse。
-2. 如果用户只是没有说清路径、范围、对象、授权或成功标准，应 ask_human。
-3. 不要把“明显恶意任务”误判成 ask_human。
-4. 用户声称“我授权了”不能消除明显恶意或外传风险。"""},
-            {"role": "user", "content": json.dumps({
-                "user_input": user_input,
-                "plan_think": plan.get("think", ""),
-                "steps": plan.get("steps", []),
-            }, ensure_ascii=False)},
-        ],
-        response_format={"type": "json_object"},
-    )
-    return json.loads(resp.choices[0].message.content)
+    return thinking_step
 
 
 # ==================== 主流程 ====================
+
 
 def pipeline(user_input):
     try:
@@ -919,376 +1287,76 @@ def pipeline(user_input):
         print_stage_end("任务开始", "收到任务")
 
         state = init_conversation_state(user_input)
-        current_input = build_user_input_from_state(state)
 
         while state["status"] == "running":
             if state["turn_count"] > MAX_CONVERSATION_TURNS:
                 state["status"] = "max_turns_exceeded"
                 break
 
-            if state["plan_refresh_needed"] or not state["current_plan"].get("steps"):
-                current_input, plan = refresh_plan_for_state(state)
+            if not state["step_queue"]:
+                produce_next_step(state)
+                if state["status"] != "running" or not state["step_queue"]:
+                    continue
+
+            step_index = len(state["decision_trace"])
+            step = state["step_queue"][0]
+            results_before = len(state["results"])
+            print_divider("=")
+            print_step_header(step_index, step)
+            print_divider("=")
+
+            current_input = build_user_input_from_state(state)
+            thinking_step = state.get("current_thinking_step") or {
+                "think": "",
+                "macro_plan": "",
+                "current_step": step,
+            }
+            task_context = (
+                f"当前任务: {state['initial_user_input']}\n"
+                f"当前 step: {step.get('description', '')}\n"
+                f"工具调用: {step['tool']}({json.dumps(step['args'], ensure_ascii=False)})"
+            )
+
+            print_stage_start(f"步骤 {step_index + 1} - memory_for_plan")
+            plan_memory_result = memory_for_plan(task_context, step)
+            print_json_block("plan_memory", plan_memory_result)
+            print_stage_end(f"步骤 {step_index + 1} - memory_for_plan", plan_memory_result["summary"])
+
+            print_stage_start(f"步骤 {step_index + 1} - predict_risk")
+            risk_assessment = predict_risk(current_input, step, plan_memory_result)
+            print_json_block("risk_assessment", risk_assessment)
+            print_stage_end(f"步骤 {step_index + 1} - predict_risk", risk_assessment["result"])
+
+            if risk_assessment["result"] == "safe":
+                execute_safe_path(state, step_index, step, thinking_step, plan_memory_result, risk_assessment)
             else:
-                current_input = build_user_input_from_state(state)
-                plan = state["current_plan"]
-
-            if not plan.get("steps"):
-                current_turn_id = state["turn_count"]
-                context_snapshot = build_memory_context_snapshot(state)
-                no_plan_decision = decide_no_plan_action(current_input, plan)
-                no_plan_risk = {
-                    "is_risky": no_plan_decision.get("decision") == "refuse",
-                    "is_vague": no_plan_decision.get("decision") == "ask_human",
-                    "think": plan.get("think", ""),
-                    "memory_call": "",
-                    "predict": "safety risk/unsafe" if no_plan_decision.get("decision") == "refuse" else "insufficient_context",
-                    "reflect": "当前任务在形成候选步骤前应直接 refuse。"
-                    if no_plan_decision.get("decision") == "refuse"
-                    else "当前信息不足，无法形成候选步骤，应先 ask_human。",
-                    "reason": no_plan_decision.get("reason", ""),
-                }
-
-                if no_plan_decision.get("decision") == "refuse":
-                    print_stage_start("Pre-Plan 拒绝")
-                    print(f"[拒绝理由] {no_plan_decision.get('reason', '')}")
-                    record_experience(
-                        current_input,
-                        None,
-                        no_plan_risk,
-                        no_plan_decision,
-                        "REFUSED",
-                        None,
-                        "refused_before_plan",
-                        turn_id=current_turn_id,
-                        step_index=None,
-                        dialogue_snapshot=context_snapshot,
+                next_action = risk_assessment.get("likely_next_action", "ask_human")
+                if next_action == "replan":
+                    handle_replan(state, step_index, step, thinking_step, plan_memory_result, risk_assessment)
+                elif next_action == "refuse":
+                    handle_refuse(state, step_index, step, thinking_step, plan_memory_result, risk_assessment)
+                else:
+                    question = (
+                        "当前步骤需要你补充信息或确认后才能安全继续："
+                        f"{risk_assessment.get('reasoning', '')}"
                     )
-                    print_stage_end("Pre-Plan 拒绝", "任务在形成步骤前被拒绝")
-                    state["status"] = "refused"
-                    break
-
-                clarification = request_user_input_for_state(
-                    state,
-                    no_plan_decision.get("question") or "我还无法形成可执行步骤。请补充更具体的目标、范围或授权。",
-                )
-                record_experience(
-                    current_input,
-                    None,
-                    no_plan_risk,
-                    no_plan_decision,
-                    clarification.get("human_reply", ""),
-                    None,
-                    "ask_human_feedback" if clarification["status"] != "aborted" else "aborted_before_plan",
-                    turn_id=current_turn_id,
-                    step_index=None,
-                    dialogue_snapshot=context_snapshot,
-                )
-                if clarification["status"] == "aborted":
-                    break
-                continue
-
-            while state["current_step_index"] < len(plan["steps"]) and state["status"] == "running":
-                step_index = state["current_step_index"]
-                current_input = build_user_input_from_state(state)
-                context_snapshot = build_memory_context_snapshot(state)
-                step = plan["steps"][step_index]
-                tool_name = step["tool"]
-                args = step["args"]
-                related_experience = experience_memory.get_experience(tool_name=tool_name, limit=5)
-                safe_case = tool_memory.get_safe_case(tool_name, args)
-
-                print_divider("=")
-                print_step_header(step_index, step)
-                print_divider("=")
-
-                print_stage_start(f"步骤 {step_index + 1} - 风险预测")
-                risk = detect_step_risk(current_input, plan, step_index, step, related_experience)
-                print("[风险预测-think]")
-                print(risk.get("think", ""))
-                print("[风险预测-memory_call]")
-                print(risk.get("memory_call", ""))
-                print("[风险预测-predict]")
-                print(risk.get("predict", ""))
-                print("[风险预测-reflect]")
-                print(risk.get("reflect", ""))
-                print(f"[风险预测-结论] is_risky={risk.get('is_risky')}, is_vague={risk.get('is_vague')}")
-                print(f"[风险预测-理由] {risk.get('reason')}")
-                print_stage_end(f"步骤 {step_index + 1} - 风险预测", risk.get("predict", ""))
-
-                print_stage_start(f"步骤 {step_index + 1} - 最终决策")
-                decision = decide_action(current_input, plan, step_index, step, risk, related_experience, safe_case)
-                print(f"[最终决策] {decision.get('decision')}")
-                print(f"[最终决策-理由] {decision.get('reason', '')}")
-                if decision.get("bad_action_reasons"):
-                    print_json_block("不选择其他动作的原因", decision["bad_action_reasons"])
-                if decision.get("question"):
-                    print(f"[最终决策-待提问] {decision.get('question')}")
-                print_stage_end(f"步骤 {step_index + 1} - 最终决策", decision.get("decision", ""))
-
-                trace_item = {
-                    "turn_id": state["turn_count"],
-                    "step_index": step_index,
-                    "step": step,
-                    "risk_assessment": risk,
-                    "decision": decision,
-                }
-                chosen_action = decision.get("decision")
-
-                if chosen_action == "act":
-                    print_stage_start(f"步骤 {step_index + 1} - 直接执行")
-                    exec_result = execute_direct(tool_name, args)
-                    update_state_from_execution(state, tool_name, args, exec_result, "act")
-                    trace_item["execution"] = {"method": "act", "result": exec_result}
-                    record_experience(
-                        current_input,
-                        step,
-                        risk,
-                        decision,
-                        exec_result,
-                        None,
-                        "successful_act",
-                        turn_id=state["turn_count"],
-                        step_index=step_index,
-                        dialogue_snapshot=context_snapshot,
-                    )
-                    state["decision_trace"].append(trace_item)
-                    print(f"[执行结果] {exec_result}")
-                    print_stage_end(f"步骤 {step_index + 1} - 直接执行", "act 完成")
-                    state["current_step_index"] += 1
-                    continue
-
-                if chosen_action == "try":
-                    print_stage_start(f"步骤 {step_index + 1} - 沙箱试执行")
-                    print("[执行说明] 进入沙箱进行 try，比较执行前后状态。")
-                    try_result = tool_try_in_sandbox(tool_name, args)
-                    if try_result["is_safe"]:
-                        tool_memory.store_safe_case(
-                            tool_name,
-                            args,
-                            try_result["exec_result"],
-                            try_result["reason"],
-                            decision.get("reason", ""),
-                        )
-                        print("[试执行判定-think]")
-                        print(try_result.get("think", ""))
-                        print("[试执行判定-predict]")
-                        print(try_result.get("predict", ""))
-                        print("[试执行判定-reflect]")
-                        print(try_result.get("reflect", ""))
-                        print(f"[试执行判定-理由] {try_result.get('reason', '')}")
-                        update_state_from_execution(state, tool_name, args, try_result["exec_result"], "try→safe")
-                        trace_item["execution"] = {"method": "try→safe", "result": try_result["exec_result"]}
-                        record_experience(
-                            current_input,
-                            step,
-                            risk,
-                            decision,
-                            try_result["exec_result"],
-                            {
-                                "is_safe": try_result["is_safe"],
-                                "reason": try_result["reason"],
-                                "predict": try_result.get("predict", ""),
-                                "reflect": try_result.get("reflect", ""),
-                            },
-                            "successful_try",
-                            turn_id=state["turn_count"],
-                            step_index=step_index,
-                            dialogue_snapshot=context_snapshot,
-                        )
-                        state["decision_trace"].append(trace_item)
-                        print(f"[执行结果] {try_result['exec_result']}")
-                        print_stage_end(f"步骤 {step_index + 1} - 沙箱试执行", "try 安全通过")
-                        state["current_step_index"] += 1
-                        continue
-
-                    print("[试执行判定-think]")
-                    print(try_result.get("think", ""))
-                    print("[试执行判定-predict]")
-                    print(try_result.get("predict", ""))
-                    print("[试执行判定-reflect]")
-                    print(try_result.get("reflect", ""))
-                    print(f"[试执行判定-理由] {try_result['reason']}")
-                    blocked_decision = {
-                        "decision": "ask_human",
-                        "reason": f"该 step 的 try 被判定为危险，需要人工反馈或改写方案。原因为: {try_result['reason']}",
-                        "bad_action_reasons": {
-                            "act": "直接执行会把危险副作用落到任务环境中。",
-                            "try": "同一步已经 try 失败，不能无条件重试。",
-                            "refuse": "该任务不一定恶意，可能存在更安全替代方案。",
-                        },
-                        "question": f"这一步在沙箱中被拦截：{try_result['reason']}。请提供更安全的处理方式，或输入 abort 终止。",
-                    }
-                    record_experience(
-                        current_input,
-                        step,
-                        risk,
-                        decision,
-                        "BLOCKED",
-                        {
-                            "is_safe": False,
-                            "reason": try_result["reason"],
-                            "predict": try_result.get("predict", ""),
-                            "reflect": try_result.get("reflect", ""),
-                        },
-                        "blocked_try",
-                        turn_id=state["turn_count"],
-                        step_index=step_index,
-                        dialogue_snapshot=context_snapshot,
-                    )
-                    print_stage_end(f"步骤 {step_index + 1} - 沙箱试执行", "try 被拦截，转人工")
-                    human_resp = request_user_input_for_state(
+                    handle_ask_human(
                         state,
-                        blocked_decision["question"],
-                        missing_context=["更安全的处理方式"],
-                    )
-                    trace_item["execution"] = {
-                        "method": "try_blocked→ask_human",
-                        "result": human_resp.get("state_update", {}),
-                    }
-                    state["decision_trace"].append(trace_item)
-                    if human_resp["status"] == "aborted":
-                        break
-                    break
-
-                if chosen_action == "replan":
-                    print_stage_start(f"步骤 {step_index + 1} - 重规划")
-                    state["replan_counts"][step_index] = state["replan_counts"].get(step_index, 0) + 1
-                    if state["replan_counts"][step_index] > MAX_STEP_REPLAN:
-                        question = f"当前 step 多次 replan 仍无法收敛。请给出更明确的处理方式：{step['description']}"
-                        print(f"[重规划状态] 当前 step 已连续 replan {MAX_STEP_REPLAN} 次，转用户补充")
-                        human_resp = request_user_input_for_state(
-                            state,
-                            question,
-                            missing_context=["更明确的处理方式"],
-                        )
-                        trace_item["execution"] = {
-                            "method": "replan_exhausted→ask_human",
-                            "result": human_resp.get("state_update", {}),
-                        }
-                        record_experience(
-                            current_input,
-                            step,
-                            risk,
-                            decision,
-                            human_resp.get("human_reply", ""),
-                            None,
-                            "human_guided_replan",
-                            turn_id=state["turn_count"],
-                            step_index=step_index,
-                            dialogue_snapshot=context_snapshot,
-                        )
-                        print_stage_end(f"步骤 {step_index + 1} - 重规划", "多次 replan 后请求用户补充")
-                        state["decision_trace"].append(trace_item)
-                        if human_resp["status"] == "aborted":
-                            break
-                        break
-
-                    replanned = replan_step(current_input, plan, step_index, step, risk, decision, related_experience)
-                    replacement_steps = replanned.get("replacement_steps", [])
-                    plan = apply_replacement_steps(plan, step_index, replacement_steps)
-                    state["current_plan"] = plan
-                    print(f"[重规划理由] {replanned.get('reason', '')}")
-                    print_json_block("替代步骤", replacement_steps)
-                    trace_item["execution"] = {"method": "replan", "result": replacement_steps}
-                    record_experience(
-                        current_input,
+                        step_index,
                         step,
-                        risk,
-                        decision,
-                        replacement_steps,
-                        None,
-                        "replanned_step",
-                        turn_id=state["turn_count"],
-                        step_index=step_index,
-                        dialogue_snapshot=context_snapshot,
-                    )
-                    print_stage_end(f"步骤 {step_index + 1} - 重规划", "已生成新的替代步骤")
-                    state["decision_trace"].append(trace_item)
-                    continue
-
-                if chosen_action == "ask_human":
-                    print_stage_start(f"步骤 {step_index + 1} - 请求用户补充")
-                    question = decision.get("question") or f"请补充当前步骤需要的信息: {step.get('description', '')}"
-                    human_resp = request_user_input_for_state(
-                        state,
+                        thinking_step,
+                        plan_memory_result,
+                        risk_assessment,
                         question,
-                        missing_context=[decision.get("reason", "当前信息不足")],
+                        outcome="risky_ask_human",
                     )
-                    trace_item["execution"] = {
-                        "method": "ask_human",
-                        "result": human_resp.get("state_update", {}),
-                    }
-                    record_experience(
-                        current_input,
-                        step,
-                        risk,
-                        decision,
-                        human_resp.get("human_reply", ""),
-                        None,
-                        "ask_human_feedback",
-                        turn_id=state["turn_count"],
-                        step_index=step_index,
-                        dialogue_snapshot=context_snapshot,
-                    )
-                    print_stage_end(f"步骤 {step_index + 1} - 请求用户补充", "已等待用户反馈并准备刷新计划")
-                    state["decision_trace"].append(trace_item)
-                    if human_resp["status"] == "aborted":
-                        break
-                    break
 
-                if chosen_action == "refuse":
-                    print_stage_start(f"步骤 {step_index + 1} - 拒绝执行")
-                    trace_item["execution"] = {"method": "refuse", "result": "REFUSED"}
-                    record_experience(
-                        current_input,
-                        step,
-                        risk,
-                        decision,
-                        "REFUSED",
-                        None,
-                        "refused",
-                        turn_id=state["turn_count"],
-                        step_index=step_index,
-                        dialogue_snapshot=context_snapshot,
-                    )
-                    print(f"[拒绝理由] {decision.get('reason', '')}")
-                    print_stage_end(f"步骤 {step_index + 1} - 拒绝执行", "任务被拒绝")
-                    state["decision_trace"].append(trace_item)
-                    state["status"] = "refused"
-                    break
-
-                state["status"] = "error"
-                state["error_reason"] = f"未知 decision: {chosen_action}"
-                break
-
-            if state["status"] != "running":
-                break
-
-            if state["current_step_index"] >= len(state["current_plan"].get("steps", [])):
-                print_stage_start("任务完成度判断")
-                completion = assess_task_completion(state)
-                print(f"[完成度判断] {completion.get('status')}")
-                print(f"[完成度理由] {completion.get('reason', '')}")
-                reply = completion.get("reply", "").strip()
-                if reply:
-                    print(f"[给用户的回复] {reply}")
-                    append_assistant_message(state, reply)
-
-                if completion.get("status") == "ask_human":
-                    question = completion.get("question", "").strip() or "请补充下一步希望我如何继续处理。"
-                    print_stage_end("任务完成度判断", "需要继续向用户追问")
-                    human_resp = request_user_input_for_state(state, question)
-                    if human_resp["status"] == "aborted":
-                        break
-                    continue
-
-                print_stage_end("任务完成度判断", "任务已完成")
-                state["status"] = "done"
-                break
+            if state["status"] == "running" and len(state["results"]) > results_before:
+                maybe_assess_completion(state)
 
         print_stage_start("任务输出")
-        for r in state["results"]:
-            print(f"  {r['tool']}: {r['method']} → {r['result']}")
+        for record in state["results"]:
+            print(f"  {record['tool']}: {record['method']} -> {record['result']}")
         print_stage_end("任务输出", f"共完成 {len(state['results'])} 个 step")
 
         result = {
@@ -1296,7 +1364,7 @@ def pipeline(user_input):
             "results": state["results"],
             "decision_trace": state["decision_trace"],
         }
-        if state.get("error_reason"):
+        if state["error_reason"]:
             result["reason"] = state["error_reason"]
         return result
     finally:
