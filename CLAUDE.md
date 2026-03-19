@@ -8,11 +8,12 @@ This repository is an agent safety pipeline built around E2B sandboxes and LLM-b
 
 The current primary implementation is no longer a simple `safe / unsafe` blocker. The main flow in `pipeline.py` is now:
 
-1. `generate_plan`
-2. `detect_step_risk`
-3. `decide_action`
-4. route to one of `act / try / replan / ask_human / refuse`
-5. write local memory and refresh exported SFT samples
+1. first-step routing via `memory_for_plan / ask_human / refuse`
+2. `predict_risk`
+3. safe path: `memory_for_tool -> tool_try -> judge_try_result -> direct_tool`
+4. risky or failed path: `replan / ask_human / refuse / terminate`
+5. `completion_check`
+6. write local memory and refresh exported SFT samples
 
 The goal of the current system is to make step-level action choices, not just to block dangerous plans.
 
@@ -22,9 +23,8 @@ The goal of the current system is to make step-level action choices, not just to
 pip install -r requirements.txt
 python pipeline.py
 python pipeline.py --task "删除 /home/user 下所有 .log 文件"
-python pipeline_langchain.py
 python mcp_tools.py
-python -m py_compile pipeline.py pipeline_langchain.py mcp_tools.py
+python -m py_compile pipeline.py mcp_tools.py
 ```
 
 Required environment variables for full pipeline execution:
@@ -43,27 +43,24 @@ Pure local reads of `memory/` artifacts do not require live API access.
 Important properties:
 
 - It uses explicit step-level decision routing.
-- It distinguishes `think` from `reflect`:
-  - `think`: fact-level analysis
-  - `reflect`: action-level inclination
+- It no longer exposes `thinking_step` as a public tool; first-step intent is carried by `memory_for_plan(tool, tool_args, description)`.
+- `predict_risk`, `judge_try_result`, `replan`, and `completion_check` are argument-driven control tools.
+- `replan` now emits a single `new_step`, not a `new_steps` array.
+- Invalid tool calls can be retried in-loop through `last_tool_error`.
 - It persists memory to disk under `memory/`.
 - It automatically exports SFT-style samples to `memory/sft_dataset.jsonl` after each run.
 
 Core functions include:
 
-- `generate_plan()`
-- `detect_step_risk()`
-- `decide_action()`
-- `replan_step()`
-- `tool_try_in_sandbox()`
-- `judge_safety()`
+- `flow_tool_memory_for_plan()`
+- `flow_tool_predict_risk()`
+- `flow_tool_try()`
+- `flow_tool_judge_try_result()`
+- `flow_tool_replan()`
+- `flow_tool_completion_check()`
 - `record_experience()`
 - `export_experience_to_jsonl()`
 - `persist_local_artifacts()`
-
-### `pipeline_langchain.py`
-
-This is the LangChain/LangGraph variant. It is still useful as a future graph-based target, but it does not yet fully mirror the latest `pipeline.py` behavior. When in doubt, align docs and behavior with `pipeline.py` first.
 
 ### `mcp_tools.py`
 
@@ -109,7 +106,7 @@ When modifying the project:
 
 For changes to current behavior, validate with:
 
-1. `python -m py_compile pipeline.py pipeline_langchain.py mcp_tools.py`
+1. `python -m py_compile pipeline.py mcp_tools.py`
 2. a manual `python pipeline.py --task "..."` run when dependencies are available
 3. inspection of:
    - `memory/experience_memory.json`
