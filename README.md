@@ -1,6 +1,6 @@
 # Agent Safety Pipeline
 
-当前仓库的主实现是 [`pipeline.py`](./pipeline.py)。它不再把系统描述为“整份 plan 的 safe/unsafe 阻断器”，而是一个 **decision-driven、step-level** 的安全执行 pipeline：每一轮只形成一个“当前最小可执行 step”，再基于证据决定进入真实执行、沙箱试执行、重规划、向人追问或拒绝。
+当前仓库的主实现是 [`pipeline.py`](./pipeline.py)。它不再把系统描述为“整份 plan 的 safe/unsafe 阻断器”，而是一个 **decision-driven、step-level** 的安全执行 pipeline：每一轮只围绕一个“当前最小可执行 step”推进，再基于证据决定进入真实执行、沙箱试执行、重规划、向人追问或拒绝。
 
 ## 当前框架
 
@@ -8,8 +8,7 @@
 
 ```text
 user input
-  -> thinking_step
-  -> memory_for_plan
+  -> ask_human / refuse / memory_for_plan
   -> predict_risk
        ├─ safe
        │   -> memory_for_tool
@@ -25,17 +24,17 @@ user input
 
 几个关键点：
 
-- `thinking_step` 只做事实分析，输出一个最小 step，而不是完整计划。
-- `memory_for_plan` 从历史经验中做语义召回，为风险判断提供证据。
-- `predict_risk` 只输出 `safe|risky` 和后续倾向，不直接执行工具。
-- `tool_try` 只在 `safe + tool memory miss` 时进入。
-- `judge_try_result` 基于 try 前后状态差异判断 `safe|unsafe`。
+- 第一轮只能走 `memory_for_plan / ask_human / refuse`，不再显式暴露 `thinking_step`。
+- `memory_for_plan` 现在要求显式提交 `tool + tool_args + description`，用于形成当前 step 并做语义召回。
+- `predict_risk`、`judge_try_result`、`replan`、`completion_check` 都是参数驱动的控制工具：判断内容写在 `arguments`，observation 只返回确认和状态推进。
+- `replan` 现在一次只生成一个替代 step，字段是 `arguments.new_step`，不再使用 `new_steps` 数组。
+- 主循环带有 tool-call 校验失败重试；错误会写入 `last_tool_error` 反馈给模型，而不是第一次字段错误就直接崩溃。
 
 ## Memory 与导出
 
 `pipeline.py` 会在本地维护三类数据：
 
-- `memory/experience_memory.json`：逐 step 保存决策、理由、结果和 trace。
+- `memory/experience_memory.json`：逐 step 保存决策、理由、结果和 flow tool 轨迹。
 - `memory/tool_memory.json`：缓存完全相同签名的安全工具调用。
 - `memory/plan_memory_index.json`：基于 OpenAI embedding 的语义检索索引。
 
@@ -44,6 +43,12 @@ user input
 - `memory/sft_dataset.jsonl`
 
 这份数据由 experience memory 导出，便于后续做 SFT 样本整理。
+
+当前导出是多轮 tool-calling 轨迹，顶层字段为：
+
+- `system`
+- `tools`
+- `conversations`
 
 ## 运行方式
 
@@ -80,7 +85,7 @@ python -m py_compile pipeline.py mcp_tools.py
 
 ## 文件说明
 
-- `pipeline.py`：当前主流程，包含 flow-control、风险判断、沙箱 try、memory 持久化和 SFT 导出。
+- `pipeline.py`：当前主流程，包含 flow-control、参数校验、tool-call 重试、沙箱 try、memory 持久化和 SFT 导出。
 - `mcp_tools.py`：真实工具注册中心；`pipeline.py` 会动态读取这里的 tool schema 并执行工具。
 - `criterion.md`：当前流程控制标准。
 - `branches.md`：SFT 分支枚举示例。
