@@ -1,169 +1,95 @@
 # Agent Safety Pipeline
 
-基于 E2B 云端沙箱的 Agent 安全执行框架。在 Agent 执行工具调用前，通过 **Plan 阶段风险检测** + **Execution 阶段沙箱试执行** 双重防护，拦截危险操作（数据外传、文件删除、权限提升等）。
+当前仓库的主实现是 [`pipeline.py`](./pipeline.py)。它不再把系统描述为“整份 plan 的 safe/unsafe 阻断器”，而是一个 **decision-driven、step-level** 的安全执行 pipeline：每一轮只形成一个“当前最小可执行 step”，再基于证据决定进入真实执行、沙箱试执行、重规划、向人追问或拒绝。
 
-## 架构
+## 当前框架
 
-```
-用户输入 → Plan 阶段 → Execution 阶段 → 输出
-              │                │
-         LLM 风险检测      E2B 沙箱试执行
-         replan / 人工介入   前后状态对比 → LLM 安全判定
-```
+核心链路如下：
 
-### Plan 阶段
+```text
+user input
+  -> thinking_step
+  -> memory_for_plan
+  -> predict_risk
+       ├─ safe
+       │   -> memory_for_tool
+       │      ├─ hit  -> direct_tool
+       │      └─ miss -> tool_try -> judge_try_result
+       │                         ├─ safe   -> direct_tool
+       │                         └─ unsafe -> replan / ask_human / terminate
+       └─ risky -> replan / ask_human / refuse
 
-```
-input → generate_plan → detect_risk
-                            │
-                ┌───────────┼───────────┐
-                ▼                       ▼
-          有风险 → replan           无风险 → safe plan
-                │
-          超次数/模糊 → 人工介入
-```
-
-- LLM 生成执行计划（包含 tool 名称和参数）
-- LLM 评估计划的安全风险（使用认知流标签引导推理）
-- 有风险则 replan（最多 3 次），超次数或任务模糊则交给人工
-
-**认知流标签**：LLM 在风险评估时按以下顺序输出结构化推理：
-
-| 标签 | 作用 |
-|------|------|
-| `<think>` | 分析计划安全性的思考过程 |
-| `<memory_call>` | 结合历史风险经验进行评估 |
-| `<predict>` | 预测结果：`safety risk/unsafe` 或 `without safety risk/safe` |
-| `<reflect>` | 反思是否需要 replan、求助人类、或安全放行 |
-
-### Execution 阶段
-
-```
-safe plan → 遍历每个 step:
-  ├─ memory 命中 → 直接在新沙箱中执行
-  └─ 未见过 → E2B 沙箱 tool try
-                ├─ 记录执行前文件状态 (md5sum)
-                ├─ 执行 tool
-                ├─ 记录执行后文件状态 (md5sum)
-                ├─ LLM 对比前后状态判定安全性
-                ├─ 安全 → 存入 memory，返回结果
-                └─ 不安全 → BLOCKED，升级到人工介入
+完成所有 step 后 -> completion_check
+任务结束时 -> persist_local_artifacts
 ```
 
-## Memory 系统
+几个关键点：
 
-Pipeline 包含两类 memory，用于减少重复判断：
+- `thinking_step` 只做事实分析，输出一个最小 step，而不是完整计划。
+- `memory_for_plan` 从历史经验中做语义召回，为风险判断提供证据。
+- `predict_risk` 只输出 `safe|risky` 和后续倾向，不直接执行工具。
+- `tool_try` 只在 `safe + tool memory miss` 时进入。
+- `judge_try_result` 基于 try 前后状态差异判断 `safe|unsafe`。
 
-### PlanMemory（Plan 阶段）
+## Memory 与导出
 
-存储被判定为有风险的计划，作为后续 LLM 推理的参考。
+`pipeline.py` 会在本地维护三类数据：
 
-- **存储时机**：plan 被 `detect_risk` 判定为 `is_risky=True` 时
-- **存储内容**：`{task, plan, risk_reason}`
-- **召回方式**：全量序列化为 JSON，注入 `generate_plan` 和 `detect_risk` 的 system prompt
-- **无语义检索**：不管是否相关，所有历史经验都会传给 LLM
+- `memory/experience_memory.json`：逐 step 保存决策、理由、结果和 trace。
+- `memory/tool_memory.json`：缓存完全相同签名的安全工具调用。
+- `memory/plan_memory_index.json`：基于 OpenAI embedding 的语义检索索引。
 
-### ToolMemory（Execution 阶段）
+每次运行结束后都会自动刷新：
 
-缓存已通过沙箱验证的安全工具调用，相同调用可跳过沙箱。
+- `memory/sft_dataset.jsonl`
 
-- **存储时机**：tool try 在沙箱中执行后被 LLM 判定为 `is_safe=True` 时
-- **存储 key**：`tool_name:json(args)`（参数排序后的签名）
-- **召回方式**：精确匹配签名，命中则跳过沙箱直接执行
-- **注意**：参数稍有不同就不会命中（如 `list_files({})` vs `list_files({"directory": "/home/user"})`）
+这份数据由 experience memory 导出，便于后续做 SFT 样本整理。
 
-### 两个版本的 Memory 差异
+## 运行方式
 
-| | pipeline.py | pipeline_langchain.py |
-|---|---|---|
-| PlanMemory 作用域 | 全局对象，**跨调用共享** | State 内 list，**单次调用内共享** |
-| ToolMemory 作用域 | 全局对象，**跨调用共享** | State 内 dict，**单次调用内共享** |
-| 持久化 | 无（进程退出即丢失） | 无（进程退出即丢失） |
-
-## 文件说明
-
-| 文件 | 说明 |
-|------|------|
-| `pipeline.py` | 原生 OpenAI API 版本：手动 JSON 解析 + `while True` 循环控制流 |
-| `pipeline_langchain.py` | LangChain/LangGraph 版本：Pydantic 结构化输出 + `StateGraph` 声明式流程 |
-| `mcp_tools.py` | Tool 注册中心：所有工具的 schema + handler 统一定义，可作为独立 MCP Server 运行 |
-| `example.md` | pipeline_langchain.py 的完整测试输出示例 |
-
-## 已注册的 Tools
-
-| Tool | 说明 |
-|------|------|
-| `run_python_code` | 在沙箱中执行 Python 代码 |
-| `run_shell_command` | 在沙箱中执行 Shell 命令 |
-| `read_file` | 读取沙箱中的文件 |
-| `write_file` | 写入文件到沙箱 |
-| `list_files` | 列出目录中的文件 |
-| `delete_file` | 删除文件或目录 |
-| `send_http_request` | 发送 HTTP 请求 |
-
-新增 tool 只需在 `mcp_tools.py` 中添加 `@tool(...)` 装饰器，pipeline 自动识别。
-
-## 快速开始
-
-### 1. 安装依赖
+安装依赖：
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. 配置环境变量
+配置环境变量：
 
 ```bash
-export E2B_API_KEY="your_e2b_api_key"      # https://e2b.dev
-export OPENAI_API_KEY="your_openai_api_key" # https://platform.openai.com/api-keys
+export OPENAI_API_KEY="your_openai_api_key"
+export E2B_API_KEY="your_e2b_api_key"
 ```
 
-代码通过 `os.environ.get()` 读取，不需要修改源码。
-
-### 3. 运行
+运行默认任务：
 
 ```bash
-# 原生 OpenAI 版本
 python pipeline.py
-
-# LangChain/LangGraph 版本
-python pipeline_langchain.py
-
-# 作为独立 MCP Server 运行
-python mcp_tools.py
 ```
 
-## 两个版本的对比
+运行自定义任务：
 
-| | pipeline.py | pipeline_langchain.py |
-|---|---|---|
-| LLM 调用 | `openai.OpenAI` + `response_format=json_object` | `ChatOpenAI` + `with_structured_output(Pydantic)` |
-| 输出解析 | 手动 `json.loads()` | Pydantic 模型自动解析（`Plan`, `RiskAssessment`, `SafetyJudgment`） |
-| 流程控制 | `while True` + if/else + for 循环 | LangGraph `StateGraph` + 条件边路由 |
-| 人工介入 | `input()` 在主循环中 | `request_human` 节点 + `route_after_human` 路由 |
-| Memory 持久性 | 全局对象，跨 `pipeline()` 调用共享 | State 内，每次 `pipeline()` 调用重新初始化 |
-| 核心函数 | `plan_phase()`, `generate_plan()`, `detect_risk()`, `execution_phase()`, `tool_try_in_sandbox()`, `judge_safety()` | 6 个 Graph 节点 + 4 个路由函数 |
-| 依赖 | `openai`, `e2b-code-interpreter` | `langchain-openai`, `langgraph`, `pydantic`, `e2b-code-interpreter` |
-
-两个版本实现相同的双重验证逻辑，LangGraph 版本结构更声明式。
-
-## 添加新 Tool
-
-在 `mcp_tools.py` 中添加：
-
-```python
-@tool("my_new_tool", "工具描述", {
-    "param1": {"type": "string", "description": "参数说明"},
-})
-def my_new_tool(param1: str) -> str:
-    result = _sandbox.commands.run(f"some_command {param1}")
-    return result.stdout
+```bash
+python pipeline.py --task "帮我检查 /home/user/app.log 最近的错误"
 ```
 
-不需要修改 `pipeline.py` 或 `pipeline_langchain.py`，新 tool 会通过 `get_all_schemas()` 自动被发现和使用。
+快速做语法检查：
 
-## 依赖
+```bash
+python -m py_compile pipeline.py mcp_tools.py
+```
 
-- [E2B](https://e2b.dev/) — 云端代码沙箱，提供隔离的 Linux 执行环境
-- [LangChain](https://langchain.com/) / [LangGraph](https://github.com/langchain-ai/langgraph) — LLM 应用框架（LangGraph 版本使用）
-- [OpenAI](https://platform.openai.com/) — GPT-4o 作为规划和安全判定的 LLM
+## 文件说明
+
+- `pipeline.py`：当前主流程，包含 flow-control、风险判断、沙箱 try、memory 持久化和 SFT 导出。
+- `mcp_tools.py`：真实工具注册中心；`pipeline.py` 会动态读取这里的 tool schema 并执行工具。
+- `criterion.md`：当前流程控制标准。
+- `branches.md`：SFT 分支枚举示例。
+
+## 当前分流语义
+
+- `replan`：问题在方案本身过猛，但 agent 可以自行改写成更可控步骤。
+- `ask_human`：继续安全完成任务必须依赖用户提供的信息、确认或授权。
+- `refuse`：任务目标本身恶意、越权、外传、破坏或不应执行。
+- `terminate`：`tool_try` 已暴露不可接受副作用，且任务无法在安全边界内继续推进。
+
+如果你要修改当前实现，优先保持 `pipeline.py` 的这条固定链路，而不是回退到旧的 plan-level safe/unsafe 描述。
