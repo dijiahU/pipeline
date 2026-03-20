@@ -10,9 +10,8 @@
 
 当前框架不再让模型在每个节点都做一次完整五分类，而是采用固定流程：
 
-1. `thinking_step`
-2. `memory_for_plan`
-3. `predict_risk`
+1. `memory_for_plan`（纯检索，无参数）
+2. `predict_risk`（带 step + 风险判断）
 4. 若 `safe`：
    - `memory_for_tool`
    - hit -> 真实工具调用
@@ -291,6 +290,7 @@ completion 不负责重新解释历史风险，只负责判断任务是否闭合
 
 ## 13. 当前局限
 
+- `memory_for_plan` 是 0 参数纯检索，step 信息由 `predict_risk` 携带。
 - `memory_for_plan` 已切到 embedding + cosine 的本地持久化向量检索，但还不是独立外部向量数据库服务。
 - criterion 已固定，但仍需要更多 branches 数据来覆盖边界情况。
 - completion 节点仍依赖 LLM 判断，后续可继续压缩为更明确规则。

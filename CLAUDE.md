@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code when working with code in this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Overview
 
@@ -8,8 +8,8 @@ This repository is an agent safety pipeline built around E2B sandboxes and LLM-b
 
 The current primary implementation is no longer a simple `safe / unsafe` blocker. The main flow in `pipeline.py` is now:
 
-1. first-step routing via `memory_for_plan / ask_human / refuse`
-2. `predict_risk`
+1. first-step routing via `memory_for_plan`（纯检索，无参数）/ `ask_human` / `refuse`
+2. `predict_risk`（带 step 和风险判断）
 3. safe path: `memory_for_tool -> tool_try -> judge_try_result -> direct_tool`
 4. risky or failed path: `replan / ask_human / refuse / terminate`
 5. `completion_check`
@@ -34,6 +34,18 @@ Required environment variables for full pipeline execution:
 
 Pure local reads of `memory/` artifacts do not require live API access.
 
+## Key Constants
+
+```python
+OPENAI_MODEL = "gpt-5.2"               # overridable via env var OPENAI_MODEL
+OPENAI_EMBEDDING_MODEL = "text-embedding-3-small"
+MAX_AGENT_TOOL_ROUNDS = 40             # main loop iteration cap
+MAX_TOOL_CALL_RETRIES = 3              # retries per invalid tool call
+MAX_STEP_REPLAN = 2                    # replan attempts before escalating
+MAX_CONVERSATION_TURNS = 8
+PLAN_MEMORY_TOP_K = 6                  # nearest neighbors for task retrieval
+```
+
 ## Current Architecture
 
 ### `pipeline.py`
@@ -43,15 +55,35 @@ Pure local reads of `memory/` artifacts do not require live API access.
 Important properties:
 
 - It uses explicit step-level decision routing.
-- It no longer exposes `thinking_step` as a public tool; first-step intent is carried by `memory_for_plan(tool, tool_args, description)`.
-- `memory_for_plan` still carries the current step, but retrieval is now task-level: it recalls similar prior user tasks, not only similar steps.
+- `memory_for_plan` is a 0-parameter pure retrieval tool; it recalls similar prior user tasks based on the current task, not steps.
+- `predict_risk` carries both the current step (`tool`, `tool_args`, `description`) and the risk judgment (`result`, `reasoning`, `likely_next_action`, `criterion_hits`).
 - `predict_risk`, `judge_try_result`, `replan`, and `completion_check` are argument-driven control tools.
 - `replan` now emits a single `new_step`, not a `new_steps` array.
 - Invalid tool calls can be retried in-loop through `last_tool_error`.
 - It persists memory to disk under `memory/`.
 - It automatically exports SFT-style samples to `memory/sft_dataset.jsonl` after each run.
 
-Core functions include:
+#### Flow Phases (state machine)
+
+The main loop dispatches tools based on `state["flow_phase"]`. The phase transitions are:
+
+1. `need_step` → agent calls `memory_for_plan` (0 params, pure retrieval) or `ask_human` / `refuse`
+2. `need_risk` → agent calls `predict_risk` (carries step + risk judgment)
+3. `check_memory` → agent calls `memory_for_tool` (cache lookup)
+4. `tool_try` → sandbox execution via `tool_try`
+5. `judge_try` → agent calls `judge_try_result`
+6. `replan` → agent calls `replan` (generates `new_step`)
+7. `ask_human` → agent calls `ask_human`
+8. `completion` → agent calls `completion_check`
+
+Only tools valid for the current phase are exposed to the LLM at each step.
+
+#### Flow Tools vs Real Tools
+
+- **Flow tools** (`memory_for_plan`, `predict_risk`, `memory_for_tool`, `judge_try_result`, `replan`, `ask_human`, `refuse`, `terminate`, `completion_check`): argument-driven control tools that steer the pipeline. Exported to SFT format.
+- **Real tools** (`run_python_code`, `run_shell_command`, `read_file`, `write_file`, `list_files`, `delete_file`, `send_http_request`): execute actual side effects in the E2B sandbox. Only called after risk assessment passes.
+
+#### Core functions
 
 - `flow_tool_memory_for_plan()`
 - `flow_tool_predict_risk()`
@@ -65,7 +97,7 @@ Core functions include:
 
 ### `mcp_tools.py`
 
-This module provides the shared tool registry and MCP entry point. Tools are dynamically discovered and called through the registry rather than hardcoded per tool.
+This module provides the shared tool registry and MCP entry point. Tools are dynamically discovered via the `@tool()` decorator and called through `call_tool()` rather than hardcoded per tool.
 
 ## Memory and Artifacts
 
@@ -114,6 +146,8 @@ Current action meanings:
 
 Do not collapse these back into a binary safe/unsafe framing when editing code or docs.
 
+See `criterion.md` for detailed judgment rules per flow tool, and `branches.md` for the full SFT data split taxonomy (14 decision paths).
+
 ## Working Guidance
 
 When modifying the project:
@@ -136,3 +170,5 @@ For changes to current behavior, validate with:
    - `memory/sft_dataset.jsonl`
 
 If execution cannot be completed because of network or dependency limits, say so explicitly and still validate syntax plus local artifact behavior where possible.
+
+There are no automated tests. Manual test scenarios are documented at the bottom of `pipeline.py` as comments (12 scenarios covering safe/risky paths, cache hits, replan chains, ask_human flows, etc.).
