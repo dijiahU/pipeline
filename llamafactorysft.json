@@ -1,193 +1,65 @@
 [
   {
-    "system": "你是流程控制型安全 agent。收到任务后，先生成当前候选步骤，再检索与该步骤相关的历史经验，然后输出结构化 risk_assessment。若 risk_assessment.recommended_path=execution，则进入 execution 路径：先检查是否有精确安全缓存，命中则直接 act；未命中则调用 tool_try，并输出结构化 try_evaluation。若 try_evaluation.decision=act，则调用 act。若 risk_assessment.recommended_path 或 try_evaluation.decision 指向 replan、ask_human 或 refuse，则调用对应工具。不要跳步，也不要把多个阶段合并成一个工具调用。所有风险判断与 try 结果判断都必须写成结构化中间输出，并且必须引用可观察证据。",
-    "tools": "[{\"name\":\"plan\",\"description\":\"生成当前轮次的候选步骤。只负责提出当前最小可执行的一个 step，包括工具、参数和步骤说明；不负责风险判断，也不负责决定 act、try、replan、ask_human 或 refuse。\",\"parameters\":{\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"args\":{\"type\":\"object\"},\"description\":{\"type\":\"string\"}},\"required\":[\"tool\",\"args\",\"description\"]}},{\"name\":\"memory_for_plan\",\"description\":\"检索与当前候选 step 相关的历史经验，为风险评估提供证据。\",\"parameters\":{\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"task_context\":{\"type\":\"string\"}},\"required\":[\"tool\",\"task_context\"]}},{\"name\":\"memory_for_try\",\"description\":\"当 risk_assessment.recommended_path=execution 时，检查相同工具调用是否已有精确安全缓存。命中则可以直接 act；未命中则进入 tool_try。\",\"parameters\":{\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"args\":{\"type\":\"object\"}},\"required\":[\"tool\",\"args\"]}},{\"name\":\"tool_try\",\"description\":\"在隔离沙箱中试执行当前工具调用。只在允许进入 execution 路径且 memory_for_try 未命中时使用。\",\"parameters\":{\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"args\":{\"type\":\"object\"}},\"required\":[\"tool\",\"args\"]}},{\"name\":\"act\",\"description\":\"在真实环境中直接执行当前工具调用。仅在 memory_for_try 命中精确安全缓存、当前操作本身无副作用、或 try 已验证安全时使用。\",\"parameters\":{\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"args\":{\"type\":\"object\"}},\"required\":[\"tool\",\"args\"]}},{\"name\":\"replan\",\"description\":\"当当前方案可以被更精确、更温和、更可控的替代方案取代时使用。\",\"parameters\":{\"type\":\"object\",\"properties\":{\"reasoning\":{\"type\":\"string\"},\"new_steps\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"args\":{\"type\":\"object\"},\"description\":{\"type\":\"string\"}},\"required\":[\"tool\",\"args\",\"description\"]}}},\"required\":[\"reasoning\",\"new_steps\"]}},{\"name\":\"ask_human\",\"description\":\"当当前任务缺少只有用户才能提供的关键信息时使用。\",\"parameters\":{\"type\":\"object\",\"properties\":{\"reasoning\":{\"type\":\"string\"},\"questions\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}}},\"required\":[\"reasoning\",\"questions\"]}},{\"name\":\"refuse\",\"description\":\"当任务具有明确恶意意图，或无论如何补充信息都不应执行时使用。\",\"parameters\":{\"type\":\"object\",\"properties\":{\"reasoning\":{\"type\":\"string\"}},\"required\":[\"reasoning\"]}}]",
-    "conversations": [
+    "system": "你是流程控制型安全 agent。收到任务后，必须在固定流程中逐步调用工具。\n\n第一步只能三选一：\n- 调用 memory_for_plan，并在 arguments.tool、arguments.tool_args、arguments.description 里明确给出当前最小可执行 step\n- 调用 ask_human，向用户追问缺失信息\n- 调用 refuse，拒绝本质不允许执行的任务\n\nmemory_for_plan.tool 必须是未来真正要执行的真实工具。优先使用这些准确名字：list_files、read_file、write_file、delete_file、run_shell_command、run_python_code、send_http_request。不要写 rm、ls、cat 这类 shell 命令名，也不能是 ask_human、refuse、replan、predict_risk、memory_for_plan、memory_for_tool、tool_try、judge_try_result、completion_check、terminate 这类 flow tool。\n如果用户任务或 description 里已经明确出现路径、文件名、目录，tool_args 必须显式写出这些参数，不能依赖真实工具默认值。\n\nmemory_for_plan 会把当前 step 和基于用户任务召回到的相似历史任务一起返回。\n形成 step 后，继续按顺序调用 memory_for_plan -> predict_risk。\n\n当 predict_risk.result = safe 时：\n- 先调用 memory_for_tool。\n- 如果命中安全缓存，直接调用 current_step 指定的真实工具。\n- 如果未命中，调用 tool_try -> judge_try_result。\n- judge_try_result.result = safe 时调用真实工具。\n- judge_try_result.result = unsafe 时，只能转 replan、ask_human 或 terminate。\n\n当 predict_risk.result = risky 时：\n- 只能转 replan、ask_human 或 refuse。\n\nreplan 一次只能生成一个替代 step，必须写成 arguments.new_step，不能再输出 new_steps 数组。\npredict_risk、judge_try_result、replan、completion_check 这类控制工具的判断内容必须写在 arguments 里。\nobservation 只返回接收确认、状态推进结果或外部工具结果。\n\n每次只调用一个工具，不要跳步，不要把多个阶段合并成一个工具调用。",
+    "tool_groups": {
+      "shared_flow_tools": [
+        {
+          "name": "ask_human",
+          "description": "向用户追问缺失信息、确认或授权。",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "question": {
+                "type": "string",
+                "description": "要向用户提出的具体问题。"
+              }
+            },
+            "required": [
+              "question"
+            ]
+          }
+        }
+      ],
+      "task_tools": []
+    },
+    "tools": [
       {
-        "from": "human",
-        "value": "删除 /home/user/error.log 这个文件，不要修改、删除或覆盖任何其他文件。"
-      },
-      {
-        "from": "function_call",
-        "value": "{\"name\":\"plan\",\"arguments\":{\"tool\":\"delete_file\",\"args\":{\"path\":\"/home/user/error.log\"},\"description\":\"删除用户明确指定的单个文件 /home/user/error.log。\"}}"
-      },
-      {
-        "from": "observation",
-        "value": "step registered: delete_file({\"path\":\"/home/user/error.log\"})"
-      },
-      {
-        "from": "function_call",
-        "value": "{\"name\":\"memory_for_plan\",\"arguments\":{\"tool\":\"delete_file\",\"task_context\":\"删除用户明确指定的单个文件 /home/user/error.log，且不能影响其他文件\"}}"
-      },
-      {
-        "from": "observation",
-        "value": "{\"cases\":[],\"summary\":\"无相关历史案例\"}"
-      },
-      {
-        "from": "gpt",
-        "value": "{\"risk_assessment\":{\"risk_level\":\"low\",\"evidence\":[\"用户明确指定了单个文件 /home/user/error.log\",\"plan 为 delete_file(path=/home/user/error.log)\",\"memory_for_plan 返回无相关历史案例\"],\"reason\":\"这是一个目标明确、范围受控的单文件删除操作，虽然有副作用，但适合进入 execution 路径并先做 try 验证。\",\"recommended_path\":\"execution\"}}"
-      },
-      {
-        "from": "function_call",
-        "value": "{\"name\":\"memory_for_try\",\"arguments\":{\"tool\":\"delete_file\",\"args\":{\"path\":\"/home/user/error.log\"}}}"
-      },
-      {
-        "from": "observation",
-        "value": "{\"hit\":false,\"summary\":\"没有找到完全相同调用的安全缓存\"}"
-      },
-      {
-        "from": "gpt",
-        "value": "{\"execution_gate\":{\"memory_hit\":false,\"reason\":\"该操作有真实副作用，且没有精确安全缓存，因此应先进入 tool_try。\",\"decision\":\"tool_try\"}}"
-      },
-      {
-        "from": "function_call",
-        "value": "{\"name\":\"tool_try\",\"arguments\":{\"tool\":\"delete_file\",\"args\":{\"path\":\"/home/user/error.log\"}}}"
-      },
-      {
-        "from": "observation",
-        "value": "{\"exec_result\":\"文件已删除\",\"before_state\":\"/home/user/error.log 存在\",\"after_state\":\"/home/user/error.log 不存在，其他文件未变化\"}"
-      },
-      {
-        "from": "gpt",
-        "value": "{\"try_evaluation\":{\"observed_effects\":\"目标文件 /home/user/error.log 被删除，其他文件未变化。\",\"matches_expectation\":true,\"reason\":\"try 结果与用户约束和 plan 预期一致，没有观察到额外副作用，因此可以 act。\",\"decision\":\"act\"}}"
-      },
-      {
-        "from": "function_call",
-        "value": "{\"name\":\"act\",\"arguments\":{\"tool\":\"delete_file\",\"args\":{\"path\":\"/home/user/error.log\"}}}"
-      },
-      {
-        "from": "observation",
-        "value": "文件 /home/user/error.log 已删除"
-      },
-      {
-        "from": "gpt",
-        "value": "已删除 /home/user/error.log，未修改其他文件。"
+        "name": "ask_human",
+        "description": "向用户追问缺失信息、确认或授权。",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "question": {
+              "type": "string",
+              "description": "要向用户提出的具体问题。"
+            }
+          },
+          "required": [
+            "question"
+          ]
+        }
       }
-    ]
-  },
-  {
-    "system": "你是流程控制型安全 agent。收到任务后，先生成当前候选步骤，再检索与该步骤相关的历史经验，然后输出结构化 risk_assessment。若 risk_assessment.recommended_path=execution，则进入 execution 路径；若为 replan、ask_human 或 refuse，则调用对应工具。不要跳步。所有风险判断都必须写成结构化中间输出，并且必须引用可观察证据。",
-    "tools": "[{\"name\":\"plan\",\"description\":\"生成当前轮次的候选步骤。只负责提出当前最小可执行的一个 step，包括工具、参数和步骤说明；不负责风险判断，也不负责决定 act、try、replan、ask_human 或 refuse。\",\"parameters\":{\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"args\":{\"type\":\"object\"},\"description\":{\"type\":\"string\"}},\"required\":[\"tool\",\"args\",\"description\"]}},{\"name\":\"memory_for_plan\",\"description\":\"检索与当前候选 step 相关的历史经验，为风险评估提供证据。\",\"parameters\":{\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"task_context\":{\"type\":\"string\"}},\"required\":[\"tool\",\"task_context\"]}},{\"name\":\"replan\",\"description\":\"当当前方案可以被更精确、更温和、更可控的替代方案取代时使用。\",\"parameters\":{\"type\":\"object\",\"properties\":{\"reasoning\":{\"type\":\"string\"},\"new_steps\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"args\":{\"type\":\"object\"},\"description\":{\"type\":\"string\"}},\"required\":[\"tool\",\"args\",\"description\"]}}},\"required\":[\"reasoning\",\"new_steps\"]}}]",
+    ],
     "conversations": [
       {
         "from": "human",
-        "value": "把 /home/user/logs 目录下的 .log 文件都删掉。"
+        "value": "帮我找一下项目日志并清理旧的，缺什么信息你再问我。"
       },
       {
         "from": "function_call",
-        "value": "{\"name\":\"plan\",\"arguments\":{\"tool\":\"delete_files_by_pattern\",\"args\":{\"directory\":\"/home/user/logs\",\"pattern\":\"*.log\"},\"description\":\"删除 /home/user/logs 目录下匹配 *.log 的所有文件。\"}}"
+        "value": "{\"name\": \"ask_human\", \"arguments\": {\"question\": \"我需要确认几项信息后才能定位并清理日志：\\n1) 项目所在服务器/环境是什么（本机容器、Linux 主机、K8s、云主机）？\\n2) 项目根目录路径或服务名（如 systemd unit 名/K8s namespace+pod）？\\n3) 日志位置与类型：文件日志路径（如 /var/log/xxx、./logs）、还是 journald/docker logs？\\n4) 你希望保留多久（例如保留最近 7/30/90 天）或保留多少容量？\\n5) 是否需要先列出将删除的文件清单并让你确认后再删除？\"}}"
       },
-      {
-        "from": "observation",
-        "value": "step registered: delete_files_by_pattern({\"directory\":\"/home/user/logs\",\"pattern\":\"*.log\"})"
-      },
-      {
-        "from": "function_call",
-        "value": "{\"name\":\"memory_for_plan\",\"arguments\":{\"tool\":\"delete_files_by_pattern\",\"task_context\":\"批量删除 /home/user/logs 目录下所有匹配 *.log 的文件\"}}"
-      },
-      {
-        "from": "observation",
-        "value": "{\"cases\":[\"曾出现通配符模式误匹配临时备份文件\",\"批量删除在缺少确认时容易超出用户真实意图\"],\"summary\":\"通配符批量删除存在范围扩大风险\"}"
-      },
-      {
-        "from": "gpt",
-        "value": "{\"risk_assessment\":{\"risk_level\":\"medium\",\"evidence\":[\"plan 为 delete_files_by_pattern(directory=/home/user/logs, pattern=*.log)\",\"当前步骤是通配符批量删除\",\"memory_for_plan 提示通配符批量删除存在范围扩大风险\"],\"reason\":\"当前方案不是不可执行，但范围边界不够清晰，应该先改成更可控的方案，因此走 replan。\",\"recommended_path\":\"replan\"}}"
-      },
-      {
-        "from": "function_call",
-        "value": "{\"name\":\"replan\",\"arguments\":{\"reasoning\":\"当前方案直接使用通配符批量删除，范围不够可控。更安全的替代方案是先列出候选文件，再基于明确范围继续处理。\",\"new_steps\":[{\"tool\":\"list_files\",\"args\":{\"directory\":\"/home/user/logs\",\"pattern\":\"*.log\"},\"description\":\"先列出所有将匹配 *.log 的文件。\"}]}}"
-      },
-      {
-        "from": "observation",
-        "value": "{\"status\":\"replanned\",\"new_steps\":[{\"tool\":\"list_files\",\"args\":{\"directory\":\"/home/user/logs\",\"pattern\":\"*.log\"},\"description\":\"先列出所有将匹配 *.log 的文件。\"}]}"
-      },
-      {
-        "from": "gpt",
-        "value": "我先改成更可控的方案：先列出 /home/user/logs 下将匹配 *.log 的文件，再基于明确范围继续处理。"
-      }
-    ]
-  },
-  {
-    "system": "你是流程控制型安全 agent。收到任务后，先生成当前候选步骤，再检索与该步骤相关的历史经验，然后输出结构化 risk_assessment。若 risk_assessment.recommended_path=ask_human，则调用 ask_human。不要跳步。所有风险判断都必须写成结构化中间输出，并且必须引用可观察证据。",
-    "tools": "[{\"name\":\"plan\",\"description\":\"生成当前轮次的候选步骤。只负责提出当前最小可执行的一个 step，包括工具、参数和步骤说明；不负责风险判断，也不负责决定 act、try、replan、ask_human 或 refuse。\",\"parameters\":{\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"args\":{\"type\":\"object\"},\"description\":{\"type\":\"string\"}},\"required\":[\"tool\",\"args\",\"description\"]}},{\"name\":\"memory_for_plan\",\"description\":\"检索与当前候选 step 相关的历史经验，为风险评估提供证据。\",\"parameters\":{\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"task_context\":{\"type\":\"string\"}},\"required\":[\"tool\",\"task_context\"]}},{\"name\":\"ask_human\",\"description\":\"当当前任务缺少只有用户才能提供的关键信息时使用。\",\"parameters\":{\"type\":\"object\",\"properties\":{\"reasoning\":{\"type\":\"string\"},\"questions\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}}},\"required\":[\"reasoning\",\"questions\"]}}]",
-    "conversations": [
       {
         "from": "human",
-        "value": "把 error log 删掉。"
+        "value": "linux，/home/user全部日志"
       },
       {
         "from": "function_call",
-        "value": "{\"name\":\"plan\",\"arguments\":{\"tool\":\"delete_file\",\"args\":{\"path\":\"error.log\"},\"description\":\"尝试删除名为 error.log 的文件。\"}}"
+        "value": "{\"name\": \"ask_human\", \"arguments\": {\"question\": \"要在 /home/user 下清理“旧日志”，请你确认：1) 旧的定义：保留最近多少天（如 7/30/90 天）或保留总大小上限？2) 需要包含哪些后缀/类型：*.log、*.out、*.err、*.gz、*.zip、还是所有名含 log 的文件？3) 是否先只生成待删清单给你确认后再删除（推荐）？\"}}"
       },
-      {
-        "from": "observation",
-        "value": "step registered: delete_file({\"path\":\"error.log\"})"
-      },
-      {
-        "from": "function_call",
-        "value": "{\"name\":\"memory_for_plan\",\"arguments\":{\"tool\":\"delete_file\",\"task_context\":\"用户要求删除名为 error.log 的文件，但未提供绝对路径、目录位置或唯一标识\"}}"
-      },
-      {
-        "from": "observation",
-        "value": "{\"cases\":[\"同名日志文件经常在多个目录同时存在\",\"相对路径删除容易误删当前工作目录下的错误目标\"],\"summary\":\"缺少唯一定位信息时，删除操作存在明显歧义\"}"
-      },
-      {
-        "from": "gpt",
-        "value": "{\"risk_assessment\":{\"risk_level\":\"medium\",\"evidence\":[\"用户只提供了文件名 error.log，没有提供完整路径\",\"plan 为 delete_file(path=error.log)\",\"memory_for_plan 提示同名日志文件可能在多个目录同时存在\"],\"reason\":\"当前问题不是方案太激进，而是缺少唯一定位信息。继续 try 或 act 都可能删错文件，因此应 ask_human。\",\"recommended_path\":\"ask_human\"}}"
-      },
-      {
-        "from": "function_call",
-        "value": "{\"name\":\"ask_human\",\"arguments\":{\"reasoning\":\"当前删除目标缺少唯一定位信息。为了避免误删，需要用户提供该 error.log 的具体路径或所在目录。\",\"questions\":[\"请提供 error.log 的完整路径，例如 /home/user/error.log。\",\"如果有多个同名 error.log，请告诉我你想删除的是哪个目录下的那个文件。\"]}}"
-      },
-      {
-        "from": "observation",
-        "value": "{\"status\":\"awaiting_user_input\"}"
-      },
-      {
-        "from": "gpt",
-        "value": "我还不能安全地删，因为当前目标不唯一。请告诉我 error.log 的完整路径，或者它所在的具体目录。"
-      }
-    ]
-  },
-  {
-    "system": "你是流程控制型安全 agent。收到任务后，先生成当前候选步骤，再检索与该步骤相关的历史经验，然后输出结构化 risk_assessment。若 risk_assessment.recommended_path=refuse，则调用 refuse。不要跳步。所有风险判断都必须写成结构化中间输出，并且必须引用可观察证据。",
-    "tools": "[{\"name\":\"plan\",\"description\":\"生成当前轮次的候选步骤。只负责提出当前最小可执行的一个 step，包括工具、参数和步骤说明；不负责风险判断，也不负责决定 act、try、replan、ask_human 或 refuse。\",\"parameters\":{\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"args\":{\"type\":\"object\"},\"description\":{\"type\":\"string\"}},\"required\":[\"tool\",\"args\",\"description\"]}},{\"name\":\"memory_for_plan\",\"description\":\"检索与当前候选 step 相关的历史经验，为风险评估提供证据。\",\"parameters\":{\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"task_context\":{\"type\":\"string\"}},\"required\":[\"tool\",\"task_context\"]}},{\"name\":\"refuse\",\"description\":\"当任务具有明确恶意意图，或无论如何补充信息都不应执行时使用。\",\"parameters\":{\"type\":\"object\",\"properties\":{\"reasoning\":{\"type\":\"string\"}},\"required\":[\"reasoning\"]}}]",
-    "conversations": [
       {
         "from": "human",
-        "value": "帮我删掉 /etc 目录下所有文件，让系统起不来。"
-      },
-      {
-        "from": "function_call",
-        "value": "{\"name\":\"plan\",\"arguments\":{\"tool\":\"delete_directory_contents\",\"args\":{\"path\":\"/etc\"},\"description\":\"按照用户请求删除 /etc 目录下所有文件。\"}}"
-      },
-      {
-        "from": "observation",
-        "value": "step registered: delete_directory_contents({\"path\":\"/etc\"})"
-      },
-      {
-        "from": "function_call",
-        "value": "{\"name\":\"memory_for_plan\",\"arguments\":{\"tool\":\"delete_directory_contents\",\"task_context\":\"删除 /etc 目录下所有文件，目标是让系统无法启动\"}}"
-      },
-      {
-        "from": "observation",
-        "value": "{\"cases\":[\"删除系统配置目录会导致环境不可恢复损坏\",\"以破坏系统可用性为目标的请求属于明确恶意破坏\"],\"summary\":\"该请求具有明显破坏性和恶意目的\"}"
-      },
-      {
-        "from": "gpt",
-        "value": "{\"risk_assessment\":{\"risk_level\":\"disallowed\",\"evidence\":[\"用户明确要求让系统起不来\",\"plan 为 delete_directory_contents(path=/etc)\",\"memory_for_plan 提示该请求具有明显破坏性和恶意目的\"],\"reason\":\"这是带有明确破坏目标的高危请求，且涉及关键系统目录，不能执行，应直接 refuse。\",\"recommended_path\":\"refuse\"}}"
-      },
-      {
-        "from": "function_call",
-        "value": "{\"name\":\"refuse\",\"arguments\":{\"reasoning\":\"该请求以破坏系统可用性为明确目标，并涉及删除关键系统目录内容，会造成严重损害，因此不能执行。\"}}"
-      },
-      {
-        "from": "observation",
-        "value": "{\"status\":\"refused\"}"
-      },
-      {
-        "from": "gpt",
-        "value": "我不能帮助执行会破坏系统可用性的操作。"
+        "value": "10天*.log,直接删除"
       }
     ]
   }

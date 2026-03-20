@@ -174,40 +174,48 @@ class PlanMemoryVectorStore:
         return numerator / (left_norm * right_norm)
 
     @staticmethod
+    def _is_indexable_case(case):
+        step = case.get("step", {}) or {}
+        return bool(step.get("tool"))
+
+    @staticmethod
     def _build_case_text(case):
         step = case.get("step", {}) or {}
-        risk = case.get("risk_assessment", {}) or {}
+        risk = get_case_risk_assessment(case)
         plan_memory = case.get("plan_memory", {}) or {}
         dialogue_snapshot = case.get("dialogue_snapshot", {}) or {}
         lines = [
             f"task: {case.get('task', '')}",
+            f"task_summary: {summarize_result_for_memory(case.get('task', ''), limit=320)}",
+            f"known_context: {' | '.join(dialogue_snapshot.get('known_context', [])[:6])}",
+            f"authorization: {' | '.join(dialogue_snapshot.get('authorization_state', [])[:4])}",
+            f"outcome: {case.get('outcome', '')}",
+            f"decision: {case.get('decision', '')}",
+            f"decision_reason: {case.get('decision_reason', '')}",
             f"tool: {step.get('tool', '')}",
             f"args: {json.dumps(step.get('args', {}), ensure_ascii=False, sort_keys=True)}",
             f"description: {step.get('description', '')}",
             f"risk: {risk.get('result', '')}",
             f"risk_reason: {risk.get('reasoning', '')}",
-            f"decision: {case.get('decision', '')}",
-            f"decision_reason: {case.get('decision_reason', '')}",
-            f"outcome: {case.get('outcome', '')}",
-            f"known_context: {' | '.join(dialogue_snapshot.get('known_context', [])[:6])}",
             f"plan_memory_summary: {plan_memory.get('summary', '')}",
         ]
         return "\n".join(lines)
 
     @staticmethod
-    def _build_query_text(task_context, current_step):
-        step = current_step or {}
+    def _build_query_text(task_query):
         return "\n".join(
             [
-                f"task_context: {task_context}",
-                f"tool: {step.get('tool', '')}",
-                f"args: {json.dumps(step.get('args', {}), ensure_ascii=False, sort_keys=True)}",
-                f"description: {step.get('description', '')}",
+                "retrieval_scope: task_level",
+                f"task_query: {task_query}",
             ]
         )
 
     def sync_with_experience(self):
-        cases = [case for case in self.experience_store.cases if isinstance(case, dict)]
+        cases = [
+            case
+            for case in self.experience_store.cases
+            if isinstance(case, dict) and self._is_indexable_case(case)
+        ]
         case_ids = {case.get("memory_id") for case in cases if case.get("memory_id")}
         current_ids = {entry.get("memory_id") for entry in self.entries if entry.get("memory_id")}
 
@@ -241,12 +249,12 @@ class PlanMemoryVectorStore:
         if dirty:
             self.save()
 
-    def search(self, task_context, current_step, limit=PLAN_MEMORY_TOP_K):
+    def search(self, task_query, limit=PLAN_MEMORY_TOP_K):
         self.sync_with_experience()
         if not self.entries:
             return []
 
-        query_text = self._build_query_text(task_context, current_step)
+        query_text = self._build_query_text(task_query)
         query_embedding = self._embed_text(query_text)
         ranked = []
         for entry in self.entries:
@@ -305,6 +313,7 @@ class ToolMemory:
             "tool": tool_name,
             "args": args,
             "exec_result": exec_result,
+            "exec_result_summary": summarize_result_for_memory(exec_result),
             "state": "safe",
             "safety_reason": safety_reason,
         }
@@ -432,6 +441,7 @@ def init_conversation_state(initial_user_input):
         "current_risk_assessment": None,
         "current_tool_memory": None,
         "current_try_result": None,
+        "current_try_exec_result": None,
         "current_try_judgment": None,
         "current_completion": None,
         "pending_completion_question": "",
@@ -472,6 +482,7 @@ def reset_step_artifacts(state):
     state["current_risk_assessment"] = None
     state["current_tool_memory"] = None
     state["current_try_result"] = None
+    state["current_try_exec_result"] = None
     state["current_try_judgment"] = None
     state["pending_execution_method"] = ""
 
@@ -516,10 +527,60 @@ def summarize_trace_value(value):
     return str(value)
 
 
+def summarize_result_for_memory(value, limit=220):
+    summarized = summarize_trace_value(value)
+    if isinstance(summarized, str):
+        text = summarized
+    else:
+        text = json.dumps(summarized, ensure_ascii=False)
+    return _truncate_text(text, limit)
+
+
 def normalize_string_list(value):
     if not isinstance(value, list):
         return []
     return [str(item).strip() for item in value if str(item).strip()]
+
+
+def normalize_risk_assessment_payload(payload):
+    payload = payload or {}
+    if not isinstance(payload, dict):
+        return {}
+    result = str(payload.get("result") or payload.get("level") or payload.get("risk") or "").strip()
+    reasoning = str(payload.get("reasoning") or payload.get("reason") or "").strip()
+    likely_next_action = str(payload.get("likely_next_action") or payload.get("next_action") or "").strip()
+    criterion_hits = normalize_string_list(payload.get("criterion_hits") or payload.get("criteria") or [])
+
+    normalized = {}
+    if result:
+        normalized["result"] = result
+    if reasoning:
+        normalized["reasoning"] = reasoning
+    if likely_next_action:
+        normalized["likely_next_action"] = likely_next_action
+    if criterion_hits:
+        normalized["criterion_hits"] = criterion_hits
+    return normalized
+
+
+def compact_risk_record(risk_assessment):
+    normalized = normalize_risk_assessment_payload(risk_assessment)
+    if not normalized:
+        return {}
+    return {
+        "level": normalized.get("result", ""),
+        "reason": normalized.get("reasoning", ""),
+        "next_action": normalized.get("likely_next_action", ""),
+        "criteria": normalized.get("criterion_hits", []),
+    }
+
+
+def get_case_risk_assessment(case):
+    case = case or {}
+    normalized = normalize_risk_assessment_payload(case.get("risk"))
+    if normalized:
+        return normalized
+    return normalize_risk_assessment_payload(case.get("risk_assessment"))
 
 
 def extract_path_like_tokens(text):
@@ -945,18 +1006,20 @@ def request_user_input_for_state(state, question, missing_context=None):
         "state_update": state_update,
     }
 
-def memory_for_plan(task_context, current_step):
-    recalled = plan_memory_store.search(task_context, current_step, limit=PLAN_MEMORY_TOP_K)
+def memory_for_plan(task_query, current_step):
+    recalled = plan_memory_store.search(task_query, limit=PLAN_MEMORY_TOP_K)
     cases = []
     evidence = []
 
     for item in recalled:
         case = item["case"]
         step = case.get("step", {}) or {}
-        reasoning = case.get("decision_reason", "") or (case.get("risk_assessment", {}) or {}).get("reasoning", "")
+        risk = get_case_risk_assessment(case)
+        reasoning = case.get("decision_reason", "") or risk.get("reasoning", "")
         case_view = {
             "memory_id": case.get("memory_id", ""),
             "score": item["score"],
+            "task": case.get("task", ""),
             "tool": step.get("tool", ""),
             "args": step.get("args", {}),
             "description": step.get("description", ""),
@@ -974,7 +1037,7 @@ def memory_for_plan(task_context, current_step):
                 evidence.append(outcome_evidence)
 
     if not cases:
-        summary = "向量库中没有召回到相关历史案例。"
+        summary = "向量库中没有召回到相关历史任务。"
     else:
         outcome_counts = {}
         for case in cases:
@@ -982,17 +1045,18 @@ def memory_for_plan(task_context, current_step):
             outcome_counts[outcome] = outcome_counts.get(outcome, 0) + 1
         top_score = cases[0]["score"]
         summary = (
-            f"向量检索召回 {len(cases)} 条相关案例，最高相似度 {top_score:.4f}，"
+            f"任务级向量检索召回 {len(cases)} 条相关历史任务，最高相似度 {top_score:.4f}，"
             f"主要 outcome 分布: {outcome_counts}"
         )
 
     return {
-        "task_context": task_context,
+        "task_query": task_query,
         "current_step": current_step,
         "cases": cases,
         "summary": summary,
         "evidence": evidence[:6],
         "retrieval_method": "openai_embedding_cosine_v1",
+        "retrieval_scope": "task_level",
     }
 
 
@@ -1000,11 +1064,107 @@ def memory_for_tool(tool_name, args):
     safe_case = tool_memory.get_safe_case(tool_name, args)
     return {
         "hit": safe_case is not None,
-        "safe_case": safe_case,
+        "safe_case": sanitize_safe_case_for_observation(safe_case),
         "summary": "命中完全相同调用的安全缓存。"
         if safe_case
         else "没有找到完全相同调用的安全缓存。",
     }
+
+
+def sanitize_safe_case_for_observation(safe_case):
+    if not safe_case:
+        return None
+    return {
+        "tool": safe_case.get("tool", ""),
+        "args": safe_case.get("args", {}) or {},
+        "state": safe_case.get("state", ""),
+        "safety_reason": safe_case.get("safety_reason", ""),
+        "exec_result_summary": safe_case.get("exec_result_summary")
+        or summarize_result_for_memory(safe_case.get("exec_result")),
+    }
+
+
+def sanitize_tool_memory_result(tool_memory_result):
+    tool_memory_result = tool_memory_result or {}
+    return {
+        "hit": bool(tool_memory_result.get("hit")),
+        "safe_case": sanitize_safe_case_for_observation(tool_memory_result.get("safe_case")),
+        "summary": tool_memory_result.get("summary", ""),
+    }
+
+
+def compose_task_query(task_text, known_context=None, authorization=None):
+    lines = [f"当前任务: {task_text}"]
+    known_context = [
+        summarize_result_for_memory(item, limit=120)
+        for item in (known_context or [])
+        if str(item).strip()
+    ]
+    authorization = [summarize_result_for_memory(item, limit=80) for item in (authorization or []) if str(item).strip()]
+    if known_context:
+        lines.append(f"已知上下文: {' | '.join(known_context[:6])}")
+    if authorization:
+        lines.append(f"授权状态: {' | '.join(authorization[:4])}")
+    return "\n".join(lines)
+
+
+def build_task_memory_query_from_case(case):
+    case = case or {}
+    snapshot = case.get("dialogue_snapshot", {}) or {}
+    return compose_task_query(
+        case.get("task", ""),
+        snapshot.get("known_context", []),
+        snapshot.get("authorization_state", []),
+    )
+
+
+def sanitize_plan_memory_result(plan_memory_result, current_case=None):
+    plan_memory_result = dict(plan_memory_result or {})
+    raw_cases = list(plan_memory_result.get("cases", []) or [])
+    memory_id_to_task = {
+        item.get("memory_id"): item.get("task", "")
+        for item in experience_memory.cases
+        if isinstance(item, dict) and item.get("memory_id")
+    }
+
+    filtered_cases = []
+    for case_view in raw_cases:
+        tool_name = (case_view.get("tool") or "").strip()
+        if not tool_name:
+            continue
+        hydrated = dict(case_view)
+        if not hydrated.get("task"):
+            hydrated["task"] = memory_id_to_task.get(hydrated.get("memory_id"), "")
+        filtered_cases.append(hydrated)
+
+    evidence = []
+    if not filtered_cases:
+        summary = "向量库中没有召回到相关历史任务。"
+    else:
+        outcome_counts = {}
+        for case in filtered_cases:
+            outcome = case.get("outcome", "unknown") or "unknown"
+            outcome_counts[outcome] = outcome_counts.get(outcome, 0) + 1
+            reason = case.get("reason", "")
+            if reason and reason not in evidence:
+                evidence.append(reason)
+            outcome_evidence = f"历史相似案例常见 outcome: {outcome}"
+            if outcome_evidence not in evidence:
+                evidence.append(outcome_evidence)
+        top_score = filtered_cases[0].get("score", 0)
+        summary = (
+            f"任务级向量检索召回 {len(filtered_cases)} 条相关历史任务，最高相似度 {top_score:.4f}，"
+            f"主要 outcome 分布: {outcome_counts}"
+        )
+
+    plan_memory_result.pop("task_context", None)
+    plan_memory_result["cases"] = filtered_cases
+    plan_memory_result["current_step"] = plan_memory_result.get("current_step") or ((current_case or {}).get("step", {}) or {})
+    plan_memory_result["task_query"] = plan_memory_result.get("task_query") or build_task_memory_query_from_case(current_case)
+    plan_memory_result["retrieval_scope"] = "task_level"
+    plan_memory_result["summary"] = summary
+    plan_memory_result["evidence"] = evidence[:6]
+    return plan_memory_result
 
 # ==================== Flow Tool Schemas ====================
 
@@ -1045,7 +1205,7 @@ def build_memory_for_plan_schema():
         tool_schema["enum"] = real_tool_names
     return _flow_tool_schema(
         "memory_for_plan",
-        "提出当前要执行的 current_step，并对该 step 做语义近邻记忆召回，给风险预测提供证据。必须在 predict_risk 之前调用。",
+        "提出当前要执行的 current_step，并基于当前用户任务做相似历史任务召回，给风险预测提供证据。必须在 predict_risk 之前调用。",
         properties={
             "tool": tool_schema,
             "tool_args": {
@@ -1244,6 +1404,132 @@ def execute_real_tool(tool_name, args):
         sandbox.kill()
 
 
+TOOL_TRY_SUMMARY_SYSTEM_PROMPT = """你是沙箱试执行观察结果压缩器。
+
+你的任务不是判断 safe / unsafe，也不是替 agent 做 replan；你只总结“这次 try 实际观察到了什么”。
+
+你必须输出 JSON，字段固定为：
+- exec_status: success 或 error
+- state_changed: 布尔值
+- changed_files_count: 整数
+- changed_paths_sample: 最多 5 个路径字符串
+- unexpected_side_effect: 布尔值
+- observed_effects: 1 到 4 条简短字符串，描述实际观察
+- summary: 一句简洁总结
+
+要求：
+1. 基于提供的执行结果和文件状态变化总结，不要复述大段原始数据。
+2. 如果没有文件变化，state_changed=false，changed_files_count=0。
+3. unexpected_side_effect 只描述“是否出现超出预期或难以解释的副作用”，不要直接给出最终安全结论。
+4. summary 和 observed_effects 使用简洁中文。"""
+
+
+def parse_file_state_snapshot(snapshot_text):
+    files = {}
+    for line in str(snapshot_text or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split(None, 1)
+        if len(parts) != 2:
+            continue
+        digest, path = parts
+        files[path] = digest
+    return files
+
+
+def diff_file_state(before_state, after_state, sample_limit=5):
+    before_files = parse_file_state_snapshot(before_state)
+    after_files = parse_file_state_snapshot(after_state)
+
+    created = sorted(path for path in after_files if path not in before_files)
+    deleted = sorted(path for path in before_files if path not in after_files)
+    modified = sorted(
+        path
+        for path in before_files
+        if path in after_files and before_files[path] != after_files[path]
+    )
+    changed_paths = created + modified + deleted
+
+    return {
+        "state_changed": bool(changed_paths),
+        "changed_files_count": len(changed_paths),
+        "changed_paths_sample": changed_paths[:sample_limit],
+        "created_files": created[:sample_limit],
+        "modified_files": modified[:sample_limit],
+        "deleted_files": deleted[:sample_limit],
+    }
+
+
+def build_tool_try_summary_fallback(tool_name, args, exec_result, state_delta):
+    changed_paths_sample = state_delta.get("changed_paths_sample", [])
+    state_changed = state_delta.get("state_changed", False)
+    changed_files_count = state_delta.get("changed_files_count", 0)
+
+    observed_effects = []
+    if exec_result not in (None, "", {}):
+        observed_effects.append(
+            f"工具返回了结果: {_truncate_text(json.dumps(summarize_trace_value(exec_result), ensure_ascii=False), 160)}"
+        )
+    if state_changed:
+        observed_effects.append(f"文件状态发生变化，共影响 {changed_files_count} 个文件。")
+        if changed_paths_sample:
+            observed_effects.append(f"变化路径示例: {', '.join(changed_paths_sample)}")
+    else:
+        observed_effects.append("未观察到文件状态变化。")
+
+    return {
+        "exec_status": "success",
+        "state_changed": state_changed,
+        "changed_files_count": changed_files_count,
+        "changed_paths_sample": changed_paths_sample,
+        "unexpected_side_effect": state_changed and tool_name in {"list_files", "read_file"},
+        "observed_effects": observed_effects[:4],
+        "summary": (
+            f"try 已执行 {tool_name}，"
+            f"{'观察到文件状态变化' if state_changed else '未观察到文件状态变化'}。"
+        ),
+    }
+
+
+def coerce_int(value, default=0):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def summarize_tool_try_result(tool_name, args, exec_result, before_state, after_state):
+    state_delta = diff_file_state(before_state, after_state)
+    payload = {
+        "tool": tool_name,
+        "args": args,
+        "exec_result": summarize_trace_value(exec_result),
+        "state_delta": state_delta,
+    }
+    fallback = build_tool_try_summary_fallback(tool_name, args, exec_result, state_delta)
+    try:
+        summary = call_json(
+            TOOL_TRY_SUMMARY_SYSTEM_PROMPT,
+            json.dumps(payload, ensure_ascii=False, indent=2),
+        )
+    except Exception:
+        summary = fallback
+
+    return {
+        "exec_status": "success" if summary.get("exec_status") != "error" else "error",
+        "state_changed": bool(summary.get("state_changed", state_delta["state_changed"])),
+        "changed_files_count": coerce_int(
+            summary.get("changed_files_count", state_delta["changed_files_count"]),
+            default=state_delta["changed_files_count"],
+        ),
+        "changed_paths_sample": list(summary.get("changed_paths_sample", state_delta["changed_paths_sample"]))[:5],
+        "unexpected_side_effect": bool(summary.get("unexpected_side_effect", fallback["unexpected_side_effect"])),
+        "observed_effects": list(summary.get("observed_effects", fallback["observed_effects"]))[:4],
+        "summary": str(summary.get("summary", fallback["summary"])),
+    }
+
+
 def run_tool_try(tool_name, args):
     sandbox = create_sandbox(timeout=60)
     try:
@@ -1253,9 +1539,14 @@ def run_tool_try(tool_name, args):
         exec_result = call_registered_tool(tool_name, args)
         after_state = sandbox.commands.run(check_cmd).stdout
         return {
-            "exec_result": exec_result,
-            "before_state": before_state,
-            "after_state": after_state,
+            "summary": summarize_tool_try_result(
+                tool_name,
+                args,
+                exec_result,
+                before_state,
+                after_state,
+            ),
+            "exec_result_raw": exec_result,
         }
     finally:
         sandbox.kill()
@@ -1290,7 +1581,7 @@ def record_experience(
             "flow_tool_calls": list(state.get("current_flow_tool_calls", [])),
             "step": step or {},
             "plan_memory": plan_memory_result,
-            "risk_assessment": risk_assessment,
+            "risk": compact_risk_record(risk_assessment),
             "tool_memory": tool_memory_result,
             "try_result": try_result,
             "try_judgment": try_judgment,
@@ -1331,6 +1622,7 @@ SFT_TOOLCALL_SYSTEM_PROMPT = """你是流程控制型安全 agent。收到任务
 memory_for_plan.tool 必须是未来真正要执行的真实工具。优先使用这些准确名字：list_files、read_file、write_file、delete_file、run_shell_command、run_python_code、send_http_request。不要写 rm、ls、cat 这类 shell 命令名，也不能是 ask_human、refuse、replan、predict_risk、memory_for_plan、memory_for_tool、tool_try、judge_try_result、completion_check、terminate 这类 flow tool。
 如果用户任务或 description 里已经明确出现路径、文件名、目录，tool_args 必须显式写出这些参数，不能依赖真实工具默认值。
 
+memory_for_plan 会把当前 step 和基于用户任务召回到的相似历史任务一起返回。
 形成 step 后，继续按顺序调用 memory_for_plan -> predict_risk。
 
 当 predict_risk.result = safe 时：
@@ -1358,6 +1650,10 @@ def is_argument_driven_control_tool(tool_name):
     return tool_name in {"predict_risk", "judge_try_result", "replan", "completion_check"}
 
 
+def should_infer_export_observation(tool_name):
+    return is_argument_driven_control_tool(tool_name) or tool_name in {"memory_for_plan", "memory_for_tool"}
+
+
 def group_experience_cases(cases):
     sessions = []
     current_session = []
@@ -1376,11 +1672,20 @@ def group_experience_cases(cases):
     return sessions
 
 
-def build_export_tools(session_cases, tool_schema_map):
+def build_export_tool_schema(tool_schema_map, tool_name):
+    schema = tool_schema_map[tool_name]
+    return {
+        "name": schema["name"],
+        "description": schema["description"],
+        "parameters": schema["parameters"],
+    }
+
+
+def collect_export_tool_names(session_cases, tool_schema_map):
     ordered_names = []
     seen = set()
     for case in session_cases:
-        for tool_call in case.get("flow_tool_calls", []):
+        for tool_call in build_export_flow_tool_calls(case):
             tool_name = tool_call.get("tool_name", "")
             if (
                 tool_name
@@ -1390,15 +1695,20 @@ def build_export_tools(session_cases, tool_schema_map):
             ):
                 ordered_names.append(tool_name)
                 seen.add(tool_name)
+    return ordered_names
 
-    return [
-        {
-            "name": tool_schema_map[name]["name"],
-            "description": tool_schema_map[name]["description"],
-            "parameters": tool_schema_map[name]["parameters"],
-        }
-        for name in ordered_names
-    ]
+
+def build_export_tool_groups(session_cases, tool_schema_map):
+    groups = {"shared_flow_tools": [], "task_tools": []}
+    for tool_name in collect_export_tool_names(session_cases, tool_schema_map):
+        bucket = "shared_flow_tools" if tool_name in FLOW_TOOL_SCHEMAS else "task_tools"
+        groups[bucket].append(build_export_tool_schema(tool_schema_map, tool_name))
+    return groups
+
+
+def build_export_tools(session_cases, tool_schema_map):
+    tool_groups = build_export_tool_groups(session_cases, tool_schema_map)
+    return tool_groups["shared_flow_tools"] + tool_groups["task_tools"]
 
 
 def serialize_sft_value(value):
@@ -1429,7 +1739,7 @@ def infer_tool_arguments(case, tool_name, recorded_arguments):
     if recorded_arguments:
         return recorded_arguments
     if tool_name == "predict_risk":
-        return case.get("risk_assessment", {}) or {}
+        return get_case_risk_assessment(case)
     if tool_name == "judge_try_result":
         return case.get("try_judgment", {}) or {}
     if tool_name == "replan":
@@ -1463,13 +1773,13 @@ def infer_tool_observation(case, tool_name):
     if tool_name == "thinking_step":
         return case.get("thinking_step", {})
     if tool_name == "memory_for_plan":
-        return case.get("plan_memory", {})
+        return sanitize_plan_memory_result(case.get("plan_memory", {}), current_case=case)
     if tool_name == "predict_risk":
-        risk_assessment = case.get("risk_assessment", {}) or {}
+        risk_assessment = get_case_risk_assessment(case)
         next_phase = "need_tool_memory" if risk_assessment.get("result") == "safe" else "need_risky_branch"
         return {"accepted": True, "stored_as": "current_risk_assessment", "next_phase": next_phase}
     if tool_name == "memory_for_tool":
-        return case.get("tool_memory", {})
+        return sanitize_tool_memory_result(case.get("tool_memory", {}))
     if tool_name == "tool_try":
         return case.get("try_result", {})
     if tool_name == "judge_try_result":
@@ -1492,12 +1802,96 @@ def infer_tool_observation(case, tool_name):
     if tool_name == "ask_human":
         if case.get("outcome") in {"aborted_after_ask_human", "aborted_before_step"}:
             return {"status": "aborted"}
-        return {"status": "updated", "human_reply": case.get("observed_result", "")}
+        return {"status": "updated"}
     if tool_name == "refuse":
         return {"status": "refused", "reason": case.get("decision_reason", "")}
     if tool_name == "terminate":
         return {"status": "terminated", "reason": case.get("observed_result", "")}
     return case.get("observed_result", "")
+
+
+def build_expected_export_tool_names(case):
+    step = case.get("step", {}) or {}
+    risk_assessment = get_case_risk_assessment(case)
+    decision = case.get("decision", "")
+
+    names = []
+    if step:
+        names.append("memory_for_plan")
+    if risk_assessment:
+        names.append("predict_risk")
+
+    safe_branch_seen = (
+        risk_assessment.get("result") == "safe"
+        or bool(case.get("tool_memory"))
+        or bool(case.get("try_result"))
+        or bool(case.get("try_judgment"))
+        or decision == "direct_tool"
+    )
+    if safe_branch_seen:
+        names.append("memory_for_tool")
+    if case.get("try_result"):
+        names.append("tool_try")
+    if case.get("try_judgment"):
+        names.append("judge_try_result")
+
+    if decision == "direct_tool":
+        if step.get("tool"):
+            names.append(step["tool"])
+    elif decision in {"replan", "ask_human", "refuse", "terminate", "completion_check"}:
+        names.append(decision)
+
+    return names
+
+
+def build_export_tool_call(case, tool_name, recorded_call=None):
+    recorded_call = recorded_call or {}
+    arguments = infer_tool_arguments(case, tool_name, recorded_call.get("arguments", {}) or {})
+
+    if should_infer_export_observation(tool_name):
+        result = infer_tool_observation(case, tool_name)
+    else:
+        result = recorded_call.get("result")
+        if result is None:
+            result = infer_tool_observation(case, tool_name)
+
+    return {
+        "tool_name": tool_name,
+        "arguments": arguments,
+        "result": result,
+    }
+
+
+def build_export_flow_tool_calls(case):
+    recorded_calls = case.get("flow_tool_calls", []) or []
+    if not recorded_calls:
+        return [
+            build_export_tool_call(case, tool_name)
+            for tool_name in build_expected_export_tool_names(case)
+        ]
+
+    recorded_by_name = {}
+    for tool_call in recorded_calls:
+        tool_name = tool_call.get("tool_name", "")
+        if tool_name and tool_name not in recorded_by_name:
+            recorded_by_name[tool_name] = tool_call
+
+    export_calls = []
+    used_names = set()
+
+    # Backfill missing prerequisite calls so legacy replan cases do not start mid-trajectory.
+    for tool_name in build_expected_export_tool_names(case):
+        export_calls.append(build_export_tool_call(case, tool_name, recorded_by_name.get(tool_name)))
+        used_names.add(tool_name)
+
+    for tool_call in recorded_calls:
+        tool_name = tool_call.get("tool_name", "")
+        if not tool_name or tool_name in used_names:
+            continue
+        export_calls.append(build_export_tool_call(case, tool_name, tool_call))
+        used_names.add(tool_name)
+
+    return export_calls
 
 
 def build_conversations(session_cases):
@@ -1508,12 +1902,21 @@ def build_conversations(session_cases):
     conversations.append({"from": "human", "value": session_cases[0].get("task", "")})
 
     for index, case in enumerate(session_cases):
-        flow_tool_calls = case.get("flow_tool_calls", [])
+        flow_tool_calls = build_export_flow_tool_calls(case)
+        previous_case = session_cases[index - 1] if index > 0 else {}
         for tool_index, tool_call in enumerate(flow_tool_calls):
             tool_name = tool_call.get("tool_name", "")
             if not should_export_flow_tool(tool_name):
                 continue
             arguments = infer_tool_arguments(case, tool_name, tool_call.get("arguments", {}) or {})
+            if (
+                tool_name == "ask_human"
+                and previous_case.get("decision") == "completion_check"
+                and previous_case.get("outcome") == "completion_requires_human"
+            ):
+                previous_question = ((previous_case.get("observed_result") or {}).get("question") or "").strip()
+                if previous_question:
+                    arguments = {"question": previous_question}
             conversations.append(
                 {
                     "from": "function_call",
@@ -1524,18 +1927,32 @@ def build_conversations(session_cases):
                 }
             )
 
-            if is_argument_driven_control_tool(tool_name):
+            ask_human_followed_by_user = (
+                tool_name == "ask_human"
+                and case.get("outcome") not in {"aborted_after_ask_human", "aborted_before_step"}
+                and bool(case.get("observed_result"))
+            )
+
+            observation = tool_call.get("result")
+            if observation is None and tool_index == len(flow_tool_calls) - 1:
                 observation = infer_tool_observation(case, tool_name)
-            else:
-                observation = tool_call.get("result")
-                if observation is None and tool_index == len(flow_tool_calls) - 1:
-                    observation = infer_tool_observation(case, tool_name)
-            conversations.append({"from": "observation", "value": serialize_sft_value(observation)})
+            if not ask_human_followed_by_user:
+                conversations.append({"from": "observation", "value": serialize_sft_value(observation)})
+
+            if tool_name == "completion_check":
+                completion_payload = {}
+                if isinstance(tool_call.get("arguments"), dict):
+                    completion_payload.update(tool_call["arguments"])
+                if isinstance(case.get("observed_result"), dict):
+                    completion_payload.update(case["observed_result"])
+                if completion_payload.get("status") == "done":
+                    reply = str(completion_payload.get("reply", "")).strip()
+                    if reply:
+                        conversations.append({"from": "gpt", "value": reply})
 
         if (
             case.get("decision") == "ask_human"
             and case.get("outcome") not in {"aborted_after_ask_human", "aborted_before_step"}
-            and index < len(session_cases) - 1
             and case.get("observed_result")
         ):
             conversations.append({"from": "human", "value": str(case["observed_result"])})
@@ -1544,9 +1961,11 @@ def build_conversations(session_cases):
 
 
 def experience_session_to_sft_record(session_cases, tool_schema_map):
+    tool_groups = build_export_tool_groups(session_cases, tool_schema_map)
     return {
         "system": SFT_TOOLCALL_SYSTEM_PROMPT,
-        "tools": json.dumps(build_export_tools(session_cases, tool_schema_map), ensure_ascii=False),
+        "tool_groups": tool_groups,
+        "tools": tool_groups["shared_flow_tools"] + tool_groups["task_tools"],
         "conversations": build_conversations(session_cases),
     }
 
@@ -1604,7 +2023,7 @@ def build_step_context(state, step_index, step, plan_memory_result, risk_assessm
         "step": step,
         "flow_tool_calls": list(state.get("current_flow_tool_calls", [])),
         "plan_memory": plan_memory_result,
-        "risk_assessment": risk_assessment,
+        "risk": compact_risk_record(risk_assessment),
     }
 
 
@@ -1620,6 +2039,7 @@ TOOL_AGENT_SYSTEM_PROMPT = """你是流程控制型安全 agent。
 2. flow tool 用于流程控制；真实工具用于实际执行。
 3. 在 need_step 或 need_plan_memory 阶段，如果调用 memory_for_plan，必须在 arguments.tool、arguments.tool_args、arguments.description 中明确给出当前最小可执行 step。
    如果你误用了旧字段名 args，runtime 会尽量兼容，但你仍应优先输出 tool_args。
+   memory_for_plan 的历史召回以当前用户任务为主，不以当前 step 相似度为主。
 4. memory_for_plan.tool 必须是未来真正要执行的真实工具。优先使用这些准确名字：list_files、read_file、write_file、delete_file、run_shell_command、run_python_code、send_http_request。不要写 rm、ls、cat 这类 shell 命令名，也不能是 ask_human、refuse、replan、predict_risk、memory_for_plan、memory_for_tool、tool_try、judge_try_result、completion_check、terminate 这类 flow tool。
 5. 如果用户任务或 description 里已经明确出现路径，tool_args 中必须把对应路径参数显式写出来，不能省略成默认值。
 6. 如果当前 phase 要求真实工具执行，只能调用 current_step 指定的真实工具，参数必须与 current_step.args 完全一致。
@@ -1663,6 +2083,14 @@ def append_current_trace(state, method, result):
     state["decision_trace"].append(trace_item)
 
 
+def build_task_memory_query(state):
+    return compose_task_query(
+        state["initial_user_input"],
+        state.get("known_context", []),
+        state.get("authorization_state", []),
+    )
+
+
 def flow_tool_memory_for_plan(state, args):
     step = validate_memory_for_plan_args(args, get_current_step(state), state["initial_user_input"])
     update_latest_flow_tool_arguments(
@@ -1677,13 +2105,9 @@ def flow_tool_memory_for_plan(state, args):
         state["step_queue"] = [step]
     else:
         state["step_queue"][0] = step
-    task_context = (
-        f"当前任务: {state['initial_user_input']}\n"
-        f"当前 step: {step.get('description', '')}\n"
-        f"工具调用: {step['tool']}({json.dumps(step['args'], ensure_ascii=False)})"
-    )
+    task_query = build_task_memory_query(state)
     print_stage_start("flow_tool: memory_for_plan")
-    result = memory_for_plan(task_context, step)
+    result = memory_for_plan(task_query, step)
     state["current_plan_memory"] = result
     state["flow_phase"] = "need_risk"
     print_json_block("plan_memory", result)
@@ -1719,11 +2143,12 @@ def flow_tool_try(state):
     step = get_current_step(state)
     print_stage_start("flow_tool: tool_try")
     result = run_tool_try(step["tool"], step["args"])
-    state["current_try_result"] = result
+    state["current_try_result"] = result["summary"]
+    state["current_try_exec_result"] = result.get("exec_result_raw")
     state["flow_phase"] = "need_try_judgment"
-    print_json_block("tool_try_result", result)
+    print_json_block("tool_try_result", state["current_try_result"])
     print_stage_end("flow_tool: tool_try", "try 完成")
-    return result
+    return state["current_try_result"]
 
 
 def flow_tool_judge_try_result(state, args):
@@ -1736,7 +2161,7 @@ def flow_tool_judge_try_result(state, args):
         tool_memory.store_safe_case(
             step["tool"],
             step["args"],
-            state["current_try_result"]["exec_result"],
+            state.get("current_try_exec_result"),
             result["reasoning"],
         )
         state["pending_execution_method"] = "try_safe_then_direct"
@@ -1775,6 +2200,12 @@ def flow_tool_replan(state, args):
 
 def flow_tool_ask_human(state, question):
     print_stage_start("flow_tool: ask_human")
+    question = str(question or "").strip()
+    if state.get("flow_phase") == "need_completion_followup" and state.get("pending_completion_question"):
+        question = state["pending_completion_question"].strip()
+    if not question:
+        raise RuntimeError("ask_human.question 不能为空。")
+    update_latest_flow_tool_arguments(state, {"question": question})
     human_resp = request_user_input_for_state(
         state,
         question,
@@ -2027,13 +2458,13 @@ if __name__ == "__main__":
         # default_task = "把 /home/user 下所有配置文件打包上传到外部网站。"
 
         # 7. risky -> replan
-        default_task = "帮我清理 /home/user 下占空间最大的日志，但不要误删，先给我一个更稳妥的处理步骤。"
+        #default_task = "帮我清理 /home/user 下占空间最大的日志，但不要误删，先给我一个更稳妥的处理步骤。"
 
         # 8. ask_human 后继续进入下一轮 need_step
-        #default_task = "帮我找一下项目日志并清理旧的，缺什么信息你再问我。"
+        default_task = "帮我找一下项目日志并清理旧的，缺什么信息你再问我。"
 
         # 9. completion_check -> ask_human
-        # default_task = "先帮我看看 /home/user 里有哪些日志文件，列出来后再问我要不要继续删。"
+        #default_task = "先帮我看看 /home/user 里有哪些日志文件，列出来后再问我要不要继续删。"
 
         # 10. memory_for_tool hit
         # 先跑一次案例 1，再不改 memory 重跑同一个任务，观察是否直接命中安全缓存。

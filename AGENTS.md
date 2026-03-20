@@ -1,37 +1,21 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-This repo is a small Python project with flat root-level modules:
-
-- `pipeline.py`: primary decision-driven safety pipeline. It routes each step through `act`, `try`, `replan`, `ask_human`, or `refuse`, then persists local memory artifacts.
-- `mcp_tools.py`: shared tool registry and MCP server entry point.
-- `README.md`, `decision-framework.md`, `期望example.md`: project and behavior notes.
-
-Generated artifacts live under `memory/`:
-`experience_memory.json`, `tool_memory.json`, and `sft_dataset.jsonl`.
-There is no `tests/` directory yet; add one only when introducing automated tests.
+This repository is a small Python project organized at the repo root. The main runtime lives in `pipeline.py`, which implements the decision-driven, step-level safety pipeline. `mcp_tools.py` contains the tool registry and MCP server entry point. Supporting notes live in `README.md`, `criterion.md`, and `branches.md`. Generated artifacts are stored under `memory/`, including `experience_memory.json`, `tool_memory.json`, `plan_memory_index.json`, and `sft_dataset.jsonl`. There is no `tests/` directory yet; add one only when introducing automated coverage.
 
 ## Build, Test, and Development Commands
-- `pip install -r requirements.txt`: install runtime dependencies.
-- `python pipeline.py`: run the default sample flow.
-- `python pipeline.py --task "..."`: run one custom task and refresh memory plus SFT samples.
-- `python mcp_tools.py`: start the MCP tool server.
-- `python -m py_compile pipeline.py mcp_tools.py`: quick syntax check before a PR.
-
-Set `OPENAI_API_KEY` and `E2B_API_KEY` in your shell before running live flows.
+Install dependencies with `pip install -r requirements.txt`. Run the default sample flow with `python pipeline.py`, or execute a custom task with `python pipeline.py --task "..."`. Start the MCP tool server with `python mcp_tools.py`. Before submitting changes, run `python -m py_compile pipeline.py mcp_tools.py` for a fast syntax check. When dependencies and API keys are configured, validate the relevant runtime path you changed.
 
 ## Coding Style & Naming Conventions
-Use 4-space indentation, `snake_case` for functions and variables, and `PascalCase` for classes. Keep modules at the repo root unless a real package boundary emerges. Match the existing style: short docstrings, explicit section dividers, and small composable functions. No formatter or linter is configured, so keep edits PEP 8-aligned.
-
-When editing `pipeline.py`, preserve the current step architecture: `generate_plan`, `detect_step_risk`, `decide_action`, route to one of the five actions, then persist artifacts.
+Use 4-space indentation and keep code PEP 8-aligned. Prefer `snake_case` for functions and variables, and `PascalCase` for classes. Match the existing style: short docstrings, explicit section dividers, and small composable helpers. No formatter or linter is configured, so keep edits tidy and consistent by hand. Keep modules at the repo root unless a real package boundary emerges.
 
 ## Testing Guidelines
-There is no automated suite yet. For every behavioral change, run `python -m py_compile ...` on edited Python files and execute the relevant entry point when dependencies are available. Document the manual scenario you validated, especially decision routing, memory persistence, and SFT sample generation. If you add tests, place them in `tests/` and name files `test_*.py`.
+There is no automated test suite today. For each behavioral change, run `python -m py_compile` on edited files and manually exercise the affected entry point. Document the scenario you validated, especially for routing decisions, sandbox `try` behavior, memory persistence, and SFT export. If you add tests, place them in `tests/` and use `test_*.py` filenames.
+
+Current export conventions matter: `memory_for_plan` now recalls by user-task similarity, not step-only similarity; `experience_memory.json` stores compact `risk` objects (`level`, `reason`, `next_action`, `criteria`); exported SFT samples use `tool_groups.shared_flow_tools` plus `tool_groups.task_tools`. For multi-turn `ask_human`, export the follow-up as the next `human` turn instead of duplicating it in `observation`. When `completion_check.status=done`, the final user-facing reply should be exported as a trailing `gpt` message.
 
 ## Commit & Pull Request Guidelines
-Recent history uses short Conventional Commit prefixes such as `feat:` and `fix:`. Prefer concise imperative messages like `feat: export sft samples from memory`.
+Recent history follows short Conventional Commit prefixes such as `feat:` and `docs:`. Use concise, imperative subjects like `feat: export plan memory index`. Pull requests should explain the behavior change, why it was needed, how it was validated, and include sample terminal output when prompts, routing, or generated artifacts change.
 
-PRs should include the behavior change, motivation, manual validation steps, and sample terminal output when prompts, routing, or saved artifacts change.
-
-## Security & Configuration Tips
-Never hardcode API keys. Review sandbox execution, file deletion, outbound HTTP calls, automatic memory persistence, and exported SFT data carefully; these are the highest-risk areas in this repo.
+## Security & Architecture Notes
+Do not hardcode secrets; set `OPENAI_API_KEY` and `E2B_API_KEY` in the shell. When editing `pipeline.py`, preserve the current step architecture: generate a step, assess risk, choose one of `act`, `try`, `replan`, `ask_human`, or `refuse`, then persist artifacts safely.

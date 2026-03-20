@@ -7,7 +7,12 @@ MCP Tool 注册中心
 
 import base64
 import inspect
-from e2b_code_interpreter import Sandbox
+from typing import Any
+
+try:
+    from e2b_code_interpreter import Sandbox
+except ModuleNotFoundError:
+    Sandbox = Any
 
 
 # ==================== Tool Registry ====================
@@ -56,6 +61,11 @@ def tool(name: str, description: str, params: dict):
     return decorator
 
 
+def require_active_sandbox():
+    if _sandbox is None:
+        raise RuntimeError("当前没有可用 sandbox。请先在 pipeline 中初始化 sandbox 后再执行真实工具。")
+
+
 # ---- Pipeline 调用接口 ----
 
 def call_tool(name: str, args: dict) -> str:
@@ -88,6 +98,7 @@ def get_tool_names() -> list:
     "code": {"type": "string", "description": "要执行的 Python 代码"},
 })
 def run_python_code(code: str) -> str:
+    require_active_sandbox()
     result = _sandbox.run_code(code)
     outputs = []
     if result.logs and result.logs.stdout:
@@ -107,6 +118,7 @@ def run_python_code(code: str) -> str:
     "command": {"type": "string", "description": "要执行的 Shell 命令"},
 })
 def run_shell_command(command: str) -> str:
+    require_active_sandbox()
     result = _sandbox.commands.run(command, timeout=120)
     output = result.stdout or ""
     if result.stderr:
@@ -122,6 +134,7 @@ def run_shell_command(command: str) -> str:
     "file_path": {"type": "string", "description": "文件路径（如 /home/user/test.txt）"},
 })
 def read_file(file_path: str) -> str:
+    require_active_sandbox()
     content = _sandbox.files.read(file_path)
     return content if content else "(文件为空)"
 
@@ -131,6 +144,7 @@ def read_file(file_path: str) -> str:
     "content": {"type": "string", "description": "要写入的内容"},
 })
 def write_file(file_path: str, content: str) -> str:
+    require_active_sandbox()
     _sandbox.files.write(file_path, content)
     return f"文件已写入: {file_path}"
 
@@ -139,6 +153,7 @@ def write_file(file_path: str, content: str) -> str:
     "directory": {"type": "string", "description": "目录路径，默认 /home/user"},
 })
 def list_files(directory: str = "/home/user") -> str:
+    require_active_sandbox()
     files = _sandbox.files.list(directory)
     if not files:
         return f"目录 {directory} 为空"
@@ -151,6 +166,7 @@ def list_files(directory: str = "/home/user") -> str:
     "recursive": {"type": "boolean", "description": "是否递归删除目录"},
 })
 def delete_file(path: str, recursive: bool = False) -> str:
+    require_active_sandbox()
     path_b64 = base64.b64encode(path.encode("utf-8")).decode("ascii")
     recursive_flag = "True" if recursive else "False"
     command = f"""python3 - <<'PY'
@@ -213,6 +229,7 @@ PY"""
     "body": {"type": "string", "description": "请求体 (POST 时使用)"},
 })
 def send_http_request(url: str, method: str = "GET", body: str = "") -> str:
+    require_active_sandbox()
     import base64
     # 使用 base64 编码传递参数，彻底避免单引号/三引号导致的 Python 语法注入错误
     url_b64 = base64.b64encode(url.encode('utf-8')).decode('utf-8')

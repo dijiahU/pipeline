@@ -25,7 +25,7 @@ user input
 几个关键点：
 
 - 第一轮只能走 `memory_for_plan / ask_human / refuse`，不再显式暴露 `thinking_step`。
-- `memory_for_plan` 现在要求显式提交 `tool + tool_args + description`，用于形成当前 step 并做语义召回。
+- `memory_for_plan` 现在要求显式提交 `tool + tool_args + description`，用于形成当前 step；它的 memory 检索以“当前用户任务”相似度为主，而不是只按 step 相似度召回。
 - `predict_risk`、`judge_try_result`、`replan`、`completion_check` 都是参数驱动的控制工具：判断内容写在 `arguments`，observation 只返回确认和状态推进。
 - `replan` 现在一次只生成一个替代 step，字段是 `arguments.new_step`，不再使用 `new_steps` 数组。
 - 主循环带有 tool-call 校验失败重试；错误会写入 `last_tool_error` 反馈给模型，而不是第一次字段错误就直接崩溃。
@@ -34,9 +34,9 @@ user input
 
 `pipeline.py` 会在本地维护三类数据：
 
-- `memory/experience_memory.json`：逐 step 保存决策、理由、结果和 flow tool 轨迹。
+- `memory/experience_memory.json`：逐 step 保存决策、理由、结果和 flow tool 轨迹；新 case 使用更扁平的 `risk = {level, reason, next_action, criteria}`。
 - `memory/tool_memory.json`：缓存完全相同签名的安全工具调用。
-- `memory/plan_memory_index.json`：基于 OpenAI embedding 的语义检索索引。
+- `memory/plan_memory_index.json`：基于 OpenAI embedding 的任务级语义检索索引。
 
 每次运行结束后都会自动刷新：
 
@@ -47,8 +47,21 @@ user input
 当前导出是多轮 tool-calling 轨迹，顶层字段为：
 
 - `system`
+- `tool_groups`
 - `tools`
 - `conversations`
+
+其中：
+
+- `tool_groups.shared_flow_tools`：共享流程工具，如 `memory_for_plan`、`predict_risk`、`ask_human`、`completion_check`
+- `tool_groups.task_tools`：当前任务实际用到的真实工具，如 `list_files`、`read_file`、`delete_file`
+- `tools`：上面两组的扁平合并，便于直接交给训练框架
+
+当前导出约定还包括：
+
+- `ask_human` 如果收到了真实用户回复，会导出成 `function_call(ask_human) -> human(...)`，而不是在 `observation` 里重复一遍 `human_reply`
+- `completion_check.status=done` 时，会在最后追加一条 `gpt`，内容来自 `reply`
+- 样本目标格式与 LLaMAFactory 的 ShareGPT/tool-calling 交替规则保持一致
 
 ## 运行方式
 

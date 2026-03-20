@@ -44,6 +44,7 @@ Important properties:
 
 - It uses explicit step-level decision routing.
 - It no longer exposes `thinking_step` as a public tool; first-step intent is carried by `memory_for_plan(tool, tool_args, description)`.
+- `memory_for_plan` still carries the current step, but retrieval is now task-level: it recalls similar prior user tasks, not only similar steps.
 - `predict_risk`, `judge_try_result`, `replan`, and `completion_check` are argument-driven control tools.
 - `replan` now emits a single `new_step`, not a `new_steps` array.
 - Invalid tool calls can be retried in-loop through `last_tool_error`.
@@ -72,6 +73,8 @@ The current local artifact layout is:
 
 - `memory/experience_memory.json`
   - raw step-level decision experience
+- `memory/plan_memory_index.json`
+  - task-level embedding index derived from experience memory
 - `memory/tool_memory.json`
   - exact-signature safe-call cache
 - `memory/sft_dataset.jsonl`
@@ -79,7 +82,25 @@ The current local artifact layout is:
 
 `experience_memory.json` is the runtime source of truth.
 
+Newer cases store compact `risk` objects (`level`, `reason`, `next_action`, `criteria`) instead of the older `risk_assessment` shape. Read code and exports with backward compatibility in mind.
+
 `sft_dataset.jsonl` is a derived artifact used to inspect and curate training examples. It is currently weakly labeled and should not be described as fully human-curated gold data.
+
+The exported tool-calling format now includes:
+
+- `system`
+- `tool_groups`
+  - `shared_flow_tools`
+  - `task_tools`
+- `tools`
+- `conversations`
+
+`tools` is the flattened list used by trainers; `tool_groups` is the readable split between flow-control tools and task-specific real tools.
+
+For export semantics:
+
+- `ask_human` with a real user reply should be serialized as `function_call(ask_human) -> human(...)`, not `observation.human_reply` plus another `human` turn.
+- `completion_check.status=done` should append a final `gpt` reply using the tool's `reply` field.
 
 ## Decision Semantics
 
@@ -110,6 +131,7 @@ For changes to current behavior, validate with:
 2. a manual `python pipeline.py --task "..."` run when dependencies are available
 3. inspection of:
    - `memory/experience_memory.json`
+   - `memory/plan_memory_index.json`
    - `memory/tool_memory.json`
    - `memory/sft_dataset.jsonl`
 
