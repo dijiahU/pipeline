@@ -73,6 +73,8 @@ def get_local_embedding_model():
             "Install with: pip install sentence-transformers"
         )
     print(f"[plan_memory] loading local embedding model: {LOCAL_EMBEDDING_MODEL}")
+    import logging
+    logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
     _local_embedding_model = SentenceTransformer(LOCAL_EMBEDDING_MODEL)
     return _local_embedding_model
 
@@ -139,112 +141,132 @@ class PlanMemoryVectorStore:
         vecs = model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
         return np.array(vecs, dtype=np.float32)
 
-    @staticmethod
-    def _is_indexable_case(case):
-        step = case.get("step", {}) or {}
-        return bool(step.get("tool"))
+    # ---- session 分组 ----
 
     @staticmethod
-    def _build_case_text(case):
-        step = case.get("step", {}) or {}
-        risk = get_case_risk_assessment(case)
-        plan_memory = case.get("plan_memory", {}) or {}
-        dialogue_snapshot = case.get("dialogue_snapshot", {}) or {}
+    def _group_sessions(cases):
+        """把 experience cases 按 session（同一任务的连续 step）分组"""
+        sessions = []
+        current = []
+        prev_step_index = None
+        for case in cases:
+            if not isinstance(case, dict):
+                continue
+            step_index = case.get("step_index", 0)
+            if current and prev_step_index is not None and step_index <= prev_step_index:
+                sessions.append(current)
+                current = []
+            current.append(case)
+            prev_step_index = step_index
+        if current:
+            sessions.append(current)
+        return sessions
+
+    @staticmethod
+    def _session_id(session):
+        """用首条 case 的 memory_id 作为 session 唯一标识"""
+        return session[0].get("memory_id", "") if session else ""
+
+    @staticmethod
+    def _extract_real_tool_steps(session):
+        """从 session 中提取真实工具执行轨迹（只看 real tool，不看 flow tool）"""
+        steps = []
+        for case in session:
+            step = case.get("step") or {}
+            tool = step.get("tool", "")
+            if not tool:
+                continue
+            steps.append({
+                "tool": tool,
+                "args": step.get("args") or {},
+                "description": step.get("description", ""),
+                "decision": case.get("decision", ""),
+                "outcome": case.get("outcome", ""),
+            })
+        return steps
+
+    @staticmethod
+    def _session_final_status(session):
+        """session 最终状态"""
+        last = session[-1] if session else {}
+        decision = last.get("decision", "")
+        outcome = last.get("outcome", "")
+        if outcome in {"completion_done", "tool_memory_hit", "try_safe_then_executed"}:
+            return "done"
+        if decision in {"refuse", "terminate"}:
+            return decision
+        if decision == "ask_human":
+            return "ask_human"
+        return outcome or decision or "unknown"
+
+    def _build_session_text(self, session):
+        """为整条轨迹构建向量索引文本"""
+        task = session[0].get("task", "") if session else ""
+        real_steps = self._extract_real_tool_steps(session)
+        tool_chain = " → ".join(
+            f"{s['tool']}({json.dumps(s['args'], ensure_ascii=False, sort_keys=True)})"
+            for s in real_steps
+        ) or "无真实工具调用"
+        final_status = self._session_final_status(session)
         lines = [
-            f"task: {case.get('task', '')}",
-            f"task_summary: {summarize_result_for_memory(case.get('task', ''), limit=320)}",
-            f"known_context: {' | '.join(dialogue_snapshot.get('known_context', [])[:6])}",
-            f"authorization: {' | '.join(dialogue_snapshot.get('authorization_state', [])[:4])}",
-            f"outcome: {case.get('outcome', '')}",
-            f"decision: {case.get('decision', '')}",
-            f"decision_reason: {case.get('decision_reason', '')}",
-            f"tool: {step.get('tool', '')}",
-            f"args: {json.dumps(step.get('args', {}), ensure_ascii=False, sort_keys=True)}",
-            f"description: {step.get('description', '')}",
-            f"risk: {risk.get('result', '')}",
-            f"risk_reason: {risk.get('reasoning', '')}",
-            f"plan_memory_summary: {plan_memory.get('summary', '')}",
+            f"task: {task}",
+            f"tool_chain: {tool_chain}",
+            f"step_count: {len(real_steps)}",
+            f"final_status: {final_status}",
         ]
         return "\n".join(lines)
 
     @staticmethod
     def _build_query_text(task_query):
-        return "\n".join(
-            [
-                "retrieval_scope: task_level",
-                f"task_query: {task_query}",
-            ]
-        )
+        return f"task: {task_query}"
 
-    @staticmethod
-    def _build_meta_entry(case, text):
-        step = case.get("step", {}) or {}
+    def _build_session_meta(self, session, text):
         return {
-            "memory_id": case.get("memory_id", ""),
+            "session_id": self._session_id(session),
+            "case_ids": [c.get("memory_id", "") for c in session],
             "text": text,
-            "tool": step.get("tool", ""),
-            "description": step.get("description", ""),
-            "decision": case.get("decision", ""),
-            "decision_reason": case.get("decision_reason", ""),
-            "outcome": case.get("outcome", ""),
+            "task": session[0].get("task", "") if session else "",
+            "final_status": self._session_final_status(session),
         }
+
+    def _get_sessions(self):
+        sessions = self._group_sessions(self.experience_store.cases)
+        # 只保留至少有一个真实工具调用的 session
+        return [s for s in sessions if self._extract_real_tool_steps(s)]
 
     def rebuild_from_experience(self):
         faiss = _import_faiss()
-        cases = [
-            c for c in self.experience_store.cases
-            if isinstance(c, dict) and self._is_indexable_case(c)
-        ]
-        if not cases:
+        sessions = self._get_sessions()
+        if not sessions:
             self.metadata = []
             self.index = None
             self.save()
             return
-        texts = [self._build_case_text(c) for c in cases]
+        texts = [self._build_session_text(s) for s in sessions]
         vectors = self._embed_texts(texts)
         dim = vectors.shape[1]
         self.index = faiss.IndexFlatIP(dim)
         self.index.add(vectors)
-        self.metadata = [self._build_meta_entry(c, t) for c, t in zip(cases, texts)]
+        self.metadata = [self._build_session_meta(s, t) for s, t in zip(sessions, texts)]
         self.save()
 
     def sync_with_experience(self):
-        faiss = _import_faiss()
+        sessions = self._get_sessions()
+        session_ids = {self._session_id(s) for s in sessions}
+        meta_ids = {m.get("session_id") for m in self.metadata}
 
-        cases = [
-            c for c in self.experience_store.cases
-            if isinstance(c, dict) and self._is_indexable_case(c)
-        ]
-        case_ids = {c.get("memory_id") for c in cases if c.get("memory_id")}
-        meta_ids = {m.get("memory_id") for m in self.metadata}
-
-        if meta_ids - case_ids:
+        if meta_ids != session_ids:
+            # 任何变化都全量重建（session 粒度变化不频繁）
             self.rebuild_from_experience()
             return
 
-        case_map = {c.get("memory_id"): c for c in cases if c.get("memory_id")}
-        for entry in self.metadata:
-            mid = entry.get("memory_id")
-            if mid and mid in case_map:
-                current_text = self._build_case_text(case_map[mid])
-                if current_text != entry.get("text", ""):
-                    self.rebuild_from_experience()
-                    return
-
-        new_cases = [c for c in cases if c.get("memory_id") and c["memory_id"] not in meta_ids]
-        if not new_cases:
-            return
-
-        texts = [self._build_case_text(c) for c in new_cases]
-        vectors = self._embed_texts(texts)
-
-        if self.index is None:
-            dim = vectors.shape[1]
-            self.index = faiss.IndexFlatIP(dim)
-
-        self.index.add(vectors)
-        self.metadata.extend(self._build_meta_entry(c, t) for c, t in zip(new_cases, texts))
-        self.save()
+        # 检查内容是否有变化
+        meta_text_map = {m.get("session_id"): m.get("text", "") for m in self.metadata}
+        session_map = {self._session_id(s): s for s in sessions}
+        for sid, session in session_map.items():
+            if self._build_session_text(session) != meta_text_map.get(sid, ""):
+                self.rebuild_from_experience()
+                return
 
     def ensure_synced(self):
         if not self._synced:
@@ -253,11 +275,9 @@ class PlanMemoryVectorStore:
 
     def search(self, task_query, limit=PLAN_MEMORY_TOP_K):
         self.ensure_synced()
-        exp_count = sum(
-            1 for c in self.experience_store.cases
-            if isinstance(c, dict) and self._is_indexable_case(c)
-        )
-        if exp_count != len(self.metadata):
+
+        sessions = self._get_sessions()
+        if len(sessions) != len(self.metadata):
             self.sync_with_experience()
 
         if self.index is None or self.index.ntotal == 0:
@@ -269,22 +289,23 @@ class PlanMemoryVectorStore:
         k = min(limit, self.index.ntotal)
         scores, indices = self.index.search(query_vec, k)
 
-        case_map = {
-            c.get("memory_id"): c
-            for c in self.experience_store.cases
-            if isinstance(c, dict) and c.get("memory_id")
-        }
-
         results = []
         for score, idx in zip(scores[0], indices[0]):
             if idx < 0 or idx >= len(self.metadata):
                 continue
-            memory_id = self.metadata[idx].get("memory_id")
-            if memory_id not in case_map:
+            meta = self.metadata[idx]
+            session_id = meta.get("session_id", "")
+            # 找到对应 session 的所有 cases
+            matched_session = None
+            for s in sessions:
+                if self._session_id(s) == session_id:
+                    matched_session = s
+                    break
+            if not matched_session:
                 continue
             results.append({
                 "score": round(float(score), 4),
-                "case": case_map[memory_id],
+                "session": matched_session,
             })
         return results
 
@@ -343,56 +364,56 @@ def get_plan_memory_store():
     return plan_memory_store
 
 
+def _build_trajectory_view(session, score):
+    """把一个 session 转成轨迹视图，只展示真实工具调用链"""
+    store = get_plan_memory_store()
+    task = session[0].get("task", "") if session else ""
+    real_steps = store._extract_real_tool_steps(session)
+    final_status = store._session_final_status(session)
+    return {
+        "score": score,
+        "task": task,
+        "final_status": final_status,
+        "tool_chain": [
+            {
+                "tool": s["tool"],
+                "args": s["args"],
+                "description": s["description"],
+                "outcome": s["outcome"],
+            }
+            for s in real_steps
+        ],
+    }
+
+
 def memory_for_plan(task_query):
     recalled = get_plan_memory_store().search(task_query, limit=PLAN_MEMORY_TOP_K)
-    cases = []
-    evidence = []
+    trajectories = []
 
     for item in recalled:
-        case = item["case"]
-        step = case.get("step", {}) or {}
-        risk = get_case_risk_assessment(case)
-        reasoning = case.get("decision_reason", "") or risk.get("reasoning", "")
-        case_view = {
-            "memory_id": case.get("memory_id", ""),
-            "score": item["score"],
-            "task": case.get("task", ""),
-            "tool": step.get("tool", ""),
-            "args": step.get("args", {}),
-            "description": step.get("description", ""),
-            "decision": case.get("decision", ""),
-            "outcome": case.get("outcome", ""),
-            "reason": reasoning,
-        }
-        cases.append(case_view)
-        if reasoning and reasoning not in evidence:
-            evidence.append(reasoning)
-        outcome = case.get("outcome", "")
-        if outcome:
-            outcome_evidence = f"历史相似案例常见 outcome: {outcome}"
-            if outcome_evidence not in evidence:
-                evidence.append(outcome_evidence)
+        session = item["session"]
+        trajectory = _build_trajectory_view(session, item["score"])
+        trajectories.append(trajectory)
 
-    if not cases:
-        summary = "向量库中没有召回到相关历史任务。"
+    if not trajectories:
+        summary = "向量库中没有召回到相关历史轨迹。"
     else:
-        outcome_counts = {}
-        for case in cases:
-            outcome = case.get("outcome", "unknown") or "unknown"
-            outcome_counts[outcome] = outcome_counts.get(outcome, 0) + 1
-        top_score = cases[0]["score"]
+        top_score = trajectories[0]["score"]
+        status_counts = {}
+        for t in trajectories:
+            s = t["final_status"]
+            status_counts[s] = status_counts.get(s, 0) + 1
         summary = (
-            f"任务级向量检索召回 {len(cases)} 条相关历史任务，最高相似度 {top_score:.4f}，"
-            f"主要 outcome 分布: {outcome_counts}"
+            f"轨迹级向量检索召回 {len(trajectories)} 条相似历史任务，"
+            f"最高相似度 {top_score:.4f}，最终状态分布: {status_counts}"
         )
 
     return {
         "task_query": task_query,
-        "cases": cases,
+        "trajectories": trajectories,
         "summary": summary,
-        "evidence": evidence[:6],
         "retrieval_method": "local_faiss_embedding_v1",
-        "retrieval_scope": "task_level",
+        "retrieval_scope": "trajectory_level",
     }
 
 
@@ -459,49 +480,13 @@ def build_task_memory_query_from_case(case):
 
 
 def sanitize_plan_memory_result(plan_memory_result, current_case=None):
+    """兼容旧数据的 plan memory 结果清洗"""
     plan_memory_result = dict(plan_memory_result or {})
-    raw_cases = list(plan_memory_result.get("cases", []) or [])
-    memory_id_to_task = {
-        item.get("memory_id"): item.get("task", "")
-        for item in experience_memory.cases
-        if isinstance(item, dict) and item.get("memory_id")
-    }
-
-    filtered_cases = []
-    for case_view in raw_cases:
-        tool_name = (case_view.get("tool") or "").strip()
-        if not tool_name:
-            continue
-        hydrated = dict(case_view)
-        if not hydrated.get("task"):
-            hydrated["task"] = memory_id_to_task.get(hydrated.get("memory_id"), "")
-        filtered_cases.append(hydrated)
-
-    evidence = []
-    if not filtered_cases:
-        summary = "向量库中没有召回到相关历史任务。"
-    else:
-        outcome_counts = {}
-        for case in filtered_cases:
-            outcome = case.get("outcome", "unknown") or "unknown"
-            outcome_counts[outcome] = outcome_counts.get(outcome, 0) + 1
-            reason = case.get("reason", "")
-            if reason and reason not in evidence:
-                evidence.append(reason)
-            outcome_evidence = f"历史相似案例常见 outcome: {outcome}"
-            if outcome_evidence not in evidence:
-                evidence.append(outcome_evidence)
-        top_score = filtered_cases[0].get("score", 0)
-        summary = (
-            f"任务级向量检索召回 {len(filtered_cases)} 条相关历史任务，最高相似度 {top_score:.4f}，"
-            f"主要 outcome 分布: {outcome_counts}"
-        )
-
+    # 新格式用 trajectories，旧格式用 cases，都保留
     plan_memory_result.pop("task_context", None)
     plan_memory_result.pop("current_step", None)
-    plan_memory_result["cases"] = filtered_cases
-    plan_memory_result["task_query"] = plan_memory_result.get("task_query") or build_task_memory_query_from_case(current_case)
-    plan_memory_result["retrieval_scope"] = "task_level"
-    plan_memory_result["summary"] = summary
-    plan_memory_result["evidence"] = evidence[:6]
+    if not plan_memory_result.get("task_query"):
+        plan_memory_result["task_query"] = build_task_memory_query_from_case(current_case)
+    if not plan_memory_result.get("summary"):
+        plan_memory_result["summary"] = "向量库中没有召回到相关历史轨迹。"
     return plan_memory_result

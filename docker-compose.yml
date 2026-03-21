@@ -1,5 +1,6 @@
 services:
   gitlab:
     image: ghcr.io/theagentcompany/servers-gitlab:1.0.0
+    restart: unless-stopped
     ports:
       - "8929:80"

@@ -25,7 +25,7 @@ user input
 几个关键点：
 
 - 第一轮只能走 `memory_for_plan / ask_human / refuse`，不再显式暴露 `thinking_step`。
-- `memory_for_plan` 现在要求显式提交 `tool + tool_args + description`，用于形成当前 step；它的 memory 检索以"当前用户任务"相似度为主，而不是只按 step 相似度召回。
+- `memory_for_plan` 是无参数纯检索工具，以轨迹级（session）粒度召回相似历史任务的完整工具调用链，只展示真实工具执行，不含 flow tool 细节。
 - `predict_risk`、`judge_try_result`、`replan`、`completion_check` 都是参数驱动的控制工具：判断内容写在 `arguments`，observation 只返回确认和状态推进。
 - `replan` 现在一次只生成一个替代 step，字段是 `arguments.new_step`，不再使用 `new_steps` 数组。
 - 主循环带有 tool-call 校验失败重试；错误会写入 `last_tool_error` 反馈给模型，而不是第一次字段错误就直接崩溃。
@@ -34,9 +34,9 @@ user input
 
 `safety_pipeline/` 会在本地维护三类数据：
 
-- `memory/experience_memory.json`：逐 step 保存决策、理由、结果和 flow tool 轨迹；新 case 使用更扁平的 `risk = {level, reason, next_action, criteria}`。
+- `memory/experience_memory.json`：逐 step 保存决策和完整 flow tool 轨迹。每条记录只保留 `task, turn_id, step_index, dialogue_snapshot, flow_tool_calls, step, decision, outcome`，所有详细信息通过 `flow_tool_calls` 获取。每个工具调用带有全局递增的 `call_index`。
 - `memory/tool_memory.json`：缓存完全相同签名的安全工具调用。
-- `memory/plan_memory.faiss` + `memory/plan_memory_meta.json`：基于本地 embedding + FAISS 的任务级语义检索索引。
+- `memory/plan_memory.faiss` + `memory/plan_memory_meta.json`：基于本地 embedding + FAISS 的轨迹级语义检索索引，按 session 粒度索引，召回完整工具调用链。
 
 每次运行结束后都会自动刷新：
 
@@ -46,16 +46,9 @@ user input
 
 当前导出是多轮 tool-calling 轨迹，顶层字段为：
 
-- `system`
-- `tool_groups`
-- `tools`
-- `conversations`
-
-其中：
-
-- `tool_groups.shared_flow_tools`：共享流程工具，如 `memory_for_plan`、`predict_risk`、`ask_human`、`completion_check`
-- `tool_groups.task_tools`：当前任务实际用到的真实工具，如 `list_projects`、`list_branches`、`delete_branch`
-- `tools`：上面两组的扁平合并，便于直接交给训练框架
+- `system`：系统提示词
+- `tools`：JSON 字符串，每个工具用 `{type: "function", function: {...}}` 包装，包含 flow tool 和 real tool
+- `conversations`：多轮对话序列，按 LlamaFactory ShareGPT/tool-calling 格式
 
 当前导出约定还包括：
 
@@ -71,19 +64,26 @@ user input
 pip install -r requirements.txt
 ```
 
-配置环境变量：
+配置环境变量（在项目根目录创建 `.env` 文件，会被自动加载）：
 
-```bash
-export OPENAI_API_KEY="your_openai_api_key"
-# GitLab 环境（可选，有默认值）
-export GITLAB_BASE_URL="http://localhost:8929"
-export GITLAB_ACCESS_TOKEN="root-token"
+```
+OPENAI_API_KEY=your_openai_api_key
+OPENAI_BASE_URL=https://openrouter.ai/api/v1   # 可选，支持 OpenRouter/DeepSeek 等兼容 API
+OPENAI_MODEL=openai/gpt-4o                       # 可选，默认 gpt-5.2
+GITLAB_BASE_URL=http://localhost:8929
+GITLAB_ACCESS_TOKEN=root-token
 ```
 
 启动 GitLab 测试环境：
 
 ```bash
 docker compose up -d && bash scripts/setup_env.sh
+```
+
+一键重置 GitLab 环境（恢复初始数据 + 续期 token）：
+
+```bash
+bash scripts/reset_env.sh
 ```
 
 运行默认任务：

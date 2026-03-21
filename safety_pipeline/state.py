@@ -23,6 +23,7 @@ def init_conversation_state(initial_user_input, npc_scenario=None):
         "current_try_judgment": None,
         "current_completion": None,
         "pending_completion_question": "",
+        "tool_call_counter": 0,
         "flow_phase": "need_step",
         "pending_execution_method": "",
         "replan_counts": {},
@@ -97,13 +98,15 @@ def summarize_trace_value(value):
     return str(value)
 
 
-def build_flow_tool_call_record(phase, tool_name, arguments, result):
-    return {
+def build_flow_tool_call_record(call_index, phase, tool_name, arguments, result):
+    record = {
+        "call_index": call_index,
         "phase": phase,
         "tool_name": tool_name,
         "arguments": arguments,
         "result": summarize_trace_value(result),
     }
+    return record
 
 
 def summarize_result_for_memory(value, limit=220):
@@ -171,13 +174,15 @@ def update_state_from_execution(state, tool_name, args, result, method):
 
 def build_memory_context_snapshot(state):
     return {
-        "initial_task": state["initial_user_input"],
         "dialogue_history": list(state["dialogue_history"]),
-        "known_context": list(state["known_context"]),
+        "known_context": [truncate_text(c, 120) for c in state["known_context"]],
         "missing_context": list(state["missing_context"]),
         "authorization_state": list(state["authorization_state"]),
         "results_summary": [
-            summarize_execution_result(item["tool"], item.get("args", {}), item["result"])
+            truncate_text(
+                summarize_execution_result(item["tool"], item.get("args", {}), item["result"]),
+                120,
+            )
             for item in state["results"]
         ],
     }

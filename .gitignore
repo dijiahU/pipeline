@@ -3,3 +3,4 @@
 memory/
 __pycache__/
 gitlab/
+.env

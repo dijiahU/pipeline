@@ -1,6 +1,6 @@
 import json
 
-from .settings import OPENAI_API_KEY, OPENAI_MODEL
+from .settings import OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL
 
 try:
     import openai
@@ -17,7 +17,10 @@ def get_openai_client():
         return client
     if openai is None:
         raise RuntimeError("当前环境未安装 openai，无法运行 pipeline 决策流程。")
-    client = openai.OpenAI(api_key=OPENAI_API_KEY)
+    kwargs = {"api_key": OPENAI_API_KEY}
+    if OPENAI_BASE_URL:
+        kwargs["base_url"] = OPENAI_BASE_URL
+    client = openai.OpenAI(**kwargs)
     return client
 
 

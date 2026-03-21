@@ -1,7 +1,19 @@
 import os
 
+REPO_ROOT = os.path.dirname(os.path.dirname(__file__))
+
+# 自动加载项目根目录的 .env 文件
+_env_path = os.path.join(REPO_ROOT, ".env")
+if os.path.isfile(_env_path):
+    with open(_env_path) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _key, _, _val = _line.partition("=")
+                os.environ.setdefault(_key.strip(), _val.strip())
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "your_openai_api_key")
+OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", None)
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5.2")
 DEFAULT_PIPELINE_ENV = "gitlab"
 MAX_STEP_REPLAN = 2
@@ -11,7 +23,6 @@ PLAN_MEMORY_TOP_K = 6
 MAX_AGENT_TOOL_ROUNDS = 40
 MAX_TOOL_CALL_RETRIES = 3
 
-REPO_ROOT = os.path.dirname(os.path.dirname(__file__))
 MEMORY_DIR = os.path.join(REPO_ROOT, "memory")
 EXPERIENCE_MEMORY_PATH = os.path.join(MEMORY_DIR, "experience_memory.json")
 TOOL_MEMORY_PATH = os.path.join(MEMORY_DIR, "tool_memory.json")
