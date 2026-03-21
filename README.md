@@ -1,6 +1,6 @@
 # Agent Safety Pipeline
 
-当前仓库的主实现是 [`pipeline.py`](./pipeline.py)。它不再把系统描述为“整份 plan 的 safe/unsafe 阻断器”，而是一个 **decision-driven、step-level** 的安全执行 pipeline：每一轮只围绕一个“当前最小可执行 step”推进，再基于证据决定进入真实执行、沙箱试执行、重规划、向人追问或拒绝。
+当前仓库的主实现是 [`pipeline.py`](./pipeline.py)。它不再把系统描述为"整份 plan 的 safe/unsafe 阻断器"，而是一个 **decision-driven、step-level** 的安全执行 pipeline：每一轮只围绕一个"当前最小可执行 step"推进，再基于证据决定进入真实执行、沙箱试执行、重规划、向人追问或拒绝。
 
 ## 当前框架
 
@@ -25,7 +25,7 @@ user input
 几个关键点：
 
 - 第一轮只能走 `memory_for_plan / ask_human / refuse`，不再显式暴露 `thinking_step`。
-- `memory_for_plan` 现在要求显式提交 `tool + tool_args + description`，用于形成当前 step；它的 memory 检索以“当前用户任务”相似度为主，而不是只按 step 相似度召回。
+- `memory_for_plan` 现在要求显式提交 `tool + tool_args + description`，用于形成当前 step；它的 memory 检索以"当前用户任务"相似度为主，而不是只按 step 相似度召回。
 - `predict_risk`、`judge_try_result`、`replan`、`completion_check` 都是参数驱动的控制工具：判断内容写在 `arguments`，observation 只返回确认和状态推进。
 - `replan` 现在一次只生成一个替代 step，字段是 `arguments.new_step`，不再使用 `new_steps` 数组。
 - 主循环带有 tool-call 校验失败重试；错误会写入 `last_tool_error` 反馈给模型，而不是第一次字段错误就直接崩溃。
@@ -54,7 +54,7 @@ user input
 其中：
 
 - `tool_groups.shared_flow_tools`：共享流程工具，如 `memory_for_plan`、`predict_risk`、`ask_human`、`completion_check`
-- `tool_groups.task_tools`：当前任务实际用到的真实工具，如 `list_files`、`read_file`、`delete_file`
+- `tool_groups.task_tools`：当前任务实际用到的真实工具，如 `list_projects`、`list_branches`、`delete_branch`
 - `tools`：上面两组的扁平合并，便于直接交给训练框架
 
 当前导出约定还包括：
@@ -75,7 +75,15 @@ pip install -r requirements.txt
 
 ```bash
 export OPENAI_API_KEY="your_openai_api_key"
-export E2B_API_KEY="your_e2b_api_key"
+# GitLab 环境（可选，有默认值）
+export GITLAB_BASE_URL="http://localhost:8929"
+export GITLAB_ACCESS_TOKEN="root-token"
+```
+
+启动 GitLab 测试环境：
+
+```bash
+docker compose up -d && bash scripts/setup_env.sh
 ```
 
 运行默认任务：
@@ -87,19 +95,36 @@ python pipeline.py
 运行自定义任务：
 
 ```bash
-python pipeline.py --task "帮我检查 /home/user/app.log 最近的错误"
+python pipeline.py --task "列出所有 GitLab 项目"
+```
+
+从 YAML 文件加载任务：
+
+```bash
+python pipeline.py --task-file tasks/safety-list-projects.yaml
+```
+
+运行评测：
+
+```bash
+python evaluator.py --task-file tasks/safety-close-all-issues.yaml
 ```
 
 快速做语法检查：
 
 ```bash
-python -m py_compile pipeline.py mcp_tools.py
+python -m py_compile pipeline.py evaluator.py gitlab_tools.py environment.py
 ```
 
 ## 文件说明
 
 - `pipeline.py`：当前主流程，包含 flow-control、参数校验、tool-call 重试、沙箱 try、memory 持久化和 SFT 导出。
-- `mcp_tools.py`：真实工具注册中心；`pipeline.py` 会动态读取这里的 tool schema 并执行工具。
+- `gitlab_tools.py`：GitLab API 工具模块，13 个工具分三级（read-only / preview / write），使用 `@gitlab_tool()` 装饰器注册。
+- `environment.py`：环境后端抽象层，定义 `EnvironmentBackend` 和 `GitLabBackend`；工厂函数 `get_backend()` 按名称返回单例。
+- `evaluator.py`：任务级评测框架，支持 decision_check / outcome_check / behavior_check 三种检查。
+- `tasks/*.yaml`：评测任务定义文件，包含用户任务、oracle 预期和 NPC 场景配置。
+- `docker-compose.yml`：GitLab 测试环境的 Docker compose 配置。
+- `scripts/setup_env.sh`：容器启动和健康检查脚本。
 - `criterion.md`：当前流程控制标准。
 - `branches.md`：SFT 分支枚举示例。
 
@@ -111,3 +136,5 @@ python -m py_compile pipeline.py mcp_tools.py
 - `terminate`：`tool_try` 已暴露不可接受副作用，且任务无法在安全边界内继续推进。
 
 如果你要修改当前实现，优先保持 `pipeline.py` 的这条固定链路，而不是回退到旧的 plan-level safe/unsafe 描述。
+
+> 查看上一次修改详情：[changes.md](./changes.md)
