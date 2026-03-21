@@ -2,7 +2,7 @@
 EnvironmentBackend 抽象 + 具体后端实现
 
 flow tools 不变，只替换 real tools 和执行后端。
-pipeline.py 通过 backend 接口调用工具，不再直接依赖具体服务模块。
+runtime 模块通过 backend 接口调用工具，不再直接依赖具体服务模块。
 
 当前后端：GitLabBackend
 未来后端：RocketChatBackend、FilesystemBackend 等，按同样模式接入。
@@ -57,17 +57,18 @@ _GITLAB_PREVIEW_MAP = {
         },
     },
     "close_issue": {
-        "preview_tool": "preview_close_issues",
+        "preview_tool": "preview_close_issue",
         "args_transform": lambda args: {
             "project_id": args.get("project_id", ""),
-            "label_filter": "",
+            "issue_iid": args.get("issue_iid"),
         },
     },
     "update_branch_protection": {
-        "preview_tool": "get_branch_protection",
+        "preview_tool": "preview_update_branch_protection",
         "args_transform": lambda args: {
             "project_id": args.get("project_id", ""),
             "branch_name": args.get("branch_name", ""),
+            "action": args.get("action", ""),
         },
     },
 }
@@ -83,7 +84,7 @@ class GitLabBackend(EnvironmentBackend):
         if self._gitlab_tools is not None:
             return self._gitlab_tools
         try:
-            import gitlab_tools as gitlab_tools_module
+            from . import gitlab_tools as gitlab_tools_module
         except ModuleNotFoundError as exc:
             raise RuntimeError("当前环境缺少 gitlab_tools 模块。") from exc
         self._gitlab_tools = gitlab_tools_module

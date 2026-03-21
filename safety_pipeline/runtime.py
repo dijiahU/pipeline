@@ -2,410 +2,60 @@ import argparse
 import difflib
 import json
 import os
-import uuid
+
+from .console import print_json_block, print_stage_end, print_stage_start
+from .exceptions import ToolExecutionError
+from .llm import call_json_or_text, call_required_tool_choice
+from .memory import (
+    compose_task_query,
+    experience_memory,
+    get_plan_memory_store,
+    memory_for_plan,
+    memory_for_tool,
+    sanitize_plan_memory_result,
+    sanitize_tool_memory_result,
+    tool_memory,
+    tool_signature,
+)
+from .settings import (
+    EXPERIENCE_MEMORY_PATH,
+    MAX_AGENT_TOOL_ROUNDS,
+    MAX_CONVERSATION_TURNS,
+    MAX_STEP_REPLAN,
+    MAX_TOOL_CALL_RETRIES,
+    PLAN_MEMORY_FAISS_PATH,
+    SFT_DATASET_PATH,
+    TOOL_MEMORY_PATH,
+    get_pipeline_env,
+    set_pipeline_env,
+)
+from .state import (
+    append_assistant_message,
+    apply_user_reply_to_state,
+    build_flow_tool_call_record,
+    build_memory_context_snapshot,
+    clear_current_flow_tool_calls,
+    compact_risk_record,
+    get_case_risk_assessment,
+    get_current_step,
+    init_conversation_state,
+    normalize_string_list,
+    request_user_input_for_state,
+    reset_step_artifacts,
+    summarize_result_for_memory,
+    summarize_trace_value,
+    update_latest_flow_tool_arguments,
+    update_state_from_execution,
+)
 
 try:
     import yaml
 except ModuleNotFoundError:
     yaml = None
-
-try:
-    import openai
-except ModuleNotFoundError:
-    openai = None
-
-
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "your_openai_api_key")
-OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5.2")
-OPENAI_EMBEDDING_MODEL = os.environ.get("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
-PIPELINE_ENV = os.environ.get("PIPELINE_ENV", "gitlab")
-MAX_STEP_REPLAN = 2
-MAX_CONVERSATION_TURNS = 8
-MAX_DIALOGUE_SUMMARY_CHARS = 400
-PLAN_MEMORY_TOP_K = 6
-MAX_AGENT_TOOL_ROUNDS = 40
-MAX_TOOL_CALL_RETRIES = 3
-
-client = None
-
-MEMORY_DIR = os.path.join(os.path.dirname(__file__), "memory")
-EXPERIENCE_MEMORY_PATH = os.path.join(MEMORY_DIR, "experience_memory.json")
-TOOL_MEMORY_PATH = os.path.join(MEMORY_DIR, "tool_memory.json")
-SFT_DATASET_PATH = os.path.join(MEMORY_DIR, "sft_dataset.jsonl")
-PLAN_MEMORY_INDEX_PATH = os.path.join(MEMORY_DIR, "plan_memory_index.json")
-LOCAL_EMBEDDING_MODEL = os.environ.get(
-    "LOCAL_EMBEDDING_MODEL",
-    "paraphrase-multilingual-MiniLM-L12-v2",
-)
-PLAN_MEMORY_FAISS_PATH = os.path.join(MEMORY_DIR, "plan_memory.faiss")
-PLAN_MEMORY_META_PATH = os.path.join(MEMORY_DIR, "plan_memory_meta.json")
-
-
-# ==================== Memory ====================
-
-
-def tool_signature(tool_name, args):
-    return f"{tool_name}:{json.dumps(args, ensure_ascii=False, sort_keys=True)}"
-
-
-class ExperienceMemory:
-    def __init__(self, storage_path):
-        self.storage_path = storage_path
-        self.cases = []
-        self.load()
-
-    def load(self):
-        dirty = False
-        try:
-            with open(self.storage_path, "r", encoding="utf-8") as fh:
-                data = json.load(fh)
-        except FileNotFoundError:
-            self.cases = []
-            return
-        except json.JSONDecodeError:
-            print(f"[memory] experience memory 文件损坏，已忽略: {self.storage_path}")
-            self.cases = []
-            return
-        self.cases = data if isinstance(data, list) else []
-        for case in self.cases:
-            if not isinstance(case, dict):
-                continue
-            if not case.get("memory_id"):
-                case["memory_id"] = f"case-{uuid.uuid4().hex}"
-                dirty = True
-        if dirty:
-            self.save()
-
-    def save(self):
-        os.makedirs(os.path.dirname(self.storage_path), exist_ok=True)
-        with open(self.storage_path, "w", encoding="utf-8") as fh:
-            json.dump(self.cases, fh, ensure_ascii=False, indent=2)
-
-    def store_case(self, case):
-        if not case.get("memory_id"):
-            case["memory_id"] = f"case-{uuid.uuid4().hex}"
-        self.cases.append(case)
-        self.save()
-
-    def get_recent_cases(self, limit=10):
-        return self.cases[-limit:]
-
-
-_local_embedding_model = None
-
-
-def get_local_embedding_model():
-    global _local_embedding_model
-    if _local_embedding_model is not None:
-        return _local_embedding_model
-    try:
-        from sentence_transformers import SentenceTransformer
-    except ImportError:
-        raise RuntimeError(
-            "sentence-transformers is required for plan memory. "
-            "Install with: pip install sentence-transformers"
-        )
-    print(f"[plan_memory] loading local embedding model: {LOCAL_EMBEDDING_MODEL}")
-    _local_embedding_model = SentenceTransformer(LOCAL_EMBEDDING_MODEL)
-    return _local_embedding_model
-
-
-def _import_faiss():
-    try:
-        import faiss
-        return faiss
-    except ImportError:
-        raise RuntimeError(
-            "faiss-cpu is required for plan memory. "
-            "Install with: pip install faiss-cpu"
-        )
-
-
-class PlanMemoryVectorStore:
-    def __init__(self, faiss_path, meta_path, experience_store):
-        self.faiss_path = faiss_path
-        self.meta_path = meta_path
-        self.experience_store = experience_store
-        self.metadata = []
-        self.index = None
-        self._synced = False
-        self.load()
-
-    def load(self):
-        faiss = _import_faiss()
-        try:
-            with open(self.meta_path, "r", encoding="utf-8") as fh:
-                data = json.load(fh)
-            self.metadata = data if isinstance(data, list) else []
-        except (FileNotFoundError, json.JSONDecodeError):
-            self.metadata = []
-
-        if os.path.exists(self.faiss_path) and self.metadata:
-            try:
-                self.index = faiss.read_index(self.faiss_path)
-            except Exception:
-                print(f"[memory] FAISS index 损坏，将重建: {self.faiss_path}")
-                self.index = None
-                self.metadata = []
-        else:
-            self.index = None
-
-    def save(self):
-        faiss = _import_faiss()
-        os.makedirs(os.path.dirname(self.faiss_path), exist_ok=True)
-        if self.index is not None and self.index.ntotal > 0:
-            faiss.write_index(self.index, self.faiss_path)
-        with open(self.meta_path, "w", encoding="utf-8") as fh:
-            json.dump(self.metadata, fh, ensure_ascii=False, indent=2)
-
-    def _embed_text(self, text):
-        import numpy as np
-        model = get_local_embedding_model()
-        vec = model.encode(text, normalize_embeddings=True)
-        return np.array(vec, dtype=np.float32)
-
-    def _embed_texts(self, texts):
-        import numpy as np
-        model = get_local_embedding_model()
-        vecs = model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
-        return np.array(vecs, dtype=np.float32)
-
-    @staticmethod
-    def _is_indexable_case(case):
-        step = case.get("step", {}) or {}
-        return bool(step.get("tool"))
-
-    @staticmethod
-    def _build_case_text(case):
-        step = case.get("step", {}) or {}
-        risk = get_case_risk_assessment(case)
-        plan_memory = case.get("plan_memory", {}) or {}
-        dialogue_snapshot = case.get("dialogue_snapshot", {}) or {}
-        lines = [
-            f"task: {case.get('task', '')}",
-            f"task_summary: {summarize_result_for_memory(case.get('task', ''), limit=320)}",
-            f"known_context: {' | '.join(dialogue_snapshot.get('known_context', [])[:6])}",
-            f"authorization: {' | '.join(dialogue_snapshot.get('authorization_state', [])[:4])}",
-            f"outcome: {case.get('outcome', '')}",
-            f"decision: {case.get('decision', '')}",
-            f"decision_reason: {case.get('decision_reason', '')}",
-            f"tool: {step.get('tool', '')}",
-            f"args: {json.dumps(step.get('args', {}), ensure_ascii=False, sort_keys=True)}",
-            f"description: {step.get('description', '')}",
-            f"risk: {risk.get('result', '')}",
-            f"risk_reason: {risk.get('reasoning', '')}",
-            f"plan_memory_summary: {plan_memory.get('summary', '')}",
-        ]
-        return "\n".join(lines)
-
-    @staticmethod
-    def _build_query_text(task_query):
-        return "\n".join(
-            [
-                "retrieval_scope: task_level",
-                f"task_query: {task_query}",
-            ]
-        )
-
-    @staticmethod
-    def _build_meta_entry(case, text):
-        step = case.get("step", {}) or {}
-        return {
-            "memory_id": case.get("memory_id", ""),
-            "text": text,
-            "tool": step.get("tool", ""),
-            "description": step.get("description", ""),
-            "decision": case.get("decision", ""),
-            "decision_reason": case.get("decision_reason", ""),
-            "outcome": case.get("outcome", ""),
-        }
-
-    def rebuild_from_experience(self):
-        faiss = _import_faiss()
-        cases = [
-            c for c in self.experience_store.cases
-            if isinstance(c, dict) and self._is_indexable_case(c)
-        ]
-        if not cases:
-            self.metadata = []
-            self.index = None
-            self.save()
-            return
-        texts = [self._build_case_text(c) for c in cases]
-        vectors = self._embed_texts(texts)
-        dim = vectors.shape[1]
-        self.index = faiss.IndexFlatIP(dim)
-        self.index.add(vectors)
-        self.metadata = [self._build_meta_entry(c, t) for c, t in zip(cases, texts)]
-        self.save()
-
-    def sync_with_experience(self):
-        faiss = _import_faiss()
-
-        cases = [
-            c for c in self.experience_store.cases
-            if isinstance(c, dict) and self._is_indexable_case(c)
-        ]
-        case_ids = {c.get("memory_id") for c in cases if c.get("memory_id")}
-        meta_ids = {m.get("memory_id") for m in self.metadata}
-
-        if meta_ids - case_ids:
-            self.rebuild_from_experience()
-            return
-
-        case_map = {c.get("memory_id"): c for c in cases if c.get("memory_id")}
-        for entry in self.metadata:
-            mid = entry.get("memory_id")
-            if mid and mid in case_map:
-                current_text = self._build_case_text(case_map[mid])
-                if current_text != entry.get("text", ""):
-                    self.rebuild_from_experience()
-                    return
-
-        new_cases = [c for c in cases if c.get("memory_id") and c["memory_id"] not in meta_ids]
-        if not new_cases:
-            return
-
-        texts = [self._build_case_text(c) for c in new_cases]
-        vectors = self._embed_texts(texts)
-
-        if self.index is None:
-            dim = vectors.shape[1]
-            self.index = faiss.IndexFlatIP(dim)
-
-        self.index.add(vectors)
-        self.metadata.extend(self._build_meta_entry(c, t) for c, t in zip(new_cases, texts))
-        self.save()
-
-    def ensure_synced(self):
-        if not self._synced:
-            self.sync_with_experience()
-            self._synced = True
-
-    def search(self, task_query, limit=PLAN_MEMORY_TOP_K):
-        self.ensure_synced()
-        exp_count = sum(
-            1 for c in self.experience_store.cases
-            if isinstance(c, dict) and self._is_indexable_case(c)
-        )
-        if exp_count != len(self.metadata):
-            self.sync_with_experience()
-
-        if self.index is None or self.index.ntotal == 0:
-            return []
-
-        query_text = self._build_query_text(task_query)
-        query_vec = self._embed_text(query_text).reshape(1, -1)
-
-        k = min(limit, self.index.ntotal)
-        scores, indices = self.index.search(query_vec, k)
-
-        case_map = {
-            c.get("memory_id"): c
-            for c in self.experience_store.cases
-            if isinstance(c, dict) and c.get("memory_id")
-        }
-
-        results = []
-        for score, idx in zip(scores[0], indices[0]):
-            if idx < 0 or idx >= len(self.metadata):
-                continue
-            memory_id = self.metadata[idx].get("memory_id")
-            if memory_id not in case_map:
-                continue
-            results.append({
-                "score": round(float(score), 4),
-                "case": case_map[memory_id],
-            })
-        return results
-
-
-class ToolMemory:
-    def __init__(self, storage_path):
-        self.storage_path = storage_path
-        self.safe_cases = {}
-        self.load()
-
-    def load(self):
-        try:
-            with open(self.storage_path, "r", encoding="utf-8") as fh:
-                data = json.load(fh)
-        except FileNotFoundError:
-            self.safe_cases = {}
-            return
-        except json.JSONDecodeError:
-            print(f"[memory] tool memory 文件损坏，已忽略: {self.storage_path}")
-            self.safe_cases = {}
-            return
-        self.safe_cases = data if isinstance(data, dict) else {}
-
-    def save(self):
-        os.makedirs(os.path.dirname(self.storage_path), exist_ok=True)
-        with open(self.storage_path, "w", encoding="utf-8") as fh:
-            json.dump(self.safe_cases, fh, ensure_ascii=False, indent=2)
-
-    def get_safe_case(self, tool_name, args):
-        return self.safe_cases.get(tool_signature(tool_name, args))
-
-    def store_safe_case(self, tool_name, args, exec_result, safety_reason):
-        self.safe_cases[tool_signature(tool_name, args)] = {
-            "tool": tool_name,
-            "args": args,
-            "exec_result": exec_result,
-            "exec_result_summary": summarize_result_for_memory(exec_result),
-            "state": "safe",
-            "safety_reason": safety_reason,
-        }
-        self.save()
-
-
-experience_memory = ExperienceMemory(EXPERIENCE_MEMORY_PATH)
-tool_memory = ToolMemory(TOOL_MEMORY_PATH)
-plan_memory_store = PlanMemoryVectorStore(PLAN_MEMORY_FAISS_PATH, PLAN_MEMORY_META_PATH, experience_memory)
-
-
-# ==================== 基础设施 ====================
-
-
-def get_openai_client():
-    global client
-    if client is not None:
-        return client
-    if openai is None:
-        raise RuntimeError("当前环境未安装 openai，无法运行 pipeline 决策流程。")
-    client = openai.OpenAI(api_key=OPENAI_API_KEY)
-    return client
-
-
-def call_json(system_prompt, user_payload):
-    llm_client = get_openai_client()
-    response = llm_client.chat.completions.create(
-        model=OPENAI_MODEL,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_payload},
-        ],
-        response_format={"type": "json_object"},
-    )
-    return json.loads(response.choices[0].message.content)
-
-
-def call_json_or_text(prompt, user_payload=None):
-    llm_client = get_openai_client()
-    messages = [{"role": "system", "content": prompt}]
-    if user_payload:
-        messages.append({"role": "user", "content": user_payload})
-    response = llm_client.chat.completions.create(
-        model=OPENAI_MODEL,
-        messages=messages,
-    )
-    return response.choices[0].message.content.strip()
-
-
 def get_environment_backend():
     """获取当前环境后端"""
-    from environment import get_backend
-    return get_backend(PIPELINE_ENV)
+    from .environment import get_backend
+    return get_backend(get_pipeline_env())
 
 
 def get_tool_schemas(allow_empty=False):
@@ -415,211 +65,6 @@ def get_tool_schemas(allow_empty=False):
         if allow_empty:
             return []
         raise
-
-
-def build_tools_info():
-    tools_info = []
-    for schema in get_tool_schemas():
-        func = schema["function"]
-        tools_info.append(
-            {
-                "name": func["name"],
-                "description": func["description"],
-                "parameters": func["parameters"],
-            }
-        )
-    return tools_info
-
-
-# ==================== 打印辅助 ====================
-
-
-def print_divider(char="=", width=60):
-    print(char * width)
-
-
-def print_stage_start(title):
-    print(f"\n[阶段开始] {title}")
-    print_divider("=")
-
-
-def print_stage_end(title, summary=""):
-    print_divider("-")
-    suffix = f" -> {summary}" if summary else ""
-    print(f"[阶段结束] {title}{suffix}")
-
-
-def print_json_block(label, payload):
-    print(f"[{label}]")
-    print(json.dumps(payload, ensure_ascii=False, indent=2))
-
-
-def print_step_header(step_index, step):
-    print(f"\n[步骤 {step_index + 1}] {step['tool']}({step['args']})")
-    print(f"[步骤说明] {step.get('description', '')}")
-
-
-# ==================== 会话状态 ====================
-
-
-def init_conversation_state(initial_user_input, npc_scenario=None):
-    return {
-        "initial_user_input": initial_user_input,
-        "dialogue_history": [{"role": "user", "content": initial_user_input}],
-        "known_context": [],
-        "missing_context": [],
-        "authorization_state": [],
-        "results": [],
-        "decision_trace": [],
-        "flow_tool_history": [],
-        "current_flow_tool_calls": [],
-        "step_queue": [],
-        "current_plan_memory": None,
-        "current_risk_assessment": None,
-        "current_tool_memory": None,
-        "current_try_result": None,
-        "current_try_exec_result": None,
-        "current_try_judgment": None,
-        "current_completion": None,
-        "pending_completion_question": "",
-        "flow_phase": "need_step",
-        "pending_execution_method": "",
-        "replan_counts": {},
-        "status": "running",
-        "turn_count": 1,
-        "error_reason": "",
-        "last_tool_error": "",
-        "npc_scenario": npc_scenario,
-    }
-
-
-def _extend_unique(items, new_items):
-    for item in new_items:
-        if item and item not in items:
-            items.append(item)
-
-
-def _truncate_text(text, limit=MAX_DIALOGUE_SUMMARY_CHARS):
-    text = str(text)
-    if len(text) <= limit:
-        return text
-    return text[: limit - 3] + "..."
-
-
-def summarize_execution_result(tool_name, args, result):
-    summary = f"{tool_name}({json.dumps(args, ensure_ascii=False, sort_keys=True)}) -> {result}"
-    return _truncate_text(summary)
-
-
-def append_assistant_message(state, content):
-    state["dialogue_history"].append({"role": "assistant", "content": content})
-
-
-def reset_step_artifacts(state):
-    state["current_plan_memory"] = None
-    state["current_risk_assessment"] = None
-    state["current_tool_memory"] = None
-    state["current_try_result"] = None
-    state["current_try_exec_result"] = None
-    state["current_try_judgment"] = None
-    state["pending_execution_method"] = ""
-
-
-def get_current_step(state):
-    if state["step_queue"]:
-        return state["step_queue"][0]
-    return None
-
-
-def clear_current_flow_tool_calls(state):
-    state["current_flow_tool_calls"] = []
-
-
-def update_latest_flow_tool_arguments(state, arguments):
-    if not state.get("current_flow_tool_calls"):
-        return
-    state["current_flow_tool_calls"][-1]["arguments"] = arguments
-
-
-def build_flow_tool_call_record(phase, tool_name, arguments, result):
-    return {
-        "phase": phase,
-        "tool_name": tool_name,
-        "arguments": arguments,
-        "result": summarize_trace_value(result),
-    }
-
-
-def summarize_trace_value(value):
-    if value is None:
-        return None
-    if isinstance(value, (str, int, float, bool)):
-        return value
-    if isinstance(value, list):
-        return [summarize_trace_value(item) for item in value[:3]]
-    if isinstance(value, dict):
-        summary = {}
-        for key in list(value.keys())[:8]:
-            summary[key] = summarize_trace_value(value[key])
-        return summary
-    return str(value)
-
-
-def summarize_result_for_memory(value, limit=220):
-    summarized = summarize_trace_value(value)
-    if isinstance(summarized, str):
-        text = summarized
-    else:
-        text = json.dumps(summarized, ensure_ascii=False)
-    return _truncate_text(text, limit)
-
-
-def normalize_string_list(value):
-    if not isinstance(value, list):
-        return []
-    return [str(item).strip() for item in value if str(item).strip()]
-
-
-def normalize_risk_assessment_payload(payload):
-    payload = payload or {}
-    if not isinstance(payload, dict):
-        return {}
-    result = str(payload.get("result") or payload.get("level") or payload.get("risk") or "").strip()
-    reasoning = str(payload.get("reasoning") or payload.get("reason") or "").strip()
-    likely_next_action = str(payload.get("likely_next_action") or payload.get("next_action") or "").strip()
-    criterion_hits = normalize_string_list(payload.get("criterion_hits") or payload.get("criteria") or [])
-
-    normalized = {}
-    if result:
-        normalized["result"] = result
-    if reasoning:
-        normalized["reasoning"] = reasoning
-    if likely_next_action:
-        normalized["likely_next_action"] = likely_next_action
-    if criterion_hits:
-        normalized["criterion_hits"] = criterion_hits
-    return normalized
-
-
-def compact_risk_record(risk_assessment):
-    normalized = normalize_risk_assessment_payload(risk_assessment)
-    if not normalized:
-        return {}
-    return {
-        "level": normalized.get("result", ""),
-        "reason": normalized.get("reasoning", ""),
-        "next_action": normalized.get("likely_next_action", ""),
-        "criteria": normalized.get("criterion_hits", []),
-    }
-
-
-def get_case_risk_assessment(case):
-    case = case or {}
-    normalized = normalize_risk_assessment_payload(case.get("risk"))
-    if normalized:
-        return normalized
-    return normalize_risk_assessment_payload(case.get("risk_assessment"))
-
 
 def get_real_tool_schema_map():
     tool_map = {}
@@ -655,15 +100,12 @@ def resolve_real_tool_name(tool_name, context_label="current_step"):
     raise RuntimeError(f"{context_label}.tool 使用了未知真实工具: {tool_name}")
 
 
-def tool_args_compatible(expected_args, provided_args):
+def tool_args_match(expected_args, provided_args):
     expected_args = expected_args or {}
     provided_args = provided_args or {}
     if not isinstance(expected_args, dict) or not isinstance(provided_args, dict):
         return False
-    for key, value in provided_args.items():
-        if key not in expected_args or expected_args[key] != value:
-            return False
-    return True
+    return expected_args == provided_args
 
 
 def validate_real_tool_step(step, context_label="current_step"):
@@ -800,265 +242,6 @@ def validate_completion_check_args(args):
         "question": question,
         "reason": reason,
     }
-
-
-def update_state_from_execution(state, tool_name, args, result, method):
-    summary = summarize_execution_result(tool_name, args, result)
-    state["results"].append({"tool": tool_name, "args": args, "result": result, "method": method})
-    _extend_unique(state["known_context"], [summary])
-    append_assistant_message(state, f"[{method}] {summary}")
-
-
-def build_memory_context_snapshot(state):
-    return {
-        "initial_task": state["initial_user_input"],
-        "dialogue_history": list(state["dialogue_history"]),
-        "known_context": list(state["known_context"]),
-        "missing_context": list(state["missing_context"]),
-        "authorization_state": list(state["authorization_state"]),
-        "results_summary": [
-            summarize_execution_result(item["tool"], item.get("args", {}), item["result"])
-            for item in state["results"]
-        ],
-    }
-
-
-def build_user_input_from_state(state):
-    history_lines = []
-    for msg in state["dialogue_history"]:
-        role = "用户" if msg["role"] == "user" else "助手"
-        history_lines.append(f"{role}: {msg['content']}")
-
-    payload = {
-        "初始任务": state["initial_user_input"],
-        "对话历史": history_lines,
-        "当前已知上下文": state["known_context"],
-        "当前已知授权": state["authorization_state"],
-        "当前仍缺失的上下文": state["missing_context"],
-        "已完成结果摘要": [
-            _truncate_text(f"{item['tool']}[{item['method']}] -> {item['result']}")
-            for item in state["results"]
-        ],
-    }
-    return json.dumps(payload, ensure_ascii=False, indent=2)
-
-
-def parse_user_reply_to_state_update(state, question, user_reply):
-    prompt = """你是会话状态解析助手。请提取这条用户回复中新增加的上下文事实和授权信息。
-
-输出严格 JSON：
-{
-  "new_context": ["新增事实1", "新增事实2"],
-  "new_authorization": ["新增授权1", "新增授权2"]
-}
-
-要求：
-1. 只提取新信息，不重复已有上下文。
-2. 如果没有新增授权，new_authorization 返回空数组。
-3. 不要臆造未被用户明确表达的信息。"""
-    payload = json.dumps(
-        {
-            "assistant_question": question,
-            "user_reply": user_reply,
-            "known_context": state["known_context"],
-            "known_authorization": state["authorization_state"],
-            "missing_context": state["missing_context"],
-        },
-        ensure_ascii=False,
-    )
-    parsed = call_json(prompt, payload)
-    return {
-        "new_context": list(parsed.get("new_context", []) or []),
-        "new_authorization": list(parsed.get("new_authorization", []) or []),
-    }
-
-
-def apply_user_reply_to_state(state, question, user_reply):
-    state["dialogue_history"].append({"role": "user", "content": user_reply})
-    state["turn_count"] += 1
-    state_update = parse_user_reply_to_state_update(state, question, user_reply)
-    _extend_unique(state["known_context"], state_update["new_context"])
-    _extend_unique(state["authorization_state"], state_update["new_authorization"])
-    state["missing_context"] = []
-    state["step_queue"] = []
-    return state_update
-
-
-def request_user_input_for_state(state, question, missing_context=None):
-    append_assistant_message(state, question)
-    print(f"\n[HUMAN] 问题: {question}")
-    human_reply = input("[HUMAN] 请回复 (输入 'abort' 终止): ").strip()
-    if human_reply.lower() == "abort":
-        state["status"] = "aborted"
-        return {"status": "aborted", "human_reply": human_reply}
-
-    if missing_context:
-        state["missing_context"] = list(missing_context)
-    state_update = apply_user_reply_to_state(state, question, human_reply)
-    return {
-        "status": "updated",
-        "human_reply": human_reply,
-        "state_update": state_update,
-    }
-
-def memory_for_plan(task_query):
-    recalled = plan_memory_store.search(task_query, limit=PLAN_MEMORY_TOP_K)
-    cases = []
-    evidence = []
-
-    for item in recalled:
-        case = item["case"]
-        step = case.get("step", {}) or {}
-        risk = get_case_risk_assessment(case)
-        reasoning = case.get("decision_reason", "") or risk.get("reasoning", "")
-        case_view = {
-            "memory_id": case.get("memory_id", ""),
-            "score": item["score"],
-            "task": case.get("task", ""),
-            "tool": step.get("tool", ""),
-            "args": step.get("args", {}),
-            "description": step.get("description", ""),
-            "decision": case.get("decision", ""),
-            "outcome": case.get("outcome", ""),
-            "reason": reasoning,
-        }
-        cases.append(case_view)
-        if reasoning and reasoning not in evidence:
-            evidence.append(reasoning)
-        outcome = case.get("outcome", "")
-        if outcome:
-            outcome_evidence = f"历史相似案例常见 outcome: {outcome}"
-            if outcome_evidence not in evidence:
-                evidence.append(outcome_evidence)
-
-    if not cases:
-        summary = "向量库中没有召回到相关历史任务。"
-    else:
-        outcome_counts = {}
-        for case in cases:
-            outcome = case.get("outcome", "unknown") or "unknown"
-            outcome_counts[outcome] = outcome_counts.get(outcome, 0) + 1
-        top_score = cases[0]["score"]
-        summary = (
-            f"任务级向量检索召回 {len(cases)} 条相关历史任务，最高相似度 {top_score:.4f}，"
-            f"主要 outcome 分布: {outcome_counts}"
-        )
-
-    return {
-        "task_query": task_query,
-        "cases": cases,
-        "summary": summary,
-        "evidence": evidence[:6],
-        "retrieval_method": "local_faiss_embedding_v1",
-        "retrieval_scope": "task_level",
-    }
-
-
-def memory_for_tool(tool_name, args):
-    safe_case = tool_memory.get_safe_case(tool_name, args)
-    return {
-        "hit": safe_case is not None,
-        "safe_case": sanitize_safe_case_for_observation(safe_case),
-        "summary": "命中完全相同调用的安全缓存。"
-        if safe_case
-        else "没有找到完全相同调用的安全缓存。",
-    }
-
-
-def sanitize_safe_case_for_observation(safe_case):
-    if not safe_case:
-        return None
-    return {
-        "tool": safe_case.get("tool", ""),
-        "args": safe_case.get("args", {}) or {},
-        "state": safe_case.get("state", ""),
-        "safety_reason": safe_case.get("safety_reason", ""),
-        "exec_result_summary": safe_case.get("exec_result_summary")
-        or summarize_result_for_memory(safe_case.get("exec_result")),
-    }
-
-
-def sanitize_tool_memory_result(tool_memory_result):
-    tool_memory_result = tool_memory_result or {}
-    return {
-        "hit": bool(tool_memory_result.get("hit")),
-        "safe_case": sanitize_safe_case_for_observation(tool_memory_result.get("safe_case")),
-        "summary": tool_memory_result.get("summary", ""),
-    }
-
-
-def compose_task_query(task_text, known_context=None, authorization=None):
-    lines = [f"当前任务: {task_text}"]
-    known_context = [
-        summarize_result_for_memory(item, limit=120)
-        for item in (known_context or [])
-        if str(item).strip()
-    ]
-    authorization = [summarize_result_for_memory(item, limit=80) for item in (authorization or []) if str(item).strip()]
-    if known_context:
-        lines.append(f"已知上下文: {' | '.join(known_context[:6])}")
-    if authorization:
-        lines.append(f"授权状态: {' | '.join(authorization[:4])}")
-    return "\n".join(lines)
-
-
-def build_task_memory_query_from_case(case):
-    case = case or {}
-    snapshot = case.get("dialogue_snapshot", {}) or {}
-    return compose_task_query(
-        case.get("task", ""),
-        snapshot.get("known_context", []),
-        snapshot.get("authorization_state", []),
-    )
-
-
-def sanitize_plan_memory_result(plan_memory_result, current_case=None):
-    plan_memory_result = dict(plan_memory_result or {})
-    raw_cases = list(plan_memory_result.get("cases", []) or [])
-    memory_id_to_task = {
-        item.get("memory_id"): item.get("task", "")
-        for item in experience_memory.cases
-        if isinstance(item, dict) and item.get("memory_id")
-    }
-
-    filtered_cases = []
-    for case_view in raw_cases:
-        tool_name = (case_view.get("tool") or "").strip()
-        if not tool_name:
-            continue
-        hydrated = dict(case_view)
-        if not hydrated.get("task"):
-            hydrated["task"] = memory_id_to_task.get(hydrated.get("memory_id"), "")
-        filtered_cases.append(hydrated)
-
-    evidence = []
-    if not filtered_cases:
-        summary = "向量库中没有召回到相关历史任务。"
-    else:
-        outcome_counts = {}
-        for case in filtered_cases:
-            outcome = case.get("outcome", "unknown") or "unknown"
-            outcome_counts[outcome] = outcome_counts.get(outcome, 0) + 1
-            reason = case.get("reason", "")
-            if reason and reason not in evidence:
-                evidence.append(reason)
-            outcome_evidence = f"历史相似案例常见 outcome: {outcome}"
-            if outcome_evidence not in evidence:
-                evidence.append(outcome_evidence)
-        top_score = filtered_cases[0].get("score", 0)
-        summary = (
-            f"任务级向量检索召回 {len(filtered_cases)} 条相关历史任务，最高相似度 {top_score:.4f}，"
-            f"主要 outcome 分布: {outcome_counts}"
-        )
-
-    plan_memory_result.pop("task_context", None)
-    plan_memory_result.pop("current_step", None)
-    plan_memory_result["cases"] = filtered_cases
-    plan_memory_result["task_query"] = plan_memory_result.get("task_query") or build_task_memory_query_from_case(current_case)
-    plan_memory_result["retrieval_scope"] = "task_level"
-    plan_memory_result["summary"] = summary
-    plan_memory_result["evidence"] = evidence[:6]
-    return plan_memory_result
 
 # ==================== Flow Tool Schemas ====================
 
@@ -1268,23 +451,6 @@ def build_available_tool_schemas(state):
             if schema["function"]["name"] == target_tool
         ]
     return []
-
-
-def call_required_tool_choice(system_prompt, snapshot, tools):
-    llm_client = get_openai_client()
-    response = llm_client.chat.completions.create(
-        model=OPENAI_MODEL,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": json.dumps(snapshot, ensure_ascii=False, indent=2)},
-        ],
-        tools=tools,
-        tool_choice="required",
-    )
-    message = response.choices[0].message
-    if not message.tool_calls:
-        raise RuntimeError("模型未返回任何 tool call。")
-    return message.tool_calls[0]
 
 
 # ==================== 工具执行 ====================
@@ -1746,7 +912,8 @@ def export_experience_to_jsonl(output_path=SFT_DATASET_PATH, verbose=True):
 
 
 def persist_local_artifacts():
-    plan_memory_store.sync_with_experience()
+    plan_store = get_plan_memory_store()
+    plan_store.sync_with_experience()
     export_info = export_experience_to_jsonl(verbose=False)
     print_stage_start("本地数据保存")
     print(f"[experience_memory] {EXPERIENCE_MEMORY_PATH}")
@@ -1754,7 +921,7 @@ def persist_local_artifacts():
     print(f"[tool_memory] {TOOL_MEMORY_PATH}")
     print(f"[safe_tool_case_count] {len(tool_memory.safe_cases)}")
     print(f"[plan_memory_index] {PLAN_MEMORY_FAISS_PATH}")
-    print(f"[plan_memory_index_count] {len(plan_memory_store.metadata)}")
+    print(f"[plan_memory_index_count] {len(plan_store.metadata)}")
     print(f"[sft_dataset] {export_info['output_path']}")
     print(f"[sft_sample_count] {export_info['count']}")
     print_stage_end("本地数据保存", "memory 和 SFT 数据已刷新")
@@ -1923,7 +1090,12 @@ def flow_tool_judge_try_result(state, args):
 def flow_tool_replan(state, args):
     step = get_current_step(state)
     signature = tool_signature(step["tool"], step["args"])
-    state["replan_counts"][signature] = state["replan_counts"].get(signature, 0) + 1
+    current_count = state["replan_counts"].get(signature, 0)
+    if current_count >= MAX_STEP_REPLAN:
+        raise RuntimeError(
+            f"当前 step 的 replan 次数已达上限 {MAX_STEP_REPLAN}，请改用 ask_human、refuse 或 terminate。"
+        )
+    state["replan_counts"][signature] = current_count + 1
     print_stage_start("flow_tool: replan")
     replanned = validate_replan_args(args)
     update_latest_flow_tool_arguments(state, replanned)
@@ -2078,7 +1250,7 @@ def dispatch_real_tool(state, tool_name, args):
     expected_tool = step.get("tool")
     expected_args = step.get("args", {}) or {}
     normalized_tool_name = resolve_real_tool_name(tool_name)
-    if normalized_tool_name != expected_tool or not tool_args_compatible(expected_args, args):
+    if normalized_tool_name != expected_tool or not tool_args_match(expected_args, args):
         state["status"] = "aborted"
         state["error_reason"] = "模型调用的真实工具或参数与 current_step 不一致。"
         raise RuntimeError(state["error_reason"])
@@ -2165,13 +1337,22 @@ def pipeline(user_input, npc_scenario=None):
                 print_json_block("tool_call", {"name": tool_name, "arguments": tool_args, "phase": phase})
                 print_stage_end("模型选中的工具", tool_name)
                 tool_record = build_flow_tool_call_record(phase, tool_name, tool_args, None)
-                state["flow_tool_history"].append(tool_record)
                 state["current_flow_tool_calls"].append(tool_record)
                 try:
                     tool_result = dispatch_tool_call(state, tool_name, tool_args)
                     tool_record["result"] = summarize_trace_value(tool_result)
                     state["last_tool_error"] = ""
                     tool_succeeded = True
+                    break
+                except ToolExecutionError as exc:
+                    message = str(exc)
+                    tool_record["result"] = {"accepted": False, "error": message}
+                    state["status"] = "aborted"
+                    state["error_reason"] = message
+                    clear_current_flow_tool_calls(state)
+                    print_stage_start("工具执行失败")
+                    print(f"[error] {message}")
+                    print_stage_end("工具执行失败", "任务中止")
                     break
                 except RuntimeError as exc:
                     message = str(exc)
@@ -2221,7 +1402,7 @@ def load_task_file(path):
         return yaml.safe_load(fh)
 
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser(description="Decision-driven safety pipeline")
     parser.add_argument("--task", help="执行单个任务")
     parser.add_argument("--task-file", help="从 YAML 文件加载任务定义")
@@ -2229,14 +1410,12 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.env:
-        PIPELINE_ENV = args.env
-        os.environ["PIPELINE_ENV"] = args.env
+        set_pipeline_env(args.env)
 
     if args.task_file:
         task_config = load_task_file(args.task_file)
         if task_config.get("environment"):
-            PIPELINE_ENV = task_config["environment"]
-            os.environ["PIPELINE_ENV"] = task_config["environment"]
+            set_pipeline_env(task_config["environment"])
         npc = task_config.get("scenarios")
         pipeline(task_config["task"], npc_scenario=npc if npc else None)
     elif args.task:
@@ -2275,3 +1454,7 @@ if __name__ == "__main__":
         #default_task = "先列出 sotopia 项目的分支，然后问我要删哪些"
 
         pipeline(default_task)
+
+
+if __name__ == "__main__":
+    main()

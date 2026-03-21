@@ -1,7 +1,7 @@
 """
-GitLab API 工具注册 — 新的服务化工具架构标准
+GitLab API 工具注册 — 服务化工具架构标准
 
-与 mcp_tools.py 不同，本模块不依赖 E2B 沙箱，直接通过 HTTP 调用 GitLab API v4。
+本模块不依赖沙箱，直接通过 HTTP 调用 GitLab API v4。
 以后所有服务工具（RocketChat、文件系统等）都按此模式接入。
 
 公共接口（给 environment.py 调用）:
@@ -13,6 +13,8 @@ GitLab API 工具注册 — 新的服务化工具架构标准
 import json
 import os
 import urllib.parse
+
+from .exceptions import ToolExecutionError
 
 try:
     import requests
@@ -75,11 +77,13 @@ def call_tool(name, args):
     """按名称动态调用 tool"""
     t = _REGISTRY.get(name)
     if not t:
-        return f"[错误] 未知 tool: {name}"
+        raise ToolExecutionError(f"[错误] 未知 tool: {name}")
     try:
         return t["handler"](**args)
-    except Exception as e:
-        return f"[执行出错] {type(e).__name__}: {e}"
+    except ToolExecutionError:
+        raise
+    except Exception as exc:
+        raise ToolExecutionError(f"[执行出错] {type(exc).__name__}: {exc}") from exc
 
 
 def get_tool_names():
@@ -92,7 +96,7 @@ def get_tool_names():
 
 def _require_requests():
     if requests is None:
-        raise RuntimeError("requests 库未安装，无法调用 GitLab API。pip install requests")
+        raise ToolExecutionError("requests 库未安装，无法调用 GitLab API。pip install requests")
 
 
 def _api(method, path, **kwargs):
@@ -100,15 +104,17 @@ def _api(method, path, **kwargs):
     _require_requests()
     url = f"{_config['base_url']}/api/v4/{path.lstrip('/')}"
     headers = {"PRIVATE-TOKEN": _config["token"]}
-    resp = requests.request(method, url, headers=headers, timeout=30, **kwargs)
-    return resp
+    try:
+        return requests.request(method, url, headers=headers, timeout=30, **kwargs)
+    except requests.RequestException as exc:
+        raise ToolExecutionError(f"[GitLab 请求失败] {type(exc).__name__}: {exc}") from exc
 
 
 def _api_json(method, path, **kwargs):
-    """发起请求并返回 JSON，出错时返回错误字符串"""
+    """发起请求并返回 JSON，出错时抛异常"""
     resp = _api(method, path, **kwargs)
     if resp.status_code >= 400:
-        return f"[GitLab API 错误] {resp.status_code}: {resp.text[:500]}"
+        raise ToolExecutionError(f"[GitLab API 错误] {resp.status_code}: {resp.text[:500]}")
     try:
         return resp.json()
     except Exception:
@@ -125,6 +131,10 @@ def _format_json(data):
 def _encode_path(path):
     """URL 编码文件路径"""
     return urllib.parse.quote(path, safe="")
+
+
+def _project_ref(project_id):
+    return _encode_path(project_id) if "/" in str(project_id) else project_id
 
 
 # ==================== 只读工具（低风险）— 8 个 ====================
@@ -167,7 +177,7 @@ def list_projects(per_page=20):
     },
 )
 def get_project(project_id):
-    encoded = _encode_path(project_id) if "/" in str(project_id) else project_id
+    encoded = _project_ref(project_id)
     data = _api_json("GET", f"projects/{encoded}")
     return _format_json(data)
 
@@ -187,10 +197,8 @@ def get_project(project_id):
     },
 )
 def list_branches(project_id, per_page=20):
-    encoded = _encode_path(project_id) if "/" in str(project_id) else project_id
+    encoded = _project_ref(project_id)
     data = _api_json("GET", f"projects/{encoded}/repository/branches", params={"per_page": per_page})
-    if isinstance(data, str):
-        return data
     results = []
     for b in data:
         results.append({
@@ -222,10 +230,8 @@ def list_branches(project_id, per_page=20):
     },
 )
 def list_issues(project_id, state="opened", per_page=20):
-    encoded = _encode_path(project_id) if "/" in str(project_id) else project_id
+    encoded = _project_ref(project_id)
     data = _api_json("GET", f"projects/{encoded}/issues", params={"state": state, "per_page": per_page})
-    if isinstance(data, str):
-        return data
     results = []
     for issue in data:
         results.append({
@@ -259,13 +265,11 @@ def list_issues(project_id, state="opened", per_page=20):
     },
 )
 def list_merge_requests(project_id, state="opened", per_page=20):
-    encoded = _encode_path(project_id) if "/" in str(project_id) else project_id
+    encoded = _project_ref(project_id)
     data = _api_json(
         "GET", f"projects/{encoded}/merge_requests",
         params={"state": state, "per_page": per_page},
     )
-    if isinstance(data, str):
-        return data
     results = []
     for mr in data:
         results.append({
@@ -298,11 +302,11 @@ def list_merge_requests(project_id, state="opened", per_page=20):
     },
 )
 def read_repo_file(project_id, file_path, ref="main"):
-    encoded_proj = _encode_path(project_id) if "/" in str(project_id) else project_id
+    encoded_proj = _project_ref(project_id)
     encoded_file = _encode_path(file_path)
     resp = _api("GET", f"projects/{encoded_proj}/repository/files/{encoded_file}/raw", params={"ref": ref})
     if resp.status_code >= 400:
-        return f"[GitLab API 错误] {resp.status_code}: {resp.text[:500]}"
+        raise ToolExecutionError(f"[GitLab API 错误] {resp.status_code}: {resp.text[:500]}")
     return resp.text[:5000]
 
 
@@ -321,10 +325,10 @@ def read_repo_file(project_id, file_path, ref="main"):
     },
 )
 def read_pipeline_log(project_id, job_id):
-    encoded = _encode_path(project_id) if "/" in str(project_id) else project_id
+    encoded = _project_ref(project_id)
     resp = _api("GET", f"projects/{encoded}/jobs/{job_id}/trace")
     if resp.status_code >= 400:
-        return f"[GitLab API 错误] {resp.status_code}: {resp.text[:500]}"
+        raise ToolExecutionError(f"[GitLab API 错误] {resp.status_code}: {resp.text[:500]}")
     return resp.text[:5000]
 
 
@@ -343,7 +347,7 @@ def read_pipeline_log(project_id, job_id):
     },
 )
 def get_branch_protection(project_id, branch_name):
-    encoded_proj = _encode_path(project_id) if "/" in str(project_id) else project_id
+    encoded_proj = _project_ref(project_id)
     encoded_branch = _encode_path(branch_name)
     data = _api_json("GET", f"projects/{encoded_proj}/protected_branches/{encoded_branch}")
     return _format_json(data)
@@ -369,12 +373,10 @@ def get_branch_protection(project_id, branch_name):
 def preview_delete_branches(project_id, branch_pattern):
     import fnmatch
 
-    encoded = _encode_path(project_id) if "/" in str(project_id) else project_id
+    encoded = _project_ref(project_id)
 
     # 获取所有分支
     branches_data = _api_json("GET", f"projects/{encoded}/repository/branches", params={"per_page": 100})
-    if isinstance(branches_data, str):
-        return branches_data
 
     # 获取活跃 MR
     mrs_data = _api_json("GET", f"projects/{encoded}/merge_requests", params={"state": "opened", "per_page": 100})
@@ -432,15 +434,13 @@ def preview_delete_branches(project_id, branch_pattern):
     },
 )
 def preview_close_issues(project_id, label_filter=""):
-    encoded = _encode_path(project_id) if "/" in str(project_id) else project_id
+    encoded = _project_ref(project_id)
 
     params = {"state": "opened", "per_page": 100}
     if label_filter:
         params["labels"] = label_filter
 
     data = _api_json("GET", f"projects/{encoded}/issues", params=params)
-    if isinstance(data, str):
-        return data
 
     matched = []
     for issue in data:
@@ -456,6 +456,82 @@ def preview_close_issues(project_id, label_filter=""):
         "total_matched": len(matched),
         "label_filter": label_filter or "(无筛选)",
         "issues": matched,
+    })
+
+
+@gitlab_tool(
+    "preview_close_issue",
+    "预览关闭单个 issue：查看目标 issue 当前状态，不执行实际关闭。",
+    {
+        "project_id": {
+            "type": "string",
+            "description": "项目 ID 或路径",
+        },
+        "issue_iid": {
+            "type": "integer",
+            "description": "Issue 的项目内编号（iid）",
+        },
+    },
+)
+def preview_close_issue(project_id, issue_iid):
+    encoded = _project_ref(project_id)
+    data = _api_json("GET", f"projects/{encoded}/issues/{issue_iid}")
+    issue_view = {
+        "iid": data["iid"],
+        "title": data["title"],
+        "state": data["state"],
+        "labels": data.get("labels", []),
+        "assignee": (data.get("assignee") or {}).get("username", ""),
+        "created_at": data.get("created_at", ""),
+    }
+    return _format_json({
+        "total_matched": 1,
+        "issues": [issue_view],
+        "warnings": ["该预览针对单个 issue，不会批量关闭其他 issue。"],
+    })
+
+
+@gitlab_tool(
+    "preview_update_branch_protection",
+    "预览分支保护规则变更：查看分支当前保护状态，不执行实际修改。",
+    {
+        "project_id": {
+            "type": "string",
+            "description": "项目 ID 或路径",
+        },
+        "branch_name": {
+            "type": "string",
+            "description": "分支名称",
+        },
+        "action": {
+            "type": "string",
+            "enum": ["protect", "unprotect"],
+            "description": "目标操作",
+        },
+    },
+)
+def preview_update_branch_protection(project_id, branch_name, action):
+    encoded_proj = _project_ref(project_id)
+    encoded_branch = _encode_path(branch_name)
+    resp = _api("GET", f"projects/{encoded_proj}/protected_branches/{encoded_branch}")
+    currently_protected = resp.status_code == 200
+    if resp.status_code not in (200, 404):
+        raise ToolExecutionError(f"[GitLab API 错误] {resp.status_code}: {resp.text[:500]}")
+
+    warnings = []
+    if action == "protect" and currently_protected:
+        warnings.append("目标分支已经受保护")
+    if action == "unprotect" and not currently_protected:
+        warnings.append("目标分支当前未受保护")
+
+    return _format_json({
+        "total_matched": 1,
+        "branches": [{
+            "name": branch_name,
+            "currently_protected": currently_protected,
+            "requested_action": action,
+        }],
+        "warnings": warnings,
     })
 
 
@@ -477,13 +553,13 @@ def preview_close_issues(project_id, label_filter=""):
     },
 )
 def delete_branch(project_id, branch_name):
-    encoded_proj = _encode_path(project_id) if "/" in str(project_id) else project_id
+    encoded_proj = _project_ref(project_id)
     encoded_branch = _encode_path(branch_name)
     resp = _api("DELETE", f"projects/{encoded_proj}/repository/branches/{encoded_branch}")
     if resp.status_code == 204:
         return f"分支 '{branch_name}' 已删除。"
     if resp.status_code >= 400:
-        return f"[GitLab API 错误] {resp.status_code}: {resp.text[:500]}"
+        raise ToolExecutionError(f"[GitLab API 错误] {resp.status_code}: {resp.text[:500]}")
     return f"分支 '{branch_name}' 删除请求已发送，状态码: {resp.status_code}"
 
 
@@ -502,10 +578,10 @@ def delete_branch(project_id, branch_name):
     },
 )
 def close_issue(project_id, issue_iid):
-    encoded = _encode_path(project_id) if "/" in str(project_id) else project_id
+    encoded = _project_ref(project_id)
     resp = _api("PUT", f"projects/{encoded}/issues/{issue_iid}", json={"state_event": "close"})
     if resp.status_code >= 400:
-        return f"[GitLab API 错误] {resp.status_code}: {resp.text[:500]}"
+        raise ToolExecutionError(f"[GitLab API 错误] {resp.status_code}: {resp.text[:500]}")
     data = resp.json()
     return f"Issue #{issue_iid} ('{data.get('title', '')}') 已关闭。"
 
@@ -530,20 +606,19 @@ def close_issue(project_id, issue_iid):
     },
 )
 def update_branch_protection(project_id, branch_name, action):
-    encoded_proj = _encode_path(project_id) if "/" in str(project_id) else project_id
+    encoded_proj = _project_ref(project_id)
     encoded_branch = _encode_path(branch_name)
 
     if action == "protect":
         resp = _api("POST", f"projects/{encoded_proj}/protected_branches", json={"name": branch_name})
         if resp.status_code >= 400:
-            return f"[GitLab API 错误] {resp.status_code}: {resp.text[:500]}"
+            raise ToolExecutionError(f"[GitLab API 错误] {resp.status_code}: {resp.text[:500]}")
         return f"分支 '{branch_name}' 已添加保护。"
-    elif action == "unprotect":
+    if action == "unprotect":
         resp = _api("DELETE", f"projects/{encoded_proj}/protected_branches/{encoded_branch}")
         if resp.status_code == 204:
             return f"分支 '{branch_name}' 保护已移除。"
         if resp.status_code >= 400:
-            return f"[GitLab API 错误] {resp.status_code}: {resp.text[:500]}"
+            raise ToolExecutionError(f"[GitLab API 错误] {resp.status_code}: {resp.text[:500]}")
         return f"分支 '{branch_name}' 保护移除请求已发送，状态码: {resp.status_code}"
-    else:
-        return f"[错误] action 必须是 'protect' 或 'unprotect'，收到: {action}"
+    raise ToolExecutionError(f"[错误] action 必须是 'protect' 或 'unprotect'，收到: {action}")

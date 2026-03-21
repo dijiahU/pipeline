@@ -12,6 +12,10 @@ import json
 import os
 import sys
 
+from .environment import get_backend
+from .runtime import load_task_file, pipeline as run_pipeline
+from .settings import set_pipeline_env
+
 try:
     import yaml
 except ModuleNotFoundError:
@@ -346,19 +350,16 @@ class TaskEvaluator:
 
 def run_evaluation(task_file_path):
     """完整评测流程：加载任务 → 运行 pipeline → 评测"""
-    if yaml is None:
-        raise RuntimeError("pyyaml 未安装。pip install pyyaml")
-
-    with open(task_file_path, "r", encoding="utf-8") as fh:
-        task_config = yaml.safe_load(fh)
+    task_config = load_task_file(task_file_path)
 
     # 设置环境
     env = task_config.get("environment", "gitlab")
-    os.environ["PIPELINE_ENV"] = env
+    set_pipeline_env(env)
+
+    backend = get_backend(env)
+    backend.reset()
 
     # 运行 pipeline
-    from pipeline import pipeline as run_pipeline, load_task_file
-
     npc = task_config.get("scenarios")
     pipeline_result = run_pipeline(task_config["task"], npc_scenario=npc if npc else None)
 
@@ -381,7 +382,7 @@ def print_eval_result(result):
     print()
 
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser(description="Pipeline 任务评测器")
     parser.add_argument("--task-file", required=True, help="YAML 任务定义文件路径")
     parser.add_argument("--eval-only", action="store_true",
@@ -393,8 +394,7 @@ if __name__ == "__main__":
         print("[错误] pyyaml 未安装。pip install pyyaml")
         sys.exit(1)
 
-    with open(args.task_file, "r", encoding="utf-8") as fh:
-        task_config = yaml.safe_load(fh)
+    task_config = load_task_file(args.task_file)
 
     if args.eval_only:
         # 仅检查 outcome
@@ -412,3 +412,7 @@ if __name__ == "__main__":
         eval_result = run_evaluation(args.task_file)
         print_eval_result(eval_result)
         sys.exit(0 if eval_result["passed"] else 1)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,6 +1,6 @@
 # Agent Safety Pipeline
 
-当前仓库的主实现是 [`pipeline.py`](./pipeline.py)。它不再把系统描述为"整份 plan 的 safe/unsafe 阻断器"，而是一个 **decision-driven、step-level** 的安全执行 pipeline：每一轮只围绕一个"当前最小可执行 step"推进，再基于证据决定进入真实执行、沙箱试执行、重规划、向人追问或拒绝。
+当前仓库的主实现已经集中到 [`safety_pipeline/`](./safety_pipeline) 包中。整体不再把系统描述为"整份 plan 的 safe/unsafe 阻断器"，而是一个 **decision-driven、step-level** 的安全执行 pipeline：每一轮只围绕一个"当前最小可执行 step"推进，再基于证据决定进入真实执行、沙箱试执行、重规划、向人追问或拒绝。
 
 ## 当前框架
 
@@ -32,11 +32,11 @@ user input
 
 ## Memory 与导出
 
-`pipeline.py` 会在本地维护三类数据：
+`safety_pipeline/` 会在本地维护三类数据：
 
 - `memory/experience_memory.json`：逐 step 保存决策、理由、结果和 flow tool 轨迹；新 case 使用更扁平的 `risk = {level, reason, next_action, criteria}`。
 - `memory/tool_memory.json`：缓存完全相同签名的安全工具调用。
-- `memory/plan_memory_index.json`：基于 OpenAI embedding 的任务级语义检索索引。
+- `memory/plan_memory.faiss` + `memory/plan_memory_meta.json`：基于本地 embedding + FAISS 的任务级语义检索索引。
 
 每次运行结束后都会自动刷新：
 
@@ -89,39 +89,43 @@ docker compose up -d && bash scripts/setup_env.sh
 运行默认任务：
 
 ```bash
-python pipeline.py
+python -m safety_pipeline
 ```
 
 运行自定义任务：
 
 ```bash
-python pipeline.py --task "列出所有 GitLab 项目"
+python -m safety_pipeline --task "列出所有 GitLab 项目"
 ```
 
 从 YAML 文件加载任务：
 
 ```bash
-python pipeline.py --task-file tasks/safety-list-projects.yaml
+python -m safety_pipeline --task-file tasks/safety-list-projects.yaml
 ```
 
 运行评测：
 
 ```bash
-python evaluator.py --task-file tasks/safety-close-all-issues.yaml
+python -m safety_pipeline.evaluation --task-file tasks/safety-close-all-issues.yaml
 ```
 
 快速做语法检查：
 
 ```bash
-python -m py_compile pipeline.py evaluator.py gitlab_tools.py environment.py
+python -m py_compile safety_pipeline/*.py
 ```
 
 ## 文件说明
 
-- `pipeline.py`：当前主流程，包含 flow-control、参数校验、tool-call 重试、沙箱 try、memory 持久化和 SFT 导出。
-- `gitlab_tools.py`：GitLab API 工具模块，13 个工具分三级（read-only / preview / write），使用 `@gitlab_tool()` 装饰器注册。
-- `environment.py`：环境后端抽象层，定义 `EnvironmentBackend` 和 `GitLabBackend`；工厂函数 `get_backend()` 按名称返回单例。
-- `evaluator.py`：任务级评测框架，支持 decision_check / outcome_check / behavior_check 三种检查。
+- `safety_pipeline/runtime.py`：主流程编排，包含 flow-control、参数校验、tool-call 重试、执行分发和导出主逻辑。
+- `safety_pipeline/gitlab_tools.py`：GitLab API 工具模块，使用 `@gitlab_tool()` 装饰器注册。
+- `safety_pipeline/environment.py`：环境后端抽象层，定义 `EnvironmentBackend` 和 `GitLabBackend`；工厂函数 `get_backend()` 按名称返回单例。
+- `safety_pipeline/evaluation.py`：任务级评测框架，支持 decision_check / outcome_check / behavior_check 三种检查。
+- `safety_pipeline/memory.py`：经验记忆、工具缓存、FAISS 检索与 memory 相关辅助。
+- `safety_pipeline/state.py`：会话状态、摘要、风险记录与对话更新辅助。
+- `safety_pipeline/llm.py`：OpenAI 客户端与模型调用封装。
+- `safety_pipeline/settings.py`：运行时常量和路径配置。
 - `tasks/*.yaml`：评测任务定义文件，包含用户任务、oracle 预期和 NPC 场景配置。
 - `docker-compose.yml`：GitLab 测试环境的 Docker compose 配置。
 - `scripts/setup_env.sh`：容器启动和健康检查脚本。
@@ -135,6 +139,6 @@ python -m py_compile pipeline.py evaluator.py gitlab_tools.py environment.py
 - `refuse`：任务目标本身恶意、越权、外传、破坏或不应执行。
 - `terminate`：`tool_try` 已暴露不可接受副作用，且任务无法在安全边界内继续推进。
 
-如果你要修改当前实现，优先保持 `pipeline.py` 的这条固定链路，而不是回退到旧的 plan-level safe/unsafe 描述。
+如果你要修改当前实现，优先保持 `safety_pipeline/runtime.py` 里的这条固定链路，而不是回退到旧的 plan-level safe/unsafe 描述。
 
 > 查看上一次修改详情：[changes.md](./changes.md)
