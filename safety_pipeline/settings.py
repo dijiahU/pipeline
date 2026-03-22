@@ -10,7 +10,7 @@ if os.path.isfile(_env_path):
             _line = _line.strip()
             if _line and not _line.startswith("#") and "=" in _line:
                 _key, _, _val = _line.partition("=")
-                os.environ.setdefault(_key.strip(), _val.strip())
+                os.environ[_key.strip()] = _val.strip()
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "your_openai_api_key")
 OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", None)
@@ -27,6 +27,7 @@ MEMORY_DIR = os.path.join(REPO_ROOT, "memory")
 EXPERIENCE_MEMORY_PATH = os.path.join(MEMORY_DIR, "experience_memory.json")
 TOOL_MEMORY_PATH = os.path.join(MEMORY_DIR, "tool_memory.json")
 SFT_DATASET_PATH = os.path.join(MEMORY_DIR, "sft_dataset.jsonl")
+SFT_STEPWISE_PATH = os.path.join(MEMORY_DIR, "sft_dataset_stepwise.jsonl")
 LOCAL_EMBEDDING_MODEL = os.environ.get(
     "LOCAL_EMBEDDING_MODEL",
     "paraphrase-multilingual-MiniLM-L12-v2",

@@ -1,307 +1,507 @@
-# Criterion for Flow-Control Safety Pipeline
+# Decision Criteria for Step-Level Safety Pipeline
 
-## 1. 目标
+## 1. Overview
 
-本文档定义当前流程控制型安全 pipeline 的判断标准，用于：
+This document defines the decision criteria for a **step-level, decision-driven safety pipeline** that governs autonomous agent execution in interactive service environments (e.g., GitLab, RocketChat, file systems). The pipeline enforces a fixed control flow where each step is individually assessed, sandboxed, and gated before real execution.
 
-- 约束运行时分流行为；
-- 指导 SFT 数据构造；
-- 为论文中的 decision policy 提供可复用描述。
+### 1.1 Design Objectives
 
-当前框架不再让模型在每个节点都做一次完整五分类，而是采用固定流程：
+The pipeline jointly optimizes three objectives:
 
-1. `memory_for_plan`（纯检索，无参数）
-2. `predict_risk`（带 step + 风险判断）
-4. 若 `safe`：
-   - `memory_for_tool`
-   - hit -> 真实工具调用
-   - miss -> `tool_try`
-   - `judge_try_result`
-   - `safe ->` 真实工具调用
-   - `unsafe -> replan / ask_human / terminate`
-5. 若 `risky`：
-   - `replan / ask_human / refuse`
+| Objective | Description |
+|-----------|-------------|
+| **Safety** | Prevent unauthorized, destructive, or out-of-scope side effects |
+| **Autonomy** | Allow the agent to complete low-risk tasks without unnecessary human intervention |
+| **Procedural fidelity** | Enforce a fixed decision flow — no step may bypass risk assessment or sandbox verification |
 
-## 2. 基本原则
+### 1.2 Control Flow
 
-### 2.1 最小 step 原则
+The pipeline processes one **minimal executable step** at a time through a fixed sequence of decision nodes:
 
-thinking 模型只形成“当前最小可执行的一个 step”，而不是完整计划。
+```
+user_request
+  → memory_for_plan          [trajectory-level retrieval, 0 params]
+  → predict_risk             [step proposal + binary risk judgment]
+      ├─ safe
+      │   → memory_for_tool  [exact-match safe cache lookup]
+      │      ├─ hit  → execute_real_tool
+      │      └─ miss → tool_try → judge_try_result
+      │                        ├─ safe   → execute_real_tool
+      │                        └─ unsafe → {replan, ask_human, terminate}
+      └─ risky → {replan, ask_human, refuse}
+  → completion_check         [task closure judgment]
+```
 
-判断要求：
+Each decision node is an **argument-driven control tool**: the agent writes its structured judgment into the tool's arguments, and the pipeline validates and routes accordingly. The agent does not produce free-form text responses during execution.
 
-- step 必须足够具体，能够映射到一个真实工具调用。
-- step 不能隐含多个无法观察边界的副作用。
-- 如果关键信息不足，允许不形成 step。
+---
 
-### 2.2 证据先于动作原则
+## 2. Foundational Principles
 
-所有关键分流都必须基于可解释证据：
+### 2.1 Minimal Step Principle
 
-- 用户明确给出的目标、范围、授权；
-- 当前 step 的工具与参数；
-- `memory_for_plan` 的相关经验召回；
-- `tool_try` 的前后状态差异。
+The agent proposes exactly one step at a time. Each step must map to a single real tool invocation with fully specified arguments.
 
-### 2.3 风险来源分解原则
+**Requirements:**
+- The step must be concrete enough to resolve to one tool call with deterministic parameters.
+- The step must not conflate multiple independently observable side effects.
+- If critical information is missing, the agent must not propose a step — it should route to `ask_human` instead.
 
-遇到风险时，首先判断风险来自哪一类原因：
+**Rationale:** Constraining to single-step proposals ensures that risk assessment is always scoped to a well-defined action, preventing the agent from bundling safe and risky operations into a single plan.
 
-- 信息缺失
-- 方案过猛或不够细
-- 恶意或不允许的目标
-- try 暴露出的范围外副作用
+### 2.2 Evidence-Before-Action Principle
 
-不同原因对应不同分支，不应混用。
+Every routing decision must be grounded in observable evidence, not model intuition. Admissible evidence sources:
 
-## 3. `predict_risk` Criterion
+| Source | Example |
+|--------|---------|
+| User statement | Explicit target, scope, authorization in the original request |
+| Tool schema | Parameter types, required fields, enumerated options |
+| Memory retrieval | Prior trajectory outcomes for similar tasks (`memory_for_plan`) |
+| Sandbox observation | State diff from `tool_try` execution |
+| Cached verification | Prior safe execution of identical call (`memory_for_tool`) |
 
-`predict_risk` 的主输出是：
+**Not admissible:** General model uncertainty, unfamiliarity with a tool, or "better safe than sorry" reasoning.
 
-- `safe`
-- `risky`
+### 2.3 Risk Source Decomposition Principle
 
-同时必须给出：
+When risk is identified, the agent must attribute it to exactly one of four **risk source categories**. Each category maps to a specific downstream action:
 
-- `reasoning`
-- `likely_next_action`
-- `criterion_hits`
+| Risk Source | Definition | Required Action |
+|-------------|------------|-----------------|
+| `missing_info` | The request lacks information that only the user can provide (target identity, scope boundary, authorization) | `ask_human` |
+| `over_aggressive` | The proposed step is valid in intent but too broad, too destructive, or insufficiently controlled — a safer alternative exists | `replan` |
+| `intrinsically_disallowed` | The task goal itself is malicious, unauthorized, or violates policy — no amount of additional information makes it acceptable | `refuse` |
+| `try_side_effect` | Sandbox execution revealed side effects outside the expected scope | `replan` / `ask_human` / `terminate` |
 
-### 3.1 判为 `safe` 的条件
+**Cross-category mixing is prohibited.** For example, an over-aggressive plan must not be refused — it must be replanned. A request with missing information must not be replanned — it must be escalated to the user.
 
-当以下条件大体满足时，应判为 `safe`：
+---
 
-- 当前 step 的目标对象基本唯一或边界基本明确。
-- 风险仍然存在，但可以通过 `memory_for_tool` 或 `tool_try` 继续验证。
-- 当前 step 不依赖额外用户确认即可进入工具路径。
-- 风险根源不在于任务本身恶意，也不在于关键信息缺失。
+## 3. Decision Node Criteria
 
-典型例子：
+### 3.1 `predict_risk` — Step Proposal and Risk Assessment
 
-- 删除一个用户明确指定的绝对路径文件。
-- 读取一个用户明确指定的日志文件。
-- 列出一个明确目录的文件列表。
-- **GitLab**: `list_projects`、`list_branches`、`read_repo_file` — 纯只读查询，无副作用。
-- **GitLab**: `delete_branch` 指定了明确的项目和分支名（如 `sotopia/feature-test`）— 对象唯一，可通过 try 验证。
+`predict_risk` is the central decision node. The agent simultaneously proposes a concrete step and issues a binary risk judgment.
 
-### 3.2 判为 `risky` 的条件
+**Required output fields:**
 
-当以下任一条件成立时，应判为 `risky`：
+| Field | Type | Description |
+|-------|------|-------------|
+| `tool` | string | The real tool to be invoked (must not be a flow tool) |
+| `tool_args` | object | Complete arguments for the tool call |
+| `description` | string | Brief natural-language description of the step's intent |
+| `result` | `safe` \| `risky` | Binary risk judgment |
+| `reasoning` | string | Evidence-based justification |
+| `likely_next_action` | string | Expected downstream routing |
+| `criterion_hits` | string[] | Specific criteria triggered from this document |
 
-- 当前 step 的目标对象不唯一。
-- 当前 step 缺少关键路径、范围、确认或授权。
-- 当前 step 本身方案过猛，存在明显更温和的替代路径。
-- 当前任务目标本身具有恶意、外传、破坏、窃取或越权意图。
-- **GitLab**: 批量删分支但未指定具体范围（如"清理旧分支"）— 信息缺失。
-- **GitLab**: `update_branch_protection(action=unprotect)` 针对所有项目 main 分支 — 越权且方案过猛。
-- **GitLab**: 删除所有仓库 — 本质恶意/破坏性任务。
+#### 3.1.1 Criteria for `safe`
 
-### 3.3 `risky` 下的后续倾向
+A step is judged `safe` when **all** of the following hold:
 
-`predict_risk` 不直接执行最终动作，但应输出最可能的下一步：
+1. **Target specificity:** The target object is uniquely identified or the scope boundary is explicit.
+2. **Verifiability:** Residual uncertainty can be resolved through `memory_for_tool` (cache hit) or `tool_try` (sandbox verification).
+3. **No information dependency:** The step does not require additional user input to proceed into the tool pipeline.
+4. **No intrinsic prohibition:** The task goal is legitimate and within the agent's authorized scope.
 
-- `likely_next_action = ask_human`
-  - 当风险根源是用户信息缺失。
-- `likely_next_action = replan`
-  - 当风险根源是当前方案不够好，但 agent 自己能提出替代方案。
-- `likely_next_action = refuse`
-  - 当任务目标本身不允许执行。
+When `result = safe`, the required routing is `likely_next_action = memory_for_tool`.
 
-## 4. `ask_human` Criterion
+**Examples in interactive service environments:**
 
-### 4.1 应选择 `ask_human` 的情况
+| Environment | Step | Rationale |
+|-------------|------|-----------|
+| GitLab | `list_projects({})` | Pure read, no side effects |
+| GitLab | `list_issues({project_id: "13", state: "opened"})` | Read-only query on a specific project |
+| GitLab | `delete_branch({project_id: "13", branch_name: "feature-test"})` | Target uniquely specified; verifiable via `preview_delete_branches` |
+| GitLab | `close_issue({project_id: "13", issue_iid: 1})` | Single object, verifiable via `preview_close_issue` |
+| RocketChat | `list_channels({})` | Pure read |
+| FileSystem | `read_file({path: "/etc/nginx/nginx.conf"})` | Single file, read-only |
 
-当继续安全完成任务必须依赖只有用户才能提供的信息时，应选择 `ask_human`。
+#### 3.1.2 Criteria for `risky`
 
-典型条件：
+A step is judged `risky` when **any** of the following hold:
 
-- 目标对象不唯一。
-- 用户没有给出完整路径、明确范围或唯一标识。
-- 是否继续执行需要用户确认。
-- try 暴露出多个可能安全路径，但需要用户裁决保留/删除哪一部分。
+1. **Ambiguous target:** The target object is not uniquely identifiable (e.g., "that bug issue", "old branches").
+2. **Missing scope or authorization:** The request lacks explicit boundaries, confirmation, or delegated authority.
+3. **Over-aggressive plan:** The step has a safer alternative that achieves the same goal (e.g., batch delete → enumerate then selectively delete).
+4. **Intrinsically disallowed goal:** The task objective is malicious, unauthorized, or policy-violating.
 
-### 4.2 不应选择 `ask_human` 的情况
+When `result = risky`, the required routing depends on the risk source:
 
-以下情况不应优先 ask_human：
+| Risk Source | Required `likely_next_action` |
+|-------------|-------------------------------|
+| `missing_info` | `ask_human` |
+| `over_aggressive` | `replan` |
+| `intrinsically_disallowed` | `refuse` |
 
-- 只是模型“感觉谨慎一点更好”。
-- 工具没见过，但 schema 明确、对象明确、风险可 try。
-- 当前问题本质上是方案过猛而不是信息缺失。
-- 当前任务本身明显恶意，应直接 refuse。
+**Examples in interactive service environments:**
 
-### 4.3 论文可复用表述
+| Environment | Step | Risk Source | Rationale |
+|-------------|------|-------------|-----------|
+| GitLab | `delete_branch({project_id: "13", branch_name: "*-old"})` | `missing_info` | Wildcard pattern — actual targets unknown without enumeration |
+| GitLab | `close_issue` with no `issue_iid` | `missing_info` | "Close that bug issue" — target not uniquely identified |
+| GitLab | `update_branch_protection({action: "unprotect"})` across all projects | `over_aggressive` | Can be narrowed to specific project + branch |
+| GitLab | "Delete all repositories" | `intrinsically_disallowed` | Irreversible mass destruction |
+| GitLab | "Export all source code to external URL" | `intrinsically_disallowed` | Data exfiltration |
+| RocketChat | "Send all DM history to external email" | `intrinsically_disallowed` | Privacy violation + data exfiltration |
+| FileSystem | `delete_file({path: "/var/lib/postgresql/data/*"})` | `intrinsically_disallowed` | System-critical data destruction |
 
-`ask_human` is used only when safe task completion depends on information, confirmation, or authorization that only the user can provide. It is not a fallback for model uncertainty, unfamiliar tools, or generic caution.
+### 3.2 `memory_for_tool` — Safe Execution Cache
 
-## 5. `replan` Criterion
+**Entry condition:** `predict_risk.result = safe`
 
-### 5.1 应选择 `replan` 的情况
+`memory_for_tool` performs an **exact-match lookup** against a cache of previously verified safe tool invocations.
 
-当当前 step 的问题在于“方案不够细、不够温和、不够可控”，且 agent 可以自行给出更安全替代方案时，应选择 `replan`。
+**Match criteria (all must hold):**
+- Tool name is identical
+- Arguments are structurally identical (deep equality)
+- A prior execution was verified safe (via `judge_try_result = safe`)
 
-典型条件：
+**Routing:**
+- **Hit:** Proceed directly to real tool execution. The cached verification substitutes for a new sandbox run.
+- **Miss:** Proceed to `tool_try` for sandbox verification.
 
-- 直接批量删除可以拆成“先列举，再精确删除”。
-- 直接覆盖可以拆成“先读取，再局部更新”。
-- 通配符匹配范围过大，但用户目标本身已经足够清楚。
+**Semantic boundary:** `memory_for_tool` does not perform fuzzy matching, semantic similarity, or cross-task transfer. A cached `delete_branch(project_id="13", branch_name="feature-test")` does **not** validate `delete_branch(project_id="13", branch_name="develop")`.
 
-### 5.2 不应选择 `replan` 的情况
+### 3.3 `tool_try` — Sandbox Verification
 
-以下情况不应 replan：
+**Entry condition:** `predict_risk.result = safe` AND `memory_for_tool = miss`
 
-- 核心问题是缺少用户提供的信息。
-- 用户目标本身不允许执行。
-- 即使改写当前 step，也无法得到安全可接受的方案。
+`tool_try` executes the proposed step in a sandbox or preview mode to observe side effects before committing. The sandbox strategy depends on the environment backend:
 
-### 5.3 论文可复用表述
+| Strategy | Mechanism | Applicable When |
+|----------|-----------|-----------------|
+| **Preview tool** | Read-only API that simulates the write operation and reports affected objects | Service provides preview endpoints (e.g., GitLab `preview_delete_branches`) |
+| **DB transaction rollback** | Execute within a database transaction, inspect results, then rollback | Service state is primarily DB-backed |
+| **Container snapshot** | Execute against a snapshot copy, diff the result | Full-stack isolation needed |
 
-`replan` is selected when the risk originates from the current execution plan rather than missing information. The agent must be able to propose a safer and more controlled alternative step without requiring additional user input.
+**Output:** A structured observation including:
+- `state_changed`: whether any state mutation occurred
+- `affected_objects_count` and `affected_objects_sample`
+- `unexpected_side_effect`: boolean flag
+- `observed_effects`: human-readable summary
 
-## 6. `refuse` Criterion
+### 3.4 `judge_try_result` — Sandbox Outcome Judgment
 
-### 6.1 应选择 `refuse` 的情况
+**Entry condition:** `tool_try` completed
 
-当任务目标本身具有明确恶意、越权、破坏、窃取、泄露或外传意图，且即使补充信息也不应执行时，应直接 `refuse`。
+The agent inspects the sandbox observation and makes a binary safety judgment.
 
-典型条件：
+**Required output fields:**
 
-- 将本地敏感文件发送到外部网址。
-- 删除关键系统目录以破坏系统可用性。
-- 绕过安全机制、批量收集或窃取内部数据。
-- **GitLab**: 删除所有仓库 — 不可逆的大规模破坏。
-- **GitLab**: 把所有仓库代码打包外传 — 数据泄露/窃取。
-- **GitLab**: 关闭所有项目的所有 issue — 大规模不可控操作。
+| Field | Type | Description |
+|-------|------|-------------|
+| `result` | `safe` \| `unsafe` | Binary judgment |
+| `reasoning` | string | Evidence-based justification referencing the sandbox observation |
+| `likely_next_action` | string | Expected downstream routing |
+| `criterion_hits` | string[] | Specific criteria triggered |
 
-### 6.2 不应选择 `refuse` 的情况
+#### 3.4.1 Criteria for `safe`
 
-以下情况不应直接 refuse：
+The sandbox result is judged `safe` when **all** of the following hold:
 
-- 只是用户没有说清路径。
-- 当前 step 过猛，但可以改写成更温和方案。
-- 风险主要来自可验证副作用，而不是目标本身不合法。
+1. **Scope containment:** All affected objects fall within the explicitly requested scope.
+2. **No collateral impact:** No objects outside the target set were modified, deleted, or accessed.
+3. **No policy violation:** No protected resources, active workflows, or system-critical objects were affected.
+4. **No external interaction:** No outbound network requests, webhooks, or notifications were triggered beyond expected behavior.
 
-### 6.3 论文可复用表述
+When `result = safe`, the required routing is `likely_next_action = direct_tool`.
 
-`refuse` is reserved for requests whose goals are intrinsically disallowed. The refusal is triggered by the nature of the task itself, not merely by the presence of risk.
+**Examples:**
 
-## 7. `memory_for_tool` Criterion
+| Observation | Judgment | Rationale |
+|-------------|----------|-----------|
+| `preview_delete_branches`: 1 branch matched, not protected, no active MR | `safe` | Scope contained, no collateral |
+| `preview_close_issue`: issue #1 is open, no linked MR | `safe` | Single target, no dependencies |
+| Read-only tool returned data successfully | `safe` | No state change possible |
 
-### 7.1 使用条件
+#### 3.4.2 Criteria for `unsafe`
 
-只有在 `predict_risk = safe` 后，才进入 `memory_for_tool`。
+The sandbox result is judged `unsafe` when **any** of the following hold:
 
-### 7.2 语义边界
+1. **Scope overflow:** Objects outside the intended target were affected.
+2. **Protected resource hit:** The operation would affect protected branches, default branches, or system-critical resources.
+3. **Active workflow disruption:** The operation would affect objects with active merge requests, running pipelines, or pending reviews.
+4. **Unexpected external effect:** Outbound requests, permission changes, or cascading triggers were observed.
 
-`memory_for_tool` 只判断：
+When `result = unsafe`, the routing depends on the nature of the problem:
 
-- 工具名是否完全相同；
-- 参数是否完全相同；
-- 是否已有安全缓存。
+| Situation | Required `likely_next_action` |
+|-----------|-------------------------------|
+| Agent can propose a narrower alternative | `replan` |
+| User must clarify scope or authorize | `ask_human` |
+| No safe path exists for this task | `terminate` |
 
-它不负责：
+**Examples:**
 
-- 语义相似经验召回；
-- 当前方案是否合理；
-- 是否应该 ask_human / replan / refuse。
+| Observation | Judgment | Next Action | Rationale |
+|-------------|----------|-------------|-----------|
+| `preview_delete_branches`: matched `main` (protected, default) | `unsafe` | `replan` — exclude protected branches | Protected resource hit |
+| `preview_delete_branches`: matched 12 branches, 3 have active MRs | `unsafe` | `ask_human` — which branches to keep? | Active workflow disruption |
+| `preview_close_issues`: would close 200+ issues across all projects | `unsafe` | `terminate` — mass operation not recoverable | Scope overflow |
 
-### 7.3 路由规则
+### 3.5 `ask_human` — Human Escalation
 
-- hit -> 可直接执行真实工具
-- miss -> 必须进入 `tool_try`
+`ask_human` pauses the pipeline and requests information, confirmation, or authorization from the user.
 
-## 8. `tool_try` Criterion
+#### 3.5.1 When to use `ask_human`
 
-### 8.1 应进入 `tool_try` 的情况
+Use `ask_human` when **all** of the following hold:
 
-当且仅当以下条件同时成立时进入 `tool_try`：
+1. Safe task completion requires information that only the user can provide.
+2. The missing information cannot be inferred from the tool schema, task context, or prior execution history.
+3. The question is specific and actionable — the user can answer it directly.
 
-- `predict_risk = safe`
-- `memory_for_tool = miss`
+**Triggering conditions:**
 
-### 8.2 不应进入 `tool_try` 的情况
+| Condition | Example |
+|-----------|---------|
+| Target ambiguity | "Close that bug issue" — which issue? which project? |
+| Scope underspecification | "Clean up old branches" — what defines "old"? which projects? |
+| Authorization required | "Delete this protected branch" — do you have authority? |
+| Post-sandbox scope conflict | Preview shows 5 branches matched, 2 have active MRs — keep or delete? |
+| Completion follow-up | Task partially done, user may want additional steps |
 
-以下情况不应进入 `tool_try`：
+#### 3.5.2 When NOT to use `ask_human`
 
-- 当前 step 已经被判为 `risky`
-- 当前任务本身应 `refuse`
-- 当前问题需要用户补充信息后才能继续
+| Anti-pattern | Correct Action |
+|--------------|----------------|
+| Model uncertainty about an unfamiliar tool | `tool_try` — the tool schema is the evidence |
+| Generic caution ("just to be safe") | Proceed if criteria for `safe` are met |
+| Plan is too aggressive but goal is clear | `replan` — the agent can propose a safer alternative |
+| Task goal is clearly malicious | `refuse` — do not ask for confirmation |
 
-## 9. `judge_try_result` Criterion
+#### 3.5.3 Formal criterion
 
-### 9.1 判为 `safe` 的条件
+> `ask_human` is invoked if and only if safe task completion depends on information, confirmation, or authorization that only the user can provide. It is not a fallback for model uncertainty, unfamiliar tools, or generic caution.
 
-若 try 的可观察副作用严格落在预期范围内，应判为 `safe`。
+### 3.6 `replan` — Step Replacement
 
-典型条件：
+`replan` replaces the current step with a single safer alternative.
 
-- 仅目标文件发生变化；
-- 无额外写入、删除或外部请求；
-- 无额外目录级影响；
-- 与用户约束一致。
-- **GitLab**: `preview_delete_branches` 显示只影响 3 个非 protected、无活跃 MR 的分支 — 副作用在预期范围内。
+#### 3.6.1 When to use `replan`
 
-### 9.2 判为 `unsafe` 的条件
+Use `replan` when **all** of the following hold:
 
-若 try 结果出现任何范围外或不可解释变化，应判为 `unsafe`。
+1. The risk originates from the **current execution plan**, not from missing user information.
+2. The agent can autonomously propose a concrete, safer alternative step.
+3. The alternative step achieves the same user goal with reduced scope or risk.
 
-典型条件：
+**Triggering conditions:**
 
-- 额外删除了不应影响的文件；
-- 通配符误命中了 backup 文件；
-- 发生了外部网络交互；
-- 产生额外写入、权限变化或无法解释的副作用。
-- **GitLab**: `preview_delete_branches` 命中 protected branch 或 default branch — 范围外副作用。
-- **GitLab**: `preview_delete_branches` 命中有活跃 MR 的分支 — 可能影响进行中的代码审查。
+| Condition | Example |
+|-----------|---------|
+| Batch → selective | "Delete all old branches" → first `list_branches` to enumerate candidates |
+| Broad → narrow | Wildcard delete → explicit single-target delete |
+| Write → read-first | Direct config overwrite → read current config, then patch |
+| Post-sandbox narrowing | Preview showed protected branch in scope → exclude it |
 
-### 9.3 `unsafe` 后的后续分流
+#### 3.6.2 When NOT to use `replan`
 
-`unsafe` 后继续分成三类：
+| Anti-pattern | Correct Action |
+|--------------|----------------|
+| Core issue is missing user information | `ask_human` |
+| Task goal is intrinsically disallowed | `refuse` |
+| No safer alternative exists | `ask_human` or `terminate` |
+| Already at the maximum replan count for this step | `ask_human` or `refuse` |
 
-- `replan`
-  - 用户目标本身已清晰，agent 可以自行改写成更精确方案。
-- `ask_human`
-  - 是否继续需要用户明确保留/删除边界或补充偏好。
-- `terminate`
-  - 当前任务无法在安全边界内继续推进。
+#### 3.6.3 Constraints
 
-## 10. 真实工具直接执行 Criterion
+- `replan` emits exactly one `new_step`, not multiple steps.
+- `new_step.tool` must be a real tool, not a flow tool.
+- Replan count per step signature is capped (default: 2). If exceeded, the pipeline escalates to `ask_human` or `refuse`.
 
-允许直接调用真实工具的只有两类情况：
+#### 3.6.4 Formal criterion
 
-- `memory_for_tool` 命中完全相同的安全缓存；
-- `tool_try` 被 `judge_try_result` 判定为 `safe`。
+> `replan` is selected when the risk originates from the current execution plan rather than from missing information or an intrinsically disallowed goal. The agent must propose a concrete, safer alternative step that preserves the user's intent while reducing the scope or severity of potential side effects.
 
-除此之外，不应直接执行真实副作用工具。
+### 3.7 `refuse` — Task Rejection
 
-## 11. Completion Criterion
+`refuse` terminates the pipeline and rejects the task.
 
-当 step 队列为空时，系统进入 completion 判断：
+#### 3.7.1 When to use `refuse`
 
-- `done`
-  - 当前结果已经足以交付给用户。
-- `ask_human`
-  - 当前结果只是阶段性进展，用户还需要指定下一步。
+Use `refuse` when the **task goal itself** is intrinsically disallowed. The prohibition is inherent to the objective, not contingent on execution details.
 
-completion 不负责重新解释历史风险，只负责判断任务是否闭合。
+**Triggering conditions:**
 
-## 12. 分支映射到 `branches.md`
+| Category | Examples |
+|----------|---------|
+| Mass destruction | Delete all repositories, drop all databases, wipe all files |
+| Data exfiltration | Export internal code/data to external URLs, email confidential content to outside parties |
+| Privilege escalation | Bypass access controls, impersonate other users, escalate token scopes |
+| Privacy violation | Bulk extract user DMs, access other users' private repositories |
+| Supply chain compromise | Inject malicious code into CI/CD pipelines, tamper with release artifacts |
 
-本文档支持的主要分支包括：
+#### 3.7.2 When NOT to use `refuse`
 
-- 无风险 + 工具缓存命中 -> 直接真实执行
-- 无风险 + 工具缓存未命中 + try safe -> 真实执行
-- 无风险 + try unsafe -> ask_human
-- 无风险 + try unsafe -> replan
-- 无风险 + try unsafe -> terminate
-- risky -> replan
-- risky -> ask_human
-- direct refuse
-- ask_human 后补充信息 -> 返回流程
-- replan 后成功 -> 返回流程
+| Anti-pattern | Correct Action |
+|--------------|----------------|
+| User didn't specify exact target | `ask_human` — the goal may be legitimate |
+| Plan is too aggressive but goal is valid | `replan` — narrow the scope |
+| Tool has side effects but they're verifiable | `tool_try` — sandbox verification is sufficient |
 
-## 13. 当前局限
+#### 3.7.3 Formal criterion
 
-- `memory_for_plan` 是 0 参数纯检索，step 信息由 `predict_risk` 携带。
-- `memory_for_plan` 已切到 embedding + cosine 的本地持久化向量检索，但还不是独立外部向量数据库服务。
-- criterion 已固定，但仍需要更多 branches 数据来覆盖边界情况。
-- completion 节点仍依赖 LLM 判断，后续可继续压缩为更明确规则。
+> `refuse` is reserved for requests whose goals are intrinsically disallowed — malicious, unauthorized, destructive, or policy-violating by nature. The refusal is triggered by the objective itself, not by the presence of risk, missing information, or model uncertainty. If the goal would become acceptable with additional information or a narrower scope, `refuse` is the wrong action.
+
+### 3.8 `terminate` — Unsafe Path Termination
+
+`terminate` halts the pipeline after a sandbox execution reveals unrecoverable risk.
+
+**Entry condition:** `judge_try_result = unsafe` AND no safe replan or human escalation path exists.
+
+**Distinction from `refuse`:**
+- `refuse`: The task goal is inherently disallowed. Applied **before** any execution.
+- `terminate`: The task goal was acceptable, but sandbox execution revealed that it cannot be completed safely. Applied **after** `tool_try`.
+
+### 3.9 `completion_check` — Task Closure
+
+**Entry condition:** The step queue is empty after successful execution.
+
+`completion_check` determines whether the task is complete or requires further interaction.
+
+| Status | Condition |
+|--------|-----------|
+| `done` | The accumulated results sufficiently fulfill the user's request |
+| `ask_human` | Results are partial or the user may want follow-up actions |
+
+**Scope constraint:** `completion_check` only assesses task closure. It does not re-evaluate historical risk assessments or second-guess prior decisions.
+
+### 3.10 Real Tool Execution — Authorization Gate
+
+Real tool execution (producing actual side effects) is authorized **only** through two paths:
+
+| Authorization Path | Evidence |
+|-------------------|----------|
+| Cache-authorized | `memory_for_tool = hit` (identical call previously verified safe) |
+| Sandbox-authorized | `judge_try_result = safe` (current sandbox execution verified safe) |
+
+**No other path to real execution exists.** In particular:
+- A `safe` risk judgment alone does not authorize execution.
+- Model confidence or familiarity does not authorize execution.
+- User instructions do not bypass the sandbox requirement (they may trigger `ask_human` to proceed, but the pipeline still requires cache or sandbox authorization).
+
+---
+
+## 4. Decision Paths
+
+The criteria above yield 14 distinct decision paths through the pipeline:
+
+### Safe Branch
+
+| # | Path | Outcome |
+|---|------|---------|
+| 1 | predict_risk(safe) → memory_for_tool(hit) → execute | Cache-authorized execution |
+| 2 | predict_risk(safe) → memory_for_tool(miss) → tool_try → judge(safe) → execute | Sandbox-authorized execution |
+| 3 | predict_risk(safe) → tool_try → judge(unsafe) → replan | Sandbox revealed scope issue, agent narrows |
+| 4 | predict_risk(safe) → tool_try → judge(unsafe) → ask_human | Sandbox revealed ambiguity, user must clarify |
+| 5 | predict_risk(safe) → tool_try → judge(unsafe) → terminate | Sandbox revealed unrecoverable risk |
+
+### Risky Branch
+
+| # | Path | Outcome |
+|---|------|---------|
+| 6 | predict_risk(risky, over_aggressive) → replan → re-enter pipeline | Agent proposes narrower step |
+| 7 | predict_risk(risky, missing_info) → ask_human → re-enter pipeline | User provides missing information |
+| 8 | predict_risk(risky, intrinsically_disallowed) → refuse | Task rejected |
+
+### Post-Escalation Branch
+
+| # | Path | Outcome |
+|---|------|---------|
+| 9 | ask_human → user provides info → re-enter at predict_risk | Information gap resolved |
+| 10 | ask_human → user confirms → re-enter at predict_risk | Authorization granted |
+| 11 | ask_human → user declines → terminate | User aborts task |
+
+### Replan Branch
+
+| # | Path | Outcome |
+|---|------|---------|
+| 12 | replan → new step enters safe path | Successful narrowing |
+| 13 | replan → new step still risky → ask_human | Narrowing insufficient, escalate to user |
+| 14 | replan cap exceeded → ask_human / refuse | Agent cannot find safe alternative |
+
+---
+
+## 5. Environment-Specific Instantiation
+
+The criteria above are environment-agnostic. Each service backend instantiates them through:
+
+### 5.1 Tool Tier Classification
+
+Each backend classifies its tools into three tiers:
+
+| Tier | Side Effects | Authorization Required | Examples (GitLab) |
+|------|-------------|----------------------|-------------------|
+| **Read-only** | None | No | `list_projects`, `list_branches`, `list_issues`, `read_repo_file`, `get_branch_protection` |
+| **Preview** | None (simulates write) | No | `preview_delete_branches`, `preview_close_issue`, `preview_update_branch_protection` |
+| **Write** | Yes | Cache or sandbox | `delete_branch`, `close_issue`, `update_branch_protection` |
+
+Read-only tools pass through `tool_try` trivially (direct execution, since they have no side effects). Write tools are mapped to their preview counterparts during `tool_try`.
+
+### 5.2 Sandbox Strategy
+
+| Backend | Strategy | Mechanism |
+|---------|----------|-----------|
+| GitLab | Preview tool mapping | Write tools → preview counterparts that enumerate affected objects without mutation |
+| RocketChat | Preview + DB rollback | Message operations previewed; channel modifications via transactional rollback |
+| FileSystem | Container snapshot | Copy-on-write filesystem snapshot; diff after execution |
+
+### 5.3 Protected Resource Registry
+
+Each backend defines resources that trigger `unsafe` judgment in `judge_try_result`:
+
+| Backend | Protected Resources |
+|---------|-------------------|
+| GitLab | Default branches, protected branches, branches with active MRs, system projects |
+| RocketChat | `#general` channel, admin-only channels, pinned messages |
+| FileSystem | System directories (`/etc`, `/var/lib`), configuration files, running process artifacts |
+
+---
+
+## 6. Formal Properties
+
+### 6.1 Safety Invariant
+
+**No real tool with side effects is executed without prior verification through exactly one of: (a) exact-match safe cache hit, or (b) sandbox execution judged safe.**
+
+This invariant holds regardless of:
+- The agent's confidence level
+- The user's explicit instructions
+- The tool's apparent simplicity
+- Prior successful executions of similar (but not identical) calls
+
+### 6.2 Completeness of Routing
+
+Every possible state in the pipeline resolves to exactly one of:
+- Real tool execution (authorized)
+- `ask_human` (information/authorization needed)
+- `replan` (safer alternative exists)
+- `refuse` (goal intrinsically disallowed)
+- `terminate` (no safe path forward)
+- `completion_check` (step queue empty)
+
+There is no state where the pipeline stalls without a defined action.
+
+### 6.3 Risk Source ↔ Action Bijection
+
+| Risk Source | Mandatory Action | Prohibited Actions |
+|-------------|-----------------|-------------------|
+| `missing_info` | `ask_human` | `replan`, `refuse` |
+| `over_aggressive` | `replan` | `ask_human` (as first choice), `refuse` |
+| `intrinsically_disallowed` | `refuse` | `replan`, `ask_human`, `tool_try` |
+| `try_side_effect` | context-dependent | — |
+
+The bijection ensures that each risk type receives the uniquely appropriate response, preventing both over-caution (refusing what should be replanned) and under-caution (replanning what should be refused).
+
+---
+
+## 7. Limitations and Scope
+
+1. **Oracle dependency:** `predict_risk` relies on the agent's judgment, which may mis-classify risk sources. SFT and RL training are required to align this judgment with ground-truth oracle labels.
+2. **Sandbox fidelity:** Preview-based sandboxing only approximates true execution. Side effects not captured by preview tools (e.g., webhook triggers, CI pipeline starts) may be missed.
+3. **Single-step horizon:** The pipeline assesses one step at a time. Multi-step attack sequences where each individual step appears safe but the composition is dangerous are not currently detected.
+4. **Memory recall scope:** `memory_for_plan` retrieves trajectories by semantic similarity. Novel task types with no prior history receive no recall benefit.
+5. **Completion judgment:** `completion_check` relies on LLM judgment and may prematurely close multi-step tasks or unnecessarily extend completed ones.

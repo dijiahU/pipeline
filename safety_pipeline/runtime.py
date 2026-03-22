@@ -25,6 +25,7 @@ from .settings import (
     MAX_TOOL_CALL_RETRIES,
     PLAN_MEMORY_FAISS_PATH,
     SFT_DATASET_PATH,
+    SFT_STEPWISE_PATH,
     TOOL_MEMORY_PATH,
     get_pipeline_env,
     set_pipeline_env,
@@ -851,10 +852,139 @@ def export_experience_to_jsonl(output_path=SFT_DATASET_PATH, verbose=True):
     return {"output_path": output_path, "count": len(records)}
 
 
+def _is_real_tool(tool_name):
+    """判断是否为真实工具（非 flow tool）"""
+    return tool_name and tool_name not in FLOW_TOOL_SCHEMAS and tool_name != "thinking_step"
+
+
+def experience_step_to_sft_record(session_cases, step_index, tool_schema_map):
+    """为 session 中的第 step_index 步生成一条 SFT 样本。
+
+    step 0..step_index-1 只保留真实工具调用和 ask_human 的人类回复作为上下文，
+    step_index 的完整 flow_tool_calls 作为训练目标。
+    """
+    context_cases = session_cases[:step_index]
+    target_case = session_cases[step_index]
+    # tools 基于整个 session（保证工具列表完整）
+    all_cases = session_cases[: step_index + 1]
+    tools_list = build_export_tools(all_cases, tool_schema_map)
+
+    conversations = []
+    # 起始 human turn
+    conversations.append({"from": "human", "value": session_cases[0].get("task", "")})
+
+    # 上下文：前面所有 step 只保留真实工具的 function_call + observation
+    for idx, case in enumerate(context_cases):
+        flow_tool_calls = build_export_flow_tool_calls(case)
+        decision = case.get("decision", "")
+        outcome = case.get("outcome", "")
+        for tool_call in flow_tool_calls:
+            tool_name = tool_call.get("tool_name", "")
+            if not _is_real_tool(tool_name):
+                continue
+            arguments = tool_call.get("arguments") or {}
+            conversations.append({
+                "from": "function_call",
+                "value": json.dumps({"name": tool_name, "arguments": arguments}, ensure_ascii=False),
+            })
+            observation = tool_call.get("result")
+            conversations.append({"from": "observation", "value": serialize_sft_value(observation)})
+        # ask_human 成功后追加用户回复（模型需要知道用户说了什么）
+        if decision == "ask_human" and outcome not in {"aborted_after_ask_human", "aborted_before_step"}:
+            human_reply = _extract_human_reply(case)
+            if human_reply:
+                conversations.append({"from": "human", "value": human_reply})
+
+    # 目标：当前 step 的 flow_tool_calls（模型应该生成的部分）
+    target_calls = build_export_flow_tool_calls(target_case)
+    target_decision = target_case.get("decision", "")
+    target_outcome = target_case.get("outcome", "")
+    for tool_call in target_calls:
+        tool_name = tool_call.get("tool_name", "")
+        if not should_export_flow_tool(tool_name):
+            continue
+        arguments = tool_call.get("arguments") or {}
+        if tool_name == "ask_human" and step_index > 0:
+            prev = session_cases[step_index - 1]
+            if prev.get("decision") == "completion_check" and prev.get("outcome") == "completion_requires_human":
+                prev_completion = _extract_completion_from_calls(prev)
+                prev_q = prev_completion.get("question", "").strip()
+                if prev_q:
+                    arguments = {"question": prev_q}
+        conversations.append({
+            "from": "function_call",
+            "value": json.dumps({"name": tool_name, "arguments": arguments}, ensure_ascii=False),
+        })
+        is_ask_human_ok = (
+            tool_name == "ask_human"
+            and target_outcome not in {"aborted_after_ask_human", "aborted_before_step"}
+        )
+        if not is_ask_human_ok:
+            observation = tool_call.get("result")
+            conversations.append({"from": "observation", "value": serialize_sft_value(observation)})
+        if tool_name == "completion_check":
+            comp_args = arguments if isinstance(arguments, dict) else {}
+            if comp_args.get("status") == "done":
+                reply = str(comp_args.get("reply", "")).strip()
+                if reply:
+                    conversations.append({"from": "gpt", "value": reply})
+    if target_decision == "ask_human" and target_outcome not in {"aborted_after_ask_human", "aborted_before_step"}:
+        human_reply = _extract_human_reply(target_case)
+        if human_reply:
+            conversations.append({"from": "human", "value": human_reply})
+
+    return {
+        "system": SFT_TOOLCALL_SYSTEM_PROMPT,
+        "tools": json.dumps(tools_list, ensure_ascii=False, separators=(",", ":")),
+        "conversations": conversations,
+        "meta": {
+            "task": session_cases[0].get("task", ""),
+            "step_index": step_index,
+            "total_steps": len(session_cases),
+            "decision": target_decision,
+            "outcome": target_outcome,
+        },
+    }
+
+
+def export_stepwise_to_jsonl(output_path=SFT_STEPWISE_PATH, verbose=True):
+    """按步导出：每个 step 生成一条独立的 SFT 样本"""
+    tool_schema_map = build_tool_schema_map()
+    records = []
+    sessions = group_experience_cases(experience_memory.cases)
+    for session_cases in sessions:
+        if not session_cases:
+            continue
+        if not any(case.get("task") and case.get("decision") for case in session_cases):
+            continue
+        for step_index in range(len(session_cases)):
+            records.append(
+                experience_step_to_sft_record(session_cases, step_index, tool_schema_map)
+            )
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    with open(output_path, "w", encoding="utf-8") as fh:
+        for record in records:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    if verbose:
+        print_stage_start("导出按步 SFT 数据")
+        print(f"[导出目标] {output_path}")
+        print(f"[样本数量] {len(records)}")
+        if records:
+            decisions = {}
+            for r in records:
+                d = r["meta"]["decision"]
+                decisions[d] = decisions.get(d, 0) + 1
+            print(f"[决策分布] {decisions}")
+        print_stage_end("导出按步 SFT 数据", f"写入 {len(records)} 条样本")
+    return {"output_path": output_path, "count": len(records)}
+
 def persist_local_artifacts():
     plan_store = get_plan_memory_store()
     plan_store.sync_with_experience()
     export_info = export_experience_to_jsonl(verbose=False)
+    stepwise_info = export_stepwise_to_jsonl(verbose=False)
     print_stage_start("本地数据保存")
     print(f"[experience_memory] {EXPERIENCE_MEMORY_PATH}")
     print(f"[experience_case_count] {len(experience_memory.cases)}")
@@ -864,6 +994,8 @@ def persist_local_artifacts():
     print(f"[plan_memory_index_count] {len(plan_store.metadata)}")
     print(f"[sft_dataset] {export_info['output_path']}")
     print(f"[sft_sample_count] {export_info['count']}")
+    print(f"[sft_stepwise] {stepwise_info['output_path']}")
+    print(f"[sft_stepwise_count] {stepwise_info['count']}")
     print_stage_end("本地数据保存", "memory 和 SFT 数据已刷新")
     return export_info
 

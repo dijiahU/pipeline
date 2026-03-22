@@ -33,11 +33,20 @@ Environment setup (requires Docker):
 docker compose up -d && bash scripts/setup_env.sh
 ```
 
-Required environment variables for full pipeline execution:
+Reset GitLab environment (restore initial data + renew token):
+```bash
+bash scripts/reset_env.sh
+```
 
-- `OPENAI_API_KEY`
-- `GITLAB_BASE_URL` (default `http://localhost:8929`)
-- `GITLAB_ACCESS_TOKEN` (default `root-token`)
+Environment variables are configured via `.env` file in the project root (auto-loaded by `settings.py`):
+
+```
+OPENAI_API_KEY=your_openai_api_key
+OPENAI_BASE_URL=https://openrouter.ai/api/v1   # optional, supports OpenRouter/DeepSeek etc.
+OPENAI_MODEL=openai/gpt-4o                       # optional, default gpt-5.2
+GITLAB_BASE_URL=http://localhost:8929
+GITLAB_ACCESS_TOKEN=root-token
+```
 
 Pure local reads of `memory/` artifacts do not require live API access.
 
@@ -63,13 +72,14 @@ PLAN_MEMORY_TOP_K = 6                  # nearest neighbors for task retrieval
 Important properties:
 
 - It uses explicit step-level decision routing.
-- `memory_for_plan` is a 0-parameter pure retrieval tool; it recalls similar prior user tasks based on the current task, not steps.
+- `memory_for_plan` is a 0-parameter pure retrieval tool; it recalls similar prior task trajectories at session level (complete tool chains, not individual steps).
 - `predict_risk` carries both the current step (`tool`, `tool_args`, `description`) and the risk judgment (`result`, `reasoning`, `likely_next_action`, `criterion_hits`).
 - `predict_risk`, `judge_try_result`, `replan`, and `completion_check` are argument-driven control tools.
 - `replan` now emits a single `new_step`, not a `new_steps` array.
 - Invalid tool calls can be retried in-loop through `last_tool_error`.
 - It persists memory to disk under `memory/`.
-- It automatically exports SFT-style samples to `memory/sft_dataset.jsonl` after each run.
+- It automatically exports SFT-style samples to `memory/sft_dataset.jsonl` (full trajectory) and `memory/sft_dataset_stepwise.jsonl` (per-step) after each run.
+- `state["tool_call_counter"]` provides a global per-session call index that increments with every tool invocation (flow or real).
 - Real tool execution and try logic are delegated to the environment backend via `get_environment_backend()`.
 - `--task-file` loads YAML task definitions from `tasks/`, including NPC scenario config.
 - When `state["npc_scenario"]` is set, `flow_tool_ask_human()` generates LLM-based NPC replies instead of calling `input()`.
@@ -105,8 +115,9 @@ Only tools valid for the current phase are exposed to the LLM at each step.
 - `flow_tool_judge_try_result()`
 - `flow_tool_replan()`
 - `flow_tool_completion_check()`
-- `record_experience()`
-- `export_experience_to_jsonl()`
+- `record_experience()` — simplified to 4 params: `state, step, final_action, outcome`
+- `export_experience_to_jsonl()` — full-trajectory SFT export
+- `export_stepwise_to_jsonl()` — per-step SFT export (step N = context from steps 0..N-1 + target step N)
 - `persist_local_artifacts()`
 
 ### `safety_pipeline/environment.py`
@@ -160,7 +171,7 @@ The pipeline targets a Docker-hosted GitLab instance (from OpenAgentSafety). Key
 - Image: `ghcr.io/theagentcompany/servers-gitlab:1.0.0` — pre-built with 6+ projects (sotopia, openhands, etc.)
 - Default access: `http://localhost:8929` with admin token `root-token`
 - Start: `docker compose up -d && bash scripts/setup_env.sh`
-- Reset: `docker compose down && docker compose up -d` restores initial state
+- Reset: `bash scripts/reset_env.sh` (restores initial data + renews token)
 - Data is baked into the image — no per-task data generation needed
 
 ## Memory and Artifacts
@@ -168,32 +179,28 @@ The pipeline targets a Docker-hosted GitLab instance (from OpenAgentSafety). Key
 The current local artifact layout is:
 
 - `memory/experience_memory.json`
-  - raw step-level decision experience
+  - step-level decision experience, each record contains 9 fields: `task, turn_id, step_index, dialogue_snapshot, flow_tool_calls, step, decision, outcome, memory_id`
+  - `flow_tool_calls` is an array of `{call_index, phase, tool_name, arguments, result}`, capturing every tool invocation with global call_index
 - `memory/plan_memory.faiss`
-  - FAISS vector index derived from experience memory
+  - FAISS vector index derived from experience memory, indexed at trajectory (session) level
 - `memory/plan_memory_meta.json`
-  - metadata aligned with the FAISS vector index
+  - metadata aligned with the FAISS vector index, each entry represents a complete task session
 - `memory/tool_memory.json`
   - exact-signature safe-call cache
 - `memory/sft_dataset.jsonl`
-  - exported SFT-style samples derived from experience memory
+  - full-trajectory SFT samples (one sample per session)
+- `memory/sft_dataset_stepwise.jsonl`
+  - per-step SFT samples (step N uses steps 0..N-1 as context, step N as target), with `meta` field for filtering
 
-`experience_memory.json` is the runtime source of truth.
+`experience_memory.json` is the runtime source of truth. Old records may have extra top-level fields (`plan_memory`, `risk`, `tool_memory`, etc.) which are now removed — all information is captured in `flow_tool_calls`. Export logic has legacy fallback for old-format data.
 
-Newer cases store compact `risk` objects (`level`, `reason`, `next_action`, `criteria`) instead of the older `risk_assessment` shape. Read code and exports with backward compatibility in mind.
+Both SFT datasets are derived artifacts used to inspect and curate training examples. They are currently weakly labeled and should not be described as fully human-curated gold data.
 
-`sft_dataset.jsonl` is a derived artifact used to inspect and curate training examples. It is currently weakly labeled and should not be described as fully human-curated gold data.
-
-The exported tool-calling format now includes:
+The exported tool-calling format includes:
 
 - `system`
-- `tool_groups`
-  - `shared_flow_tools`
-  - `task_tools`
-- `tools`
-- `conversations`
-
-`tools` is the flattened list used by trainers; `tool_groups` is the readable split between flow-control tools and task-specific real tools.
+- `tools` (JSON string, each tool wrapped as `{type: "function", function: {...}}`)
+- `conversations` (multi-turn dialogue in LlamaFactory ShareGPT/tool-calling format)
 
 For export semantics:
 
@@ -237,6 +244,7 @@ For changes to current behavior, validate with:
    - `memory/plan_memory_meta.json`
    - `memory/tool_memory.json`
    - `memory/sft_dataset.jsonl`
+   - `memory/sft_dataset_stepwise.jsonl`
 
 If execution cannot be completed because of network or dependency limits, say so explicitly and still validate syntax plus local artifact behavior where possible.
 
