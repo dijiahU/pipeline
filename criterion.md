@@ -1,54 +1,5 @@
 # Decision Criteria for Step-Level Safety Pipeline
 
-## 1. Overview
-
-This document defines the decision criteria for a **step-level, decision-driven safety pipeline** that governs autonomous agent execution in interactive service environments (e.g., GitLab, RocketChat, file systems). The pipeline enforces a fixed control flow where each step is individually assessed, sandboxed, and gated before real execution.
-
-### 1.1 Design Objectives
-
-The pipeline jointly optimizes three objectives:
-
-| Objective | Description |
-|-----------|-------------|
-| **Safety** | Prevent unauthorized, destructive, or out-of-scope side effects |
-| **Autonomy** | Allow the agent to complete low-risk tasks without unnecessary human intervention |
-| **Procedural fidelity** | Enforce a fixed decision flow — no step may bypass risk assessment or sandbox verification |
-
-### 1.2 Control Flow
-
-The pipeline processes one **minimal executable step** at a time through a fixed sequence of decision nodes:
-
-```
-user_request
-  → memory_for_plan          [trajectory-level retrieval, 0 params]
-  → predict_risk             [step proposal + binary risk judgment]
-      ├─ safe
-      │   → memory_for_tool  [exact-match safe cache lookup]
-      │      ├─ hit  → execute_real_tool
-      │      └─ miss → tool_try → judge_try_result
-      │                        ├─ safe   → execute_real_tool
-      │                        └─ unsafe → {replan, ask_human, terminate}
-      └─ risky → {replan, ask_human, refuse}
-  → completion_check         [task closure judgment]
-```
-
-Each decision node is an **argument-driven control tool**: the agent writes its structured judgment into the tool's arguments, and the pipeline validates and routes accordingly. The agent does not produce free-form text responses during execution.
-
----
-
-## 2. Foundational Principles
-
-### 2.1 Minimal Step Principle
-
-The agent proposes exactly one step at a time. Each step must map to a single real tool invocation with fully specified arguments.
-
-**Requirements:**
-- The step must be concrete enough to resolve to one tool call with deterministic parameters.
-- The step must not conflate multiple independently observable side effects.
-- If critical information is missing, the agent must not propose a step — it should route to `ask_human` instead.
-
-**Rationale:** Constraining to single-step proposals ensures that risk assessment is always scoped to a well-defined action, preventing the agent from bundling safe and risky operations into a single plan.
-
 ### 2.2 Evidence-Before-Action Principle
 
 Every routing decision must be grounded in observable evidence, not model intuition. Admissible evidence sources:
@@ -168,14 +119,6 @@ When `result = risky`, the required routing depends on the risk source:
 
 **Entry condition:** `predict_risk.result = safe` AND `memory_for_tool = miss`
 
-`tool_try` executes the proposed step in a sandbox or preview mode to observe side effects before committing. The sandbox strategy depends on the environment backend:
-
-| Strategy | Mechanism | Applicable When |
-|----------|-----------|-----------------|
-| **Preview tool** | Read-only API that simulates the write operation and reports affected objects | Service provides preview endpoints (e.g., GitLab `preview_delete_branches`) |
-| **DB transaction rollback** | Execute within a database transaction, inspect results, then rollback | Service state is primarily DB-backed |
-| **Container snapshot** | Execute against a snapshot copy, diff the result | Full-stack isolation needed |
-
 **Output:** A structured observation including:
 - `state_changed`: whether any state mutation occurred
 - `affected_objects_count` and `affected_objects_sample`
@@ -208,14 +151,6 @@ The sandbox result is judged `safe` when **all** of the following hold:
 
 When `result = safe`, the required routing is `likely_next_action = direct_tool`.
 
-**Examples:**
-
-| Observation | Judgment | Rationale |
-|-------------|----------|-----------|
-| `preview_delete_branches`: 1 branch matched, not protected, no active MR | `safe` | Scope contained, no collateral |
-| `preview_close_issue`: issue #1 is open, no linked MR | `safe` | Single target, no dependencies |
-| Read-only tool returned data successfully | `safe` | No state change possible |
-
 #### 3.4.2 Criteria for `unsafe`
 
 The sandbox result is judged `unsafe` when **any** of the following hold:
@@ -233,13 +168,7 @@ When `result = unsafe`, the routing depends on the nature of the problem:
 | User must clarify scope or authorize | `ask_human` |
 | No safe path exists for this task | `terminate` |
 
-**Examples:**
 
-| Observation | Judgment | Next Action | Rationale |
-|-------------|----------|-------------|-----------|
-| `preview_delete_branches`: matched `main` (protected, default) | `unsafe` | `replan` — exclude protected branches | Protected resource hit |
-| `preview_delete_branches`: matched 12 branches, 3 have active MRs | `unsafe` | `ask_human` — which branches to keep? | Active workflow disruption |
-| `preview_close_issues`: would close 200+ issues across all projects | `unsafe` | `terminate` — mass operation not recoverable | Scope overflow |
 
 ### 3.5 `ask_human` — Human Escalation
 
@@ -385,123 +314,3 @@ Real tool execution (producing actual side effects) is authorized **only** throu
 
 ---
 
-## 4. Decision Paths
-
-The criteria above yield 14 distinct decision paths through the pipeline:
-
-### Safe Branch
-
-| # | Path | Outcome |
-|---|------|---------|
-| 1 | predict_risk(safe) → memory_for_tool(hit) → execute | Cache-authorized execution |
-| 2 | predict_risk(safe) → memory_for_tool(miss) → tool_try → judge(safe) → execute | Sandbox-authorized execution |
-| 3 | predict_risk(safe) → tool_try → judge(unsafe) → replan | Sandbox revealed scope issue, agent narrows |
-| 4 | predict_risk(safe) → tool_try → judge(unsafe) → ask_human | Sandbox revealed ambiguity, user must clarify |
-| 5 | predict_risk(safe) → tool_try → judge(unsafe) → terminate | Sandbox revealed unrecoverable risk |
-
-### Risky Branch
-
-| # | Path | Outcome |
-|---|------|---------|
-| 6 | predict_risk(risky, over_aggressive) → replan → re-enter pipeline | Agent proposes narrower step |
-| 7 | predict_risk(risky, missing_info) → ask_human → re-enter pipeline | User provides missing information |
-| 8 | predict_risk(risky, intrinsically_disallowed) → refuse | Task rejected |
-
-### Post-Escalation Branch
-
-| # | Path | Outcome |
-|---|------|---------|
-| 9 | ask_human → user provides info → re-enter at predict_risk | Information gap resolved |
-| 10 | ask_human → user confirms → re-enter at predict_risk | Authorization granted |
-| 11 | ask_human → user declines → terminate | User aborts task |
-
-### Replan Branch
-
-| # | Path | Outcome |
-|---|------|---------|
-| 12 | replan → new step enters safe path | Successful narrowing |
-| 13 | replan → new step still risky → ask_human | Narrowing insufficient, escalate to user |
-| 14 | replan cap exceeded → ask_human / refuse | Agent cannot find safe alternative |
-
----
-
-## 5. Environment-Specific Instantiation
-
-The criteria above are environment-agnostic. Each service backend instantiates them through:
-
-### 5.1 Tool Tier Classification
-
-Each backend classifies its tools into three tiers:
-
-| Tier | Side Effects | Authorization Required | Examples (GitLab) |
-|------|-------------|----------------------|-------------------|
-| **Read-only** | None | No | `list_projects`, `list_branches`, `list_issues`, `read_repo_file`, `get_branch_protection` |
-| **Preview** | None (simulates write) | No | `preview_delete_branches`, `preview_close_issue`, `preview_update_branch_protection` |
-| **Write** | Yes | Cache or sandbox | `delete_branch`, `close_issue`, `update_branch_protection` |
-
-Read-only tools pass through `tool_try` trivially (direct execution, since they have no side effects). Write tools are mapped to their preview counterparts during `tool_try`.
-
-### 5.2 Sandbox Strategy
-
-| Backend | Strategy | Mechanism |
-|---------|----------|-----------|
-| GitLab | Preview tool mapping | Write tools → preview counterparts that enumerate affected objects without mutation |
-| RocketChat | Preview + DB rollback | Message operations previewed; channel modifications via transactional rollback |
-| FileSystem | Container snapshot | Copy-on-write filesystem snapshot; diff after execution |
-
-### 5.3 Protected Resource Registry
-
-Each backend defines resources that trigger `unsafe` judgment in `judge_try_result`:
-
-| Backend | Protected Resources |
-|---------|-------------------|
-| GitLab | Default branches, protected branches, branches with active MRs, system projects |
-| RocketChat | `#general` channel, admin-only channels, pinned messages |
-| FileSystem | System directories (`/etc`, `/var/lib`), configuration files, running process artifacts |
-
----
-
-## 6. Formal Properties
-
-### 6.1 Safety Invariant
-
-**No real tool with side effects is executed without prior verification through exactly one of: (a) exact-match safe cache hit, or (b) sandbox execution judged safe.**
-
-This invariant holds regardless of:
-- The agent's confidence level
-- The user's explicit instructions
-- The tool's apparent simplicity
-- Prior successful executions of similar (but not identical) calls
-
-### 6.2 Completeness of Routing
-
-Every possible state in the pipeline resolves to exactly one of:
-- Real tool execution (authorized)
-- `ask_human` (information/authorization needed)
-- `replan` (safer alternative exists)
-- `refuse` (goal intrinsically disallowed)
-- `terminate` (no safe path forward)
-- `completion_check` (step queue empty)
-
-There is no state where the pipeline stalls without a defined action.
-
-### 6.3 Risk Source ↔ Action Bijection
-
-| Risk Source | Mandatory Action | Prohibited Actions |
-|-------------|-----------------|-------------------|
-| `missing_info` | `ask_human` | `replan`, `refuse` |
-| `over_aggressive` | `replan` | `ask_human` (as first choice), `refuse` |
-| `intrinsically_disallowed` | `refuse` | `replan`, `ask_human`, `tool_try` |
-| `try_side_effect` | context-dependent | — |
-
-The bijection ensures that each risk type receives the uniquely appropriate response, preventing both over-caution (refusing what should be replanned) and under-caution (replanning what should be refused).
-
----
-
-## 7. Limitations and Scope
-
-1. **Oracle dependency:** `predict_risk` relies on the agent's judgment, which may mis-classify risk sources. SFT and RL training are required to align this judgment with ground-truth oracle labels.
-2. **Sandbox fidelity:** Preview-based sandboxing only approximates true execution. Side effects not captured by preview tools (e.g., webhook triggers, CI pipeline starts) may be missed.
-3. **Single-step horizon:** The pipeline assesses one step at a time. Multi-step attack sequences where each individual step appears safe but the composition is dangerous are not currently detected.
-4. **Memory recall scope:** `memory_for_plan` retrieves trajectories by semantic similarity. Novel task types with no prior history receive no recall benefit.
-5. **Completion judgment:** `completion_check` relies on LLM judgment and may prematurely close multi-step tasks or unnecessarily extend completed ones.
