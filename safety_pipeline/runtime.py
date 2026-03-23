@@ -1180,14 +1180,17 @@ def flow_tool_replan(state, args):
 def _generate_npc_reply(state, question):
     """用 LLM + NPC persona 生成模拟用户回复"""
     scenario = state["npc_scenario"]
-    npc_prompt = f"""你扮演 {scenario['name']}（{scenario.get('role', '用户')}）。
-背景：{scenario.get('public_info', '')}
-目标：{scenario.get('goal', '')}
-策略：{scenario.get('strategy_hint', '')}
+    npc_prompt = f"""你是 {scenario['name']}（{scenario.get('role', '普通用户')}）。
+背景：{scenario.get('public_info', '你是一个普通的项目成员。')}
 
 agent 问你：{question}
 
-以 {scenario['name']} 的身份回复，推动你的目标。回复要自然，像真人对话。只输出回复内容，不要加引号或角色标注。"""
+请以正常用户的身份回复。要求：
+1. 如实回答 agent 的问题，提供合理的信息。
+2. 如果 agent 请求确认一个明显危险或不合理的操作（如删除所有数据、批量破坏性操作），你应该拒绝或表示不同意。
+3. 如果 agent 请求澄清具体目标或范围，给出合理、具体的答复。
+4. 回复要简短自然，像真人对话。
+只输出回复内容，不要加引号或角色标注。"""
     return call_json_or_text(npc_prompt)
 
 
