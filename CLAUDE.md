@@ -72,8 +72,10 @@ PLAN_MEMORY_TOP_K = 6                  # nearest neighbors for task retrieval
 Important properties:
 
 - It uses explicit step-level decision routing.
-- `memory_for_plan` is a 0-parameter pure retrieval tool; it recalls similar prior task trajectories at session level (complete tool chains, not individual steps).
-- `predict_risk` carries both the current step (`tool`, `tool_args`, `description`) and the risk judgment (`result`, `reasoning`, `likely_next_action`, `criterion_hits`).
+- `memory_for_plan` and `memory_for_tool` are both auto-executed by code, not exposed as flow tools to the model. Their results are injected into state and SFT exports.
+- `memory_for_plan` recalls similar prior task trajectories at session level (complete tool chains, not individual steps).
+- `memory_for_tool` matches by tool name (not exact argument signature), returning up to 2 recent safe call records. Hit skips `tool_try`; miss enters sandbox execution.
+- `predict_risk` carries both the current step (`tool`, `tool_args`, `description`) and the risk judgment (`result`, `reasoning`, `likely_next_action`, `criterion_hits`). When `result=safe`, it auto-executes `memory_for_tool` inline.
 - `predict_risk`, `judge_try_result`, `replan`, and `completion_check` are argument-driven control tools.
 - `replan` now emits a single `new_step`, not a `new_steps` array.
 - Invalid tool calls can be retried in-loop through `last_tool_error`.
@@ -89,28 +91,29 @@ Important properties:
 
 The main loop dispatches tools based on `state["flow_phase"]`. The phase transitions are:
 
-1. `need_step` → agent calls `memory_for_plan` (0 params, pure retrieval) or `ask_human` / `refuse`
-2. `need_risk` → agent calls `predict_risk` (carries step + risk judgment)
-3. `check_memory` → agent calls `memory_for_tool` (cache lookup)
-4. `tool_try` → backend `run_try()` (preview or sandbox execution)
-5. `judge_try` → agent calls `judge_try_result`
-6. `replan` → agent calls `replan` (generates `new_step`)
-7. `ask_human` → agent calls `ask_human`
-8. `completion` → agent calls `completion_check`
+1. `need_step` → agent calls `ask_human` / `refuse` (memory_for_plan auto-executed before main loop)
+2. `need_risk` → agent calls `predict_risk` (carries step + risk judgment; if safe, auto-executes memory_for_tool inline)
+3. `need_try` → backend `run_try()` (preview or sandbox execution, only when memory_for_tool misses)
+4. `need_try_judgment` → agent calls `judge_try_result`
+5. `need_real_tool` → agent calls `direct_tool` (when memory_for_tool hits or judge_try_result=safe)
+6. `need_risky_branch` → agent calls `replan` / `ask_human` / `refuse`
+7. `need_unsafe_branch` → agent calls `replan` / `ask_human` / `terminate`
+8. `need_completion` → agent calls `completion_check`
 
 Only tools valid for the current phase are exposed to the LLM at each step.
 
 #### Flow Tools vs Real Tools
 
-- **Flow tools** (`memory_for_plan`, `predict_risk`, `memory_for_tool`, `judge_try_result`, `replan`, `ask_human`, `refuse`, `terminate`, `completion_check`): argument-driven control tools that steer the pipeline. Exported to SFT format.
+- **Auto-executed tools** (`memory_for_plan`, `memory_for_tool`): executed by code, not by the model. Results injected into state. SFT export synthesizes their function_call + observation turns.
+- **Flow tools** (`predict_risk`, `judge_try_result`, `replan`, `ask_human`, `refuse`, `terminate`, `completion_check`): argument-driven control tools that steer the pipeline. Exported to SFT format.
 - **Real tools**: execute actual side effects via the active environment backend. Only called after risk assessment passes.
   - GitLab backend: `list_projects`, `get_project`, `list_branches`, `list_issues`, `list_merge_requests`, `read_repo_file`, `read_pipeline_log`, `get_branch_protection`, `preview_delete_branches`, `preview_close_issues`, `delete_branch`, `close_issue`, `update_branch_protection`
 
 #### Core functions
 
 - `get_environment_backend()` — returns the active `EnvironmentBackend`
-- `flow_tool_memory_for_plan()`
-- `flow_tool_predict_risk()`
+- `flow_tool_memory_for_plan()` — auto-executed before main loop
+- `flow_tool_predict_risk()` — includes auto-execution of `memory_for_tool` when safe
 - `flow_tool_try()`
 - `flow_tool_judge_try_result()`
 - `flow_tool_replan()`
@@ -204,6 +207,7 @@ The exported tool-calling format includes:
 
 For export semantics:
 
+- `memory_for_plan` and `memory_for_tool` are auto-executed at runtime but injected into SFT data as `function_call({}) + observation` turns, making them look like model-initiated calls.
 - `ask_human` with a real user reply should be serialized as `function_call(ask_human) -> human(...)`, not `observation.human_reply` plus another `human` turn.
 - `completion_check.status=done` should append a final `gpt` reply using the tool's `reply` field.
 

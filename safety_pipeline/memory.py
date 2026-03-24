@@ -337,6 +337,15 @@ class ToolMemory:
     def get_safe_case(self, tool_name, args):
         return self.safe_cases.get(tool_signature(tool_name, args))
 
+    def get_safe_cases_by_tool(self, tool_name, top_k=2):
+        """按工具名检索安全记录，返回最近 top_k 条"""
+        matches = [
+            case for case in self.safe_cases.values()
+            if case.get("tool") == tool_name
+        ]
+        # 按存入顺序取最后 top_k 条（字典保持插入顺序）
+        return matches[-top_k:] if matches else []
+
     def store_safe_case(self, tool_name, args, exec_result, safety_reason):
         self.safe_cases[tool_signature(tool_name, args)] = {
             "tool": tool_name,
@@ -430,19 +439,30 @@ def sanitize_safe_case_for_observation(safe_case):
     }
 
 
-def memory_for_tool(tool_name, args):
-    safe_case = tool_memory.get_safe_case(tool_name, args)
+def memory_for_tool(tool_name):
+    """按工具名检索安全记录，返回最近 2 条"""
+    cases = tool_memory.get_safe_cases_by_tool(tool_name, top_k=2)
     return {
-        "hit": safe_case is not None,
-        "safe_case": sanitize_safe_case_for_observation(safe_case),
-        "summary": "命中完全相同调用的安全缓存。"
-        if safe_case
-        else "没有找到完全相同调用的安全缓存。",
+        "hit": len(cases) > 0,
+        "safe_cases": [sanitize_safe_case_for_observation(c) for c in cases],
+        "summary": f"找到 {len(cases)} 条 {tool_name} 的安全调用记录。"
+        if cases
+        else f"没有找到 {tool_name} 的安全调用记录。",
     }
 
 
 def sanitize_tool_memory_result(tool_memory_result):
     tool_memory_result = tool_memory_result or {}
+    # 兼容新格式（safe_cases 列表）和旧格式（safe_case 单条）
+    if "safe_cases" in tool_memory_result:
+        return {
+            "hit": bool(tool_memory_result.get("hit")),
+            "safe_cases": [
+                sanitize_safe_case_for_observation(c)
+                for c in (tool_memory_result.get("safe_cases") or [])
+            ],
+            "summary": tool_memory_result.get("summary", ""),
+        }
     return {
         "hit": bool(tool_memory_result.get("hit")),
         "safe_case": sanitize_safe_case_for_observation(tool_memory_result.get("safe_case")),

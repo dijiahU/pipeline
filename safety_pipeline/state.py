@@ -130,18 +130,12 @@ def normalize_risk_assessment_payload(payload):
         return {}
     result = str(payload.get("result") or payload.get("level") or payload.get("risk") or "").strip()
     reasoning = str(payload.get("reasoning") or payload.get("reason") or "").strip()
-    likely_next_action = str(payload.get("likely_next_action") or payload.get("next_action") or "").strip()
-    criterion_hits = normalize_string_list(payload.get("criterion_hits") or payload.get("criteria") or [])
 
     normalized = {}
     if result:
         normalized["result"] = result
     if reasoning:
         normalized["reasoning"] = reasoning
-    if likely_next_action:
-        normalized["likely_next_action"] = likely_next_action
-    if criterion_hits:
-        normalized["criterion_hits"] = criterion_hits
     return normalized
 
 
@@ -152,8 +146,6 @@ def compact_risk_record(risk_assessment):
     return {
         "level": normalized.get("result", ""),
         "reason": normalized.get("reasoning", ""),
-        "next_action": normalized.get("likely_next_action", ""),
-        "criteria": normalized.get("criterion_hits", []),
     }
 
 

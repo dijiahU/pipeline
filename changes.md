@@ -1,129 +1,101 @@
-# Changes — experience_memory 精简 + 轨迹级召回 + SFT 导出重构
+# Changes — memory_for_tool 自动执行 + 工具级匹配 + SFT 导出补全
 
 本文档记录本轮修改内容。
 
-## 1. experience_memory 记录精简
+## 1. memory_for_tool 改为自动执行
 
-### 删除 7 个冗余顶层字段
+### 改前
 
-从 `record_experience` 中移除以下字段，它们都可以从 `flow_tool_calls` 推导：
+`memory_for_tool` 作为 flow tool 暴露给模型，模型在 `predict_risk(safe)` 后显式调用它：
 
-| 删除的字段 | 原来存什么 | 现在从哪获取 |
-|-----------|-----------|------------|
-| `plan_memory` | 计划记忆召回结果 | `flow_tool_calls` 中 `memory_for_plan` 的 `result` |
-| `risk` | 风险判断 | `flow_tool_calls` 中 `predict_risk` 的 `arguments` |
-| `tool_memory` | 工具缓存查询结果 | `flow_tool_calls` 中 `memory_for_tool` 的 `result` |
-| `try_result` | try 执行结果 | `flow_tool_calls` 中 `tool_try` 的 `result` |
-| `try_judgment` | try 判断 | `flow_tool_calls` 中 `judge_try_result` 的 `arguments` |
-| `decision_reason` | 决策理由 | risk/try_judgment 的 reasoning 字段 |
-| `observed_result` | 完整 API 返回 | `dialogue_snapshot` 中的 history/results_summary |
+```
+predict_risk(safe) → [LLM调用] memory_for_tool() → hit: direct_tool / miss: tool_try
+```
 
-### 精简后每条记录结构
+### 改后
+
+和 `memory_for_plan` 一样，改为代码自动执行，不再需要模型显式调用：
+
+```
+predict_risk(safe) → [代码自动] memory_for_tool() → hit: direct_tool / miss: tool_try
+```
+
+### 具体改动
+
+- `flow_tool_predict_risk()` 中 `result=safe` 时自动调用 `memory_for_tool(step["tool"])`
+- 删除 `flow_tool_memory_for_tool()` 函数
+- 删除 `FLOW_TOOL_SCHEMAS["memory_for_tool"]` 条目
+- 删除 `build_available_tool_schemas` 中 `need_tool_memory` 分支
+- 删除 `dispatch_tool_call` 中 `memory_for_tool` 分支
+- 自动执行结果记录到 `flow_tool_calls` 中，`phase=auto_tool_memory`
+
+## 2. 匹配粒度从参数级别改为工具级别
+
+### 改前
+
+`memory_for_tool(tool_name, args)` 使用 `tool_signature(tool_name, args)` 做精确签名匹配，只返回 1 条或 None。
+
+### 改后
+
+`memory_for_tool(tool_name)` 只按工具名检索，返回该工具最近 2 条安全调用记录。
+
+### 具体改动
+
+- `ToolMemory` 新增 `get_safe_cases_by_tool(tool_name, top_k=2)` 方法
+- `memory_for_tool()` 改为只接受 `tool_name`，返回 `safe_cases` 列表
+- `sanitize_tool_memory_result()` 兼容新格式（`safe_cases` 列表）和旧格式（`safe_case` 单条）
+
+### 返回格式
 
 ```json
 {
-  "task": "...",
-  "turn_id": 1,
-  "step_index": 0,
-  "dialogue_snapshot": { ... },
-  "flow_tool_calls": [ ... ],
-  "step": { ... },
-  "decision": "direct_tool",
-  "outcome": "try_safe_then_executed",
-  "memory_id": "case-xxx"
-}
-```
-
-### dialogue_snapshot 去冗余
-
-- 移除 `initial_task` 字段（与顶层 `task` 重复）
-- `known_context` 每项截断到 120 字符
-- `results_summary` 每项截断到 120 字符
-
-## 2. 全局工具调用编号
-
-### call_index 递增
-
-- `init_conversation_state` 新增 `tool_call_counter: 0`
-- 主循环每次调用工具时 `state["tool_call_counter"] += 1`
-- `build_flow_tool_call_record` 的 `call_index` 改为必填第一参数
-- 编号贯穿整个会话，每调用一次工具（flow tool 或 real tool）就 +1
-
-### 修复错误路径 flow_tool_calls 丢失
-
-- `ToolExecutionError` 和 `RuntimeError` 路径中移除了 `clear_current_flow_tool_calls`
-- 即使工具调用失败，记录也会被保留到 `record_experience` 捕获
-
-## 3. 轨迹级 plan memory 召回
-
-### 从 step 级改为 session 级
-
-之前：FAISS 索引每个 step 单独一条向量，召回零散的单步记录。
-
-现在：同一任务的所有 step 合成一条轨迹，FAISS 索引整条轨迹。
-
-### 索引文本格式
-
-```
-task: 关闭 sotopia 项目的第 1 个 issue
-tool_chain: list_projects({}) → list_issues({"project_id":"13"}) → close_issue({"project_id":"13","issue_iid":1})
-step_count: 3
-final_status: done
-```
-
-### 召回结果格式
-
-```json
-{
-  "task_query": "...",
-  "trajectories": [
-    {
-      "score": 0.66,
-      "task": "关闭 sotopia 项目的第 1 个 issue",
-      "final_status": "done",
-      "tool_chain": [
-        {"tool": "list_projects", "args": {}, "description": "...", "outcome": "..."},
-        {"tool": "close_issue", "args": {...}, "description": "...", "outcome": "..."}
-      ]
-    }
+  "hit": true,
+  "safe_cases": [
+    {"tool": "list_projects", "args": {}, "state": "safe", "safety_reason": "..."}
   ],
-  "summary": "轨迹级向量检索召回 1 条相似历史任务...",
-  "retrieval_scope": "trajectory_level"
+  "summary": "找到 1 条 list_projects 的安全调用记录。"
 }
 ```
 
-只展示真实工具调用链，不含 flow tool 细节。
+## 3. SFT 导出时补全 memory_for_plan 和 memory_for_tool 调用过程
 
-## 4. SFT 导出逻辑重构
+虽然运行时是代码自动执行的，但导出 SFT 数据时，让它看起来像模型主动调用了这两个工具。
 
-### 新数据路径
+### 改动
 
-`build_export_flow_tool_calls` 直接使用 `flow_tool_calls` 记录，不再从已删除的顶层字段推断。
+- `build_conversations()` 和 `experience_step_to_sft_record()` 中：
+  - `memory_for_plan` 以 `function_call({}) + observation` 形式注入到首条 human 消息之后
+  - `memory_for_tool` 在 `predict_risk(safe)` 的 observation 之后以 `function_call({}) + observation` 注入
+  - human 消息不再嵌入 `[plan_memory]` 文本，只包含纯任务内容
+- `build_tool_schema_map()` 保留 `memory_for_plan` 和 `memory_for_tool` 的 schema
+- `build_export_tool_groups()` 在 SFT tools 列表中始终包含这两个 schema
+- `should_export_flow_tool()` 排除 `memory_for_tool`，避免从 `flow_tool_calls` 重复导出
 
-### 旧数据兼容
+### SFT 导出对话序列示例
 
-`_build_legacy_export_tool_calls` 处理没有完整 `flow_tool_calls` 的旧格式数据，从顶层 `plan_memory`/`risk`/`tool_memory` 等字段推断。
+```
+[human] 列出 GitLab 上所有项目
+[function_call] memory_for_plan({})
+[observation] {trajectories: [...], summary: "..."}
+[function_call] predict_risk({tool: "list_projects", result: "safe", ...})
+[observation] {accepted: true, ...}
+[function_call] memory_for_tool({})          ← 代码注入
+[observation] {hit: true, safe_cases: [...]}
+[function_call] direct_tool({})
+[observation] {tool: "list_projects", exec_result: ...}
+[function_call] completion_check({status: "done", ...})
+[observation] {accepted: true, ...}
+[gpt] 以下是 GitLab 上的所有项目：...
+```
 
-### 新增辅助函数
+## 4. System prompt 更新
 
-- `_find_recorded_call(case, tool_name)` — 从 flow_tool_calls 中找指定工具
-- `_extract_risk_from_calls(case)` — 从 predict_risk 的 arguments 提取风险
-- `_extract_completion_from_calls(case)` — 从 completion_check 提取状态
-- `_extract_human_reply(case)` — 从 dialogue_history 提取用户回复
-
-### 删除的旧函数
-
-- `infer_tool_arguments`
-- `infer_tool_observation`
-- `build_expected_export_tool_names`
-- `build_export_tool_call`
-- `should_infer_export_observation`
-- `is_argument_driven_control_tool`
+- `SFT_TOOLCALL_SYSTEM_PROMPT`：说明 `memory_for_plan` 和 `memory_for_tool` 的调用流程
+- `TOOL_AGENT_SYSTEM_PROMPT`：说明 safe 路径下系统自动查询工具记忆，结果在 snapshot 中
 
 ## 5. 涉及文件
 
 | 文件 | 改动 |
 |------|------|
-| `safety_pipeline/state.py` | 新增 `tool_call_counter`；`call_index` 改为必填；`build_memory_context_snapshot` 去冗余 |
-| `safety_pipeline/runtime.py` | `record_experience` 精简为 4 参数；主循环传递 `call_index`；导出逻辑重构 |
-| `safety_pipeline/memory.py` | `PlanMemoryVectorStore` 改为 session 级索引；`memory_for_plan` 返回轨迹 |
+| `safety_pipeline/memory.py` | 新增 `get_safe_cases_by_tool()`；`memory_for_tool()` 改为工具级匹配；`sanitize_tool_memory_result()` 兼容新旧格式 |
+| `safety_pipeline/runtime.py` | 移除 `need_tool_memory` phase；自动执行 memory_for_tool；SFT 导出注入 function_call；system prompt 更新 |

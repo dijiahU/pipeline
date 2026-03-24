@@ -81,7 +81,7 @@ def resolve_real_tool_name(tool_name, context_label="current_step"):
     if tool_name in tool_map:
         return tool_name
 
-    if tool_name in FLOW_TOOL_SCHEMAS:
+    if tool_name in FLOW_TOOL_SCHEMAS or tool_name in ("memory_for_plan", "memory_for_tool"):
         raise RuntimeError(
             f"{context_label}.tool 不能使用 flow tool: {tool_name}。"
             f"如果需要追问、拒绝、重规划或风险判断，请直接调用顶层 {tool_name}，不要把它放进真实执行 step 里。"
@@ -154,55 +154,27 @@ def validate_predict_risk_args(args):
 
     result = str(args.get("result", "")).strip()
     reasoning = str(args.get("reasoning", "")).strip() or "模型未显式提供风险判断理由。"
-    likely_next_action = str(args.get("likely_next_action", "")).strip()
-    criterion_hits = normalize_string_list(args.get("criterion_hits", []))
 
     if result not in {"safe", "risky"}:
         raise RuntimeError("predict_risk.result 必须是 safe 或 risky。")
-    if not criterion_hits:
-        criterion_hits = ["模型未显式提供判断标准"]
-
-    if not likely_next_action:
-        likely_next_action = "memory_for_tool" if result == "safe" else "ask_human"
-    allowed_next_actions = {"memory_for_tool"} if result == "safe" else {"replan", "ask_human", "refuse"}
-    if likely_next_action not in allowed_next_actions:
-        raise RuntimeError(
-            f"predict_risk 在 result={result} 时，likely_next_action 必须属于 {sorted(allowed_next_actions)}。"
-        )
 
     return {
         "step": step,
         "result": result,
         "reasoning": reasoning,
-        "likely_next_action": likely_next_action,
-        "criterion_hits": criterion_hits,
     }
 
 
 def validate_judge_try_result_args(args):
     result = str(args.get("result", "")).strip()
     reasoning = str(args.get("reasoning", "")).strip() or "模型未显式提供 try 判断理由。"
-    likely_next_action = str(args.get("likely_next_action", "")).strip()
-    criterion_hits = normalize_string_list(args.get("criterion_hits", []))
 
     if result not in {"safe", "unsafe"}:
         raise RuntimeError("judge_try_result.result 必须是 safe 或 unsafe。")
-    if not criterion_hits:
-        criterion_hits = ["模型未显式提供判断标准"]
-
-    if not likely_next_action:
-        likely_next_action = "direct_tool" if result == "safe" else "ask_human"
-    allowed_next_actions = {"direct_tool"} if result == "safe" else {"replan", "ask_human", "terminate"}
-    if likely_next_action not in allowed_next_actions:
-        raise RuntimeError(
-            f"judge_try_result 在 result={result} 时，likely_next_action 必须属于 {sorted(allowed_next_actions)}。"
-        )
 
     return {
         "result": result,
         "reasoning": reasoning,
-        "likely_next_action": likely_next_action,
-        "criterion_hits": criterion_hits,
     }
 
 
@@ -270,29 +242,16 @@ def build_memory_for_plan_schema():
 
 
 def _build_predict_risk_schema():
-    real_tool_names = [
-        schema["function"]["name"]
-        for schema in get_tool_schemas(allow_empty=True)
-        if schema.get("function", {}).get("name")
-    ]
-    tool_description = "当前最小可执行 step 对应的真实工具名。必须使用已注册真实工具名。"
-    if real_tool_names:
-        tool_description += f" 可选值: {', '.join(real_tool_names)}。"
-    tool_description += (
-        " 不能填写 ask_human、refuse、replan、predict_risk、memory_for_plan、memory_for_tool、"
+    tool_description = (
+        "当前最小可执行 step 对应的真实工具名。必须是当前环境中已注册的真实工具，"
+        "不能填写 ask_human、refuse、replan、predict_risk、"
         "tool_try、judge_try_result、completion_check、terminate 这类 flow tool。"
     )
-    tool_schema = {
-        "type": "string",
-        "description": tool_description,
-    }
-    if real_tool_names:
-        tool_schema["enum"] = real_tool_names
     return _flow_tool_schema(
         "predict_risk",
-        "提出当前要执行的 step 并做风险预测。你必须在 arguments 中同时给出 step（tool、tool_args、description）和风险判断（result、reasoning、likely_next_action、criterion_hits）。",
+        "提出当前要执行的 step 并做风险预测。你必须在 arguments 中同时给出 step（tool、tool_args、description）和风险判断（result、reasoning）。",
         properties={
-            "tool": tool_schema,
+            "tool": {"type": "string", "description": tool_description},
             "tool_args": {
                 "type": "object",
                 "description": "该 step 未来真正执行时要使用的完整参数。即使真实工具有默认值，也不能省略任务里已经明确给出的路径、文件名、目录等关键信息。",
@@ -300,30 +259,16 @@ def _build_predict_risk_schema():
             "description": {"type": "string", "description": "对当前最小可执行 step 的简短描述。"},
             "result": {"type": "string", "enum": ["safe", "risky"]},
             "reasoning": {"type": "string", "description": "对当前 step 的简短风险判断。"},
-            "likely_next_action": {
-                "type": "string",
-                "enum": ["memory_for_tool", "replan", "ask_human", "refuse"],
-            },
-            "criterion_hits": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "触发的判断标准。",
-            },
         },
-        required=["tool", "tool_args", "description", "result", "reasoning", "likely_next_action", "criterion_hits"],
+        required=["tool", "tool_args", "description", "result", "reasoning"],
     )
 
 
 FLOW_TOOL_SCHEMAS = {
-    "memory_for_plan": build_memory_for_plan_schema(),
     "predict_risk": _build_predict_risk_schema(),
-    "memory_for_tool": _flow_tool_schema(
-        "memory_for_tool",
-        "检查当前真实工具调用是否命中完全相同的安全缓存。safe 路径下必须先于 tool_try 或真实工具调用。",
-    ),
     "tool_try": _flow_tool_schema(
         "tool_try",
-        "在隔离沙箱中试执行当前真实工具调用。仅在 predict_risk=safe 且 memory_for_tool 未命中时调用。",
+        "在隔离沙箱中试执行当前真实工具调用。仅在 predict_risk=safe 且工具记忆未命中时调用。",
     ),
     "judge_try_result": _flow_tool_schema(
         "judge_try_result",
@@ -331,21 +276,12 @@ FLOW_TOOL_SCHEMAS = {
         properties={
             "result": {"type": "string", "enum": ["safe", "unsafe"]},
             "reasoning": {"type": "string", "description": "对 try 结果的简短判断。"},
-            "likely_next_action": {
-                "type": "string",
-                "enum": ["direct_tool", "replan", "ask_human", "terminate"],
-            },
-            "criterion_hits": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "触发的判断标准。",
-            },
         },
-        required=["result", "reasoning", "likely_next_action", "criterion_hits"],
+        required=["result", "reasoning"],
     ),
     "replan": _flow_tool_schema(
         "replan",
-        "把当前 step 改写成更安全、更可控的单个替代步骤。你必须把 reasoning 和 new_step 写进 arguments。new_step 只能是未来真正要执行的真实工具 step，不能放 ask_human、refuse、predict_risk、memory_for_plan、memory_for_tool、tool_try、judge_try_result、completion_check、terminate 这类 flow tool。",
+        "把当前 step 改写成更安全、更可控的单个替代步骤。你必须把 reasoning 和 new_step 写进 arguments。new_step 只能是未来真正要执行的真实工具 step，不能放 ask_human、refuse、predict_risk、memory_for_plan、tool_try、judge_try_result、completion_check、terminate 这类 flow tool。",
         properties={
             "reasoning": {"type": "string", "description": "为什么要改写当前 step。"},
             "new_step": {
@@ -383,6 +319,10 @@ FLOW_TOOL_SCHEMAS = {
             "reason": {"type": "string", "description": "终止当前任务的简短理由。"},
         },
         required=["reason"],
+    ),
+    "direct_tool": _flow_tool_schema(
+        "direct_tool",
+        "执行当前 step 指定的真实工具。系统自动从 current_step 读取工具名和参数，无需额外输入。",
     ),
     "completion_check": _flow_tool_schema(
         "completion_check",
@@ -422,35 +362,26 @@ def build_agent_state_snapshot(state):
 def build_available_tool_schemas(state):
     phase = state["flow_phase"]
     if phase == "need_step":
-        return [build_memory_for_plan_schema(), FLOW_TOOL_SCHEMAS["ask_human"], FLOW_TOOL_SCHEMAS["refuse"]]
+        # memory_for_plan 已在循环外自动执行，不再作为 flow tool
+        return [FLOW_TOOL_SCHEMAS["ask_human"], FLOW_TOOL_SCHEMAS["refuse"]]
     if phase == "need_no_step_branch":
         return [FLOW_TOOL_SCHEMAS["ask_human"], FLOW_TOOL_SCHEMAS["refuse"]]
-    if phase == "need_plan_memory":
-        return [build_memory_for_plan_schema()]
     if phase == "need_risk":
-        return [_build_predict_risk_schema()]
-    if phase == "need_tool_memory":
-        return [FLOW_TOOL_SCHEMAS["memory_for_tool"]]
+        return [_build_predict_risk_schema()] + list(get_tool_schemas(allow_empty=True))
     if phase == "need_try":
         return [FLOW_TOOL_SCHEMAS["tool_try"]]
     if phase == "need_try_judgment":
         return [FLOW_TOOL_SCHEMAS["judge_try_result"]]
     if phase == "need_risky_branch":
-        return [FLOW_TOOL_SCHEMAS["replan"], FLOW_TOOL_SCHEMAS["ask_human"], FLOW_TOOL_SCHEMAS["refuse"]]
+        return [FLOW_TOOL_SCHEMAS["replan"], FLOW_TOOL_SCHEMAS["ask_human"], FLOW_TOOL_SCHEMAS["refuse"]] + list(get_tool_schemas(allow_empty=True))
     if phase == "need_unsafe_branch":
-        return [FLOW_TOOL_SCHEMAS["replan"], FLOW_TOOL_SCHEMAS["ask_human"], FLOW_TOOL_SCHEMAS["terminate"]]
+        return [FLOW_TOOL_SCHEMAS["replan"], FLOW_TOOL_SCHEMAS["ask_human"], FLOW_TOOL_SCHEMAS["terminate"]] + list(get_tool_schemas(allow_empty=True))
     if phase == "need_completion":
         return [FLOW_TOOL_SCHEMAS["completion_check"]]
     if phase == "need_completion_followup":
         return [FLOW_TOOL_SCHEMAS["ask_human"]]
     if phase == "need_real_tool":
-        current_step = get_current_step(state) or {}
-        target_tool = current_step.get("tool")
-        return [
-            schema
-            for schema in get_tool_schemas()
-            if schema["function"]["name"] == target_tool
-        ]
+        return [FLOW_TOOL_SCHEMAS["direct_tool"]]
     return []
 
 
@@ -483,12 +414,21 @@ def record_experience(state, step, final_action, outcome):
     )
 
 
+def _build_memory_for_tool_schema():
+    """memory_for_tool schema，仅用于 SFT 导出，不再作为运行时 flow tool"""
+    return _flow_tool_schema(
+        "memory_for_tool",
+        "按工具名检索安全调用记录。系统自动执行，无需参数。",
+    )
+
+
 def build_tool_schema_map():
     tool_map = {}
-    all_schemas = [build_memory_for_plan_schema(), _build_predict_risk_schema()] + [
+    # memory_for_plan 和 memory_for_tool 保留 schema 用于 SFT 导出，但不再作为 flow tool
+    all_schemas = [build_memory_for_plan_schema(), _build_memory_for_tool_schema(), _build_predict_risk_schema()] + [
         schema
         for name, schema in FLOW_TOOL_SCHEMAS.items()
-        if name not in ("memory_for_plan", "predict_risk")
+        if name != "predict_risk"
     ] + list(get_tool_schemas(allow_empty=True))
     for schema in all_schemas:
         func = schema["function"]
@@ -498,29 +438,23 @@ def build_tool_schema_map():
 
 SFT_TOOLCALL_SYSTEM_PROMPT = """你是流程控制型安全 agent。收到任务后，必须在固定流程中逐步调用工具。
 
-第一步只能三选一：
-- 调用 memory_for_plan（无参数），进行纯记忆检索
-- 调用 ask_human，向用户追问缺失信息
-- 调用 refuse，拒绝本质不允许执行的任务
+收到任务后，第一步调用 memory_for_plan（无参数）召回相似历史任务轨迹，然后调用 predict_risk。
+predict_risk.result=safe 时，调用 memory_for_tool（无参数）查询工具级安全记录，再根据命中情况决定后续路径。
 
-memory_for_plan 返回基于用户任务召回到的相似历史任务。
-
-第二步调用 predict_risk，必须同时给出：
+调用 predict_risk 时，必须同时给出：
 - step 信息：arguments.tool（真实工具名）、arguments.tool_args（完整参数）、arguments.description（简短描述）
-- 风险判断：arguments.result、arguments.reasoning、arguments.likely_next_action、arguments.criterion_hits
+- 风险判断：arguments.result、arguments.reasoning
 
-predict_risk.tool 必须是未来真正要执行的真实工具。不能是 ask_human、refuse、replan、predict_risk、memory_for_plan、memory_for_tool、tool_try、judge_try_result、completion_check、terminate 这类 flow tool。
+如果任务本身就存在明显问题（信息严重缺失、目标明显违规），第一步也可以直接调用 ask_human 或 refuse。
+
+predict_risk.tool 必须是未来真正要执行的真实工具。不能是 ask_human、refuse、replan、predict_risk、memory_for_tool、tool_try、judge_try_result、completion_check、terminate 这类 flow tool。
 如果用户任务或 description 里已经明确出现路径、文件名、目录、项目名等关键信息，tool_args 必须显式写出这些参数，不能依赖真实工具默认值。
 
-当 predict_risk.result = safe 时：
-- 先调用 memory_for_tool。
-- 如果命中安全缓存，直接调用 current_step 指定的真实工具。
-- 如果未命中，调用 tool_try -> judge_try_result。
-- judge_try_result.result = safe 时调用真实工具。
-- judge_try_result.result = unsafe 时，只能转 replan、ask_human 或 terminate。
+当 predict_risk.result = safe 时，系统自动查询工具记忆（memory_for_tool），然后根据命中情况进入 safe 路径：命中则 direct_tool，未命中则 tool_try -> judge_try_result -> direct_tool。
+当 predict_risk.result = risky 时，系统自动进入 risky 路径：replan、ask_human 或 refuse。
 
-当 predict_risk.result = risky 时：
-- 只能转 replan、ask_human 或 refuse。
+路由由系统根据 result 自动决定，模型只需给出 result 和 reasoning。
+真实工具执行统一通过 direct_tool 触发，系统自动从 current_step 读取工具名和参数。
 
 replan 一次只能生成一个替代 step，必须写成 arguments.new_step，不能再输出 new_steps 数组。
 predict_risk、judge_try_result、replan、completion_check 这类控制工具的判断内容必须写在 arguments 里。
@@ -530,7 +464,7 @@ observation 只返回接收确认、状态推进结果或外部工具结果。
 
 
 def should_export_flow_tool(tool_name):
-    return tool_name != "thinking_step"
+    return tool_name not in ("thinking_step", "memory_for_plan", "memory_for_tool")
 
 
 
@@ -584,6 +518,10 @@ def collect_export_tool_names(session_cases, tool_schema_map):
 
 def build_export_tool_groups(session_cases, tool_schema_map):
     groups = {"shared_flow_tools": [], "task_tools": []}
+    # memory_for_plan 和 memory_for_tool 虽然不由模型显式调用，但 SFT 导出时注入了调用过程，需要 schema
+    for auto_name in ("memory_for_plan", "memory_for_tool"):
+        if auto_name in tool_schema_map:
+            groups["shared_flow_tools"].append(build_export_tool_schema(tool_schema_map, auto_name))
     for tool_name in collect_export_tool_names(session_cases, tool_schema_map):
         bucket = "shared_flow_tools" if tool_name in FLOW_TOOL_SCHEMAS else "task_tools"
         groups[bucket].append(build_export_tool_schema(tool_schema_map, tool_name))
@@ -617,8 +555,6 @@ def _extract_risk_from_calls(case):
         return {
             "result": args.get("result", ""),
             "reasoning": args.get("reasoning", ""),
-            "likely_next_action": args.get("likely_next_action", ""),
-            "criterion_hits": args.get("criterion_hits", []),
         }
     # 兼容旧格式
     return get_case_risk_assessment(case)
@@ -680,7 +616,7 @@ def _build_legacy_export_tool_calls(case):
             merged_args["tool_args"] = step.get("args") or {}
             merged_args["description"] = step.get("description", "")
         merged_args.update(risk)
-        next_phase = "need_tool_memory" if risk.get("result") == "safe" else "need_risky_branch"
+        next_phase = "need_try" if risk.get("result") == "safe" else "need_risky_branch"
         calls.append({
             "tool_name": "predict_risk",
             "arguments": merged_args,
@@ -717,9 +653,13 @@ def _build_legacy_export_tool_calls(case):
 
     if decision == "direct_tool" and step.get("tool"):
         calls.append({
-            "tool_name": step["tool"],
-            "arguments": step.get("args") or {},
-            "result": case.get("observed_result", ""),
+            "tool_name": "direct_tool",
+            "arguments": {},
+            "result": {
+                "tool": step["tool"],
+                "tool_args": step.get("args") or {},
+                "exec_result": case.get("observed_result", ""),
+            },
         })
     elif decision in {"replan", "ask_human", "refuse", "terminate", "completion_check"}:
         if decision == "ask_human":
@@ -757,17 +697,55 @@ def _build_legacy_export_tool_calls(case):
     return calls
 
 
+def _extract_plan_memory_for_prompt(session_cases):
+    """从 session 首条 case 中提取 plan_memory 结果，用于注入到 prompt"""
+    if not session_cases:
+        return ""
+    first_case = session_cases[0]
+    # 新格式：从 flow_tool_calls 中找 memory_for_plan 的 result
+    plan_mem = None
+    for call in (first_case.get("flow_tool_calls") or []):
+        if call.get("tool_name") == "memory_for_plan":
+            plan_mem = call.get("result")
+            break
+    # 旧格式：顶层 plan_memory 字段
+    if not plan_mem:
+        plan_mem = first_case.get("plan_memory")
+    if not plan_mem:
+        return ""
+    plan_mem = sanitize_plan_memory_result(plan_mem, current_case=first_case)
+    return serialize_sft_value(plan_mem)
+
+
 def build_conversations(session_cases):
     conversations = []
     if not session_cases:
         return conversations
 
-    conversations.append({"from": "human", "value": session_cases[0].get("task", "")})
+    # human 消息只包含任务本身，plan_memory 通过 function_call + observation 注入
+    task = session_cases[0].get("task", "")
+    plan_memory_text = _extract_plan_memory_for_prompt(session_cases)
+    conversations.append({"from": "human", "value": task})
+
+    # 注入 memory_for_plan 的 function_call + observation
+    if plan_memory_text:
+        conversations.append({
+            "from": "function_call",
+            "value": json.dumps({"name": "memory_for_plan", "arguments": {}}, ensure_ascii=False),
+        })
+        conversations.append({
+            "from": "observation",
+            "value": plan_memory_text,
+        })
 
     for index, case in enumerate(session_cases):
         flow_tool_calls = build_export_flow_tool_calls(case)
         decision = case.get("decision", "")
         outcome = case.get("outcome", "")
+
+        # 从 flow_tool_calls 中提取 memory_for_tool 结果用于注入
+        _mem_tool_call = _find_recorded_call(case, "memory_for_tool")
+        _mem_tool_result = (_mem_tool_call or {}).get("result") if _mem_tool_call else None
 
         for tool_call in flow_tool_calls:
             tool_name = tool_call.get("tool_name", "")
@@ -797,6 +775,18 @@ def build_conversations(session_cases):
             if not is_ask_human_ok:
                 observation = tool_call.get("result")
                 conversations.append({"from": "observation", "value": serialize_sft_value(observation)})
+
+            # predict_risk(safe) 之后注入 memory_for_tool 的 function_call + observation
+            if tool_name == "predict_risk" and arguments.get("result") == "safe":
+                tool_mem = _mem_tool_result or case.get("current_tool_memory") or case.get("tool_memory") or {}
+                conversations.append({
+                    "from": "function_call",
+                    "value": json.dumps({"name": "memory_for_tool", "arguments": {}}, ensure_ascii=False),
+                })
+                conversations.append({
+                    "from": "observation",
+                    "value": serialize_sft_value(sanitize_tool_memory_result(tool_mem)),
+                })
 
             # completion_check(done) 后追加最终回复
             if tool_name == "completion_check":
@@ -854,7 +844,11 @@ def export_experience_to_jsonl(output_path=SFT_DATASET_PATH, verbose=True):
 
 def _is_real_tool(tool_name):
     """判断是否为真实工具（非 flow tool）"""
-    return tool_name and tool_name not in FLOW_TOOL_SCHEMAS and tool_name != "thinking_step"
+    return (
+        tool_name
+        and tool_name not in FLOW_TOOL_SCHEMAS
+        and tool_name not in ("thinking_step", "memory_for_plan", "memory_for_tool")
+    )
 
 
 def experience_step_to_sft_record(session_cases, step_index, tool_schema_map):
@@ -870,11 +864,24 @@ def experience_step_to_sft_record(session_cases, step_index, tool_schema_map):
     tools_list = build_export_tools(all_cases, tool_schema_map)
 
     conversations = []
-    # 起始 human turn
-    conversations.append({"from": "human", "value": session_cases[0].get("task", "")})
+    # human 消息只包含任务本身，plan_memory 通过 function_call + observation 注入
+    task = session_cases[0].get("task", "")
+    plan_memory_text = _extract_plan_memory_for_prompt(session_cases)
+    conversations.append({"from": "human", "value": task})
+
+    # 注入 memory_for_plan 的 function_call + observation
+    if plan_memory_text:
+        conversations.append({
+            "from": "function_call",
+            "value": json.dumps({"name": "memory_for_plan", "arguments": {}}, ensure_ascii=False),
+        })
+        conversations.append({
+            "from": "observation",
+            "value": plan_memory_text,
+        })
 
     # 上下文：前面所有 step 只保留真实工具的 function_call + observation
-    for idx, case in enumerate(context_cases):
+    for case in context_cases:
         flow_tool_calls = build_export_flow_tool_calls(case)
         decision = case.get("decision", "")
         outcome = case.get("outcome", "")
@@ -899,6 +906,8 @@ def experience_step_to_sft_record(session_cases, step_index, tool_schema_map):
     target_calls = build_export_flow_tool_calls(target_case)
     target_decision = target_case.get("decision", "")
     target_outcome = target_case.get("outcome", "")
+    _target_mem_tool_call = _find_recorded_call(target_case, "memory_for_tool")
+    _target_mem_tool_result = (_target_mem_tool_call or {}).get("result") if _target_mem_tool_call else None
     for tool_call in target_calls:
         tool_name = tool_call.get("tool_name", "")
         if not should_export_flow_tool(tool_name):
@@ -922,6 +931,17 @@ def experience_step_to_sft_record(session_cases, step_index, tool_schema_map):
         if not is_ask_human_ok:
             observation = tool_call.get("result")
             conversations.append({"from": "observation", "value": serialize_sft_value(observation)})
+        # predict_risk(safe) 之后注入 memory_for_tool 的 function_call + observation
+        if tool_name == "predict_risk" and arguments.get("result") == "safe":
+            tool_mem = _target_mem_tool_result or target_case.get("current_tool_memory") or target_case.get("tool_memory") or {}
+            conversations.append({
+                "from": "function_call",
+                "value": json.dumps({"name": "memory_for_tool", "arguments": {}}, ensure_ascii=False),
+            })
+            conversations.append({
+                "from": "observation",
+                "value": serialize_sft_value(sanitize_tool_memory_result(tool_mem)),
+            })
         if tool_name == "completion_check":
             comp_args = arguments if isinstance(arguments, dict) else {}
             if comp_args.get("status") == "done":
@@ -1021,23 +1041,25 @@ TOOL_AGENT_SYSTEM_PROMPT = """你是流程控制型安全 agent。
 
 你当前不是自由回答，而是在固定流程中选择一个且仅一个工具调用。
 
+相似历史任务已在下方 snapshot 的 plan_memory 字段中提供，请参考其中的轨迹和决策做出判断。
+predict_risk.result=safe 时，系统已自动查询工具记忆（memory_for_tool），结果在 snapshot 的 current_tool_memory 字段中。
+
 规则：
 1. 只允许调用当前提供的工具，且每轮只调用一个工具。
 2. flow tool 用于流程控制；真实工具用于实际执行。
-3. 在 need_step 或 need_plan_memory 阶段，调用 memory_for_plan 进行纯记忆检索，无需任何参数。
-4. 在 need_risk 阶段，调用 predict_risk 时必须同时给出：
+3. 第一步调用 predict_risk，必须同时给出：
    - step 信息：arguments.tool（真实工具名）、arguments.tool_args（完整参数）、arguments.description（简短描述）
-   - 风险判断：arguments.result、arguments.reasoning、arguments.likely_next_action、arguments.criterion_hits
-   predict_risk.tool 必须是未来真正要执行的真实工具。不能是 ask_human、refuse、replan、predict_risk、memory_for_plan、memory_for_tool、tool_try、judge_try_result、completion_check、terminate 这类 flow tool。
-5. 如果用户任务或 description 里已经明确出现路径、项目名等关键信息，tool_args 中必须把对应参数显式写出来，不能省略成默认值。
-6. 如果当前 phase 要求真实工具执行，只能调用 current_step 指定的真实工具，参数必须与 current_step.args 完全一致。
-7. predict_risk、judge_try_result、replan、completion_check 是结构化控制工具，必须把判断内容完整写进 arguments。
-8. predict_risk.result=safe 时，likely_next_action 必须是 memory_for_tool；result=risky 时只能是 replan、ask_human 或 refuse。
-9. judge_try_result.result=safe 时，likely_next_action 必须是 direct_tool；result=unsafe 时只能是 replan、ask_human 或 terminate。
-10. replan 一次只能生成一个替代 step，必须写成 arguments.new_step，不能输出 new_steps 数组。
-11. ask_human 必须提供具体问题；refuse 和 terminate 必须提供简短理由。
-12. 如果 snapshot 里的 last_tool_error 非空，说明你上一条 tool call 无效。你必须直接修正该错误，重新输出合法 tool call。
-13. 不要直接输出普通文本。"""
+   - 风险判断：arguments.result、arguments.reasoning
+   predict_risk.tool 必须是未来真正要执行的真实工具。不能是 ask_human、refuse、replan、predict_risk、memory_for_tool、tool_try、judge_try_result、completion_check、terminate 这类 flow tool。
+4. 如果用户任务或 description 里已经明确出现路径、项目名等关键信息，tool_args 中必须把对应参数显式写出来，不能省略成默认值。
+5. 如果当前 phase 要求真实工具执行，调用 direct_tool（无参数），系统自动从 current_step 读取工具和参数。
+6. predict_risk、judge_try_result、replan、completion_check 是结构化控制工具，必须把判断内容完整写进 arguments。
+7. predict_risk.result=safe 时，系统自动查询工具记忆（memory_for_tool），命中则直接执行，未命中则进入 tool_try；result=risky 时系统自动路由到 replan、ask_human 或 refuse。
+8. judge_try_result.result=safe 时，调用 direct_tool 执行真实工具；result=unsafe 时系统自动路由到 replan、ask_human 或 terminate。
+9. replan 一次只能生成一个替代 step，必须写成 arguments.new_step，不能输出 new_steps 数组。
+10. ask_human 必须提供具体问题；refuse 和 terminate 必须提供简短理由。
+11. 如果 snapshot 里的 last_tool_error 非空，说明你上一条 tool call 无效。你必须直接修正该错误，重新输出合法 tool call。
+12. 不要直接输出普通文本。"""
 
 
 def record_current_experience(state, final_action, outcome):
@@ -1094,23 +1116,31 @@ def flow_tool_predict_risk(state, args):
     else:
         state["step_queue"][0] = step
     state["current_risk_assessment"] = result
-    next_phase = "need_tool_memory" if result["result"] == "safe" else "need_risky_branch"
+    if result["result"] == "safe":
+        # 自动执行 memory_for_tool
+        tool_mem_result = memory_for_tool(step["tool"])
+        state["current_tool_memory"] = tool_mem_result
+        # 记录自动执行的 memory_for_tool 调用
+        state["tool_call_counter"] += 1
+        auto_call_idx = state["tool_call_counter"]
+        auto_record = build_flow_tool_call_record(
+            auto_call_idx, "auto_tool_memory", "memory_for_tool", {}, tool_mem_result
+        )
+        state["current_flow_tool_calls"].append(auto_record)
+        print_stage_start("auto: memory_for_tool")
+        print_json_block("tool_memory", tool_mem_result)
+        print_stage_end("auto: memory_for_tool", "命中" if tool_mem_result["hit"] else "未命中")
+        if tool_mem_result["hit"]:
+            state["pending_execution_method"] = "direct_tool"
+            next_phase = "need_real_tool"
+        else:
+            next_phase = "need_try"
+    else:
+        next_phase = "need_risky_branch"
     state["flow_phase"] = next_phase
     print_json_block("risk_assessment", result)
     print_stage_end("flow_tool: predict_risk", result["result"])
     return {"accepted": True, "stored_as": "current_risk_assessment", "next_phase": next_phase}
-
-
-def flow_tool_memory_for_tool(state):
-    step = get_current_step(state)
-    print_stage_start("flow_tool: memory_for_tool")
-    result = memory_for_tool(step["tool"], step["args"])
-    state["current_tool_memory"] = result
-    state["pending_execution_method"] = "direct_tool" if result["hit"] else ""
-    state["flow_phase"] = "need_real_tool" if result["hit"] else "need_try"
-    print_json_block("tool_memory", result)
-    print_stage_end("flow_tool: memory_for_tool", "命中" if result["hit"] else "未命中")
-    return result
 
 
 def flow_tool_try(state):
@@ -1167,7 +1197,7 @@ def flow_tool_replan(state, args):
     if new_step:
         state["step_queue"] = [new_step] + state["step_queue"][1:]
         reset_step_artifacts(state)
-        state["flow_phase"] = "need_plan_memory"
+        state["flow_phase"] = "need_risk"
     else:
         state["step_queue"] = []
         reset_step_artifacts(state)
@@ -1258,8 +1288,6 @@ def flow_tool_refuse(state, reason):
         state["current_risk_assessment"] = {
             "result": "risky",
             "reasoning": reason,
-            "likely_next_action": "refuse",
-            "criterion_hits": ["模型选择直接拒绝"],
         }
     append_current_trace(state, "refuse", "REFUSED")
     record_current_experience(state, "refuse", "refused")
@@ -1308,41 +1336,35 @@ def flow_tool_completion_check(state, args):
     return {"accepted": True, "stored_as": "current_completion", "next_phase": "done"}
 
 
-def dispatch_real_tool(state, tool_name, args):
+def flow_tool_direct_tool(state):
+    """封装真实工具执行为 flow tool，系统自动从 current_step 读取工具和参数并执行。"""
     step = get_current_step(state) or {}
-    expected_tool = step.get("tool")
-    expected_args = step.get("args", {}) or {}
-    normalized_tool_name = resolve_real_tool_name(tool_name)
-    if normalized_tool_name != expected_tool or not tool_args_match(expected_args, args):
-        state["status"] = "aborted"
-        state["error_reason"] = "模型调用的真实工具或参数与 current_step 不一致。"
-        raise RuntimeError(state["error_reason"])
+    tool_name = step.get("tool")
+    tool_args = step.get("args", {}) or {}
+    if not tool_name:
+        raise RuntimeError("direct_tool: current_step 中没有指定工具。")
 
-    print_stage_start("flow_tool: real_tool")
-    result = execute_real_tool(expected_tool, expected_args)
+    print_stage_start("flow_tool: direct_tool")
+    result = execute_real_tool(tool_name, tool_args)
     method = state.get("pending_execution_method") or "direct_tool"
-    update_state_from_execution(state, expected_tool, expected_args, result, method)
+    update_state_from_execution(state, tool_name, tool_args, result, method)
     append_current_trace(state, method, result)
     outcome = "tool_memory_hit" if method == "direct_tool" else "try_safe_then_executed"
     record_current_experience(state, "direct_tool", outcome)
     print(f"[执行结果] {result}")
-    print_stage_end("flow_tool: real_tool", method)
+    print_stage_end("flow_tool: direct_tool", method)
 
     if state["step_queue"]:
         state["step_queue"].pop(0)
     clear_current_flow_tool_calls(state)
     reset_step_artifacts(state)
-    state["flow_phase"] = "need_completion" if not state["step_queue"] else "need_plan_memory"
+    state["flow_phase"] = "need_completion" if not state["step_queue"] else "need_risk"
     return result
 
 
 def dispatch_tool_call(state, tool_name, args):
-    if tool_name == "memory_for_plan":
-        return flow_tool_memory_for_plan(state)
     if tool_name == "predict_risk":
         return flow_tool_predict_risk(state, args)
-    if tool_name == "memory_for_tool":
-        return flow_tool_memory_for_tool(state)
     if tool_name == "tool_try":
         return flow_tool_try(state)
     if tool_name == "judge_try_result":
@@ -1355,9 +1377,11 @@ def dispatch_tool_call(state, tool_name, args):
         return flow_tool_refuse(state, args["reason"])
     if tool_name == "terminate":
         return flow_tool_terminate(state, args["reason"])
+    if tool_name == "direct_tool":
+        return flow_tool_direct_tool(state)
     if tool_name == "completion_check":
         return flow_tool_completion_check(state, args)
-    return dispatch_real_tool(state, tool_name, args)
+    raise RuntimeError(f"未知工具: {tool_name}。真实工具执行请使用 direct_tool。")
 
 
 def pipeline(user_input, npc_scenario=None):
@@ -1369,6 +1393,15 @@ def pipeline(user_input, npc_scenario=None):
         print_stage_end("任务开始", "收到任务")
 
         state = init_conversation_state(user_input, npc_scenario=npc_scenario)
+
+        # memory_for_plan: 在进入主循环前自动执行，结果注入 state
+        task_query = build_task_memory_query(state)
+        plan_memory_result = memory_for_plan(task_query)
+        state["current_plan_memory"] = plan_memory_result
+        state["flow_phase"] = "need_risk"
+        print_stage_start("auto: memory_for_plan")
+        print_json_block("plan_memory", plan_memory_result)
+        print_stage_end("auto: memory_for_plan", plan_memory_result["summary"])
         tool_round = 0
         while state["status"] == "running":
             tool_round += 1

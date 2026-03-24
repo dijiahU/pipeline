@@ -8,10 +8,10 @@
 
 ```text
 user input
-  -> ask_human / refuse / memory_for_plan
-  -> predict_risk
+  -> [auto] memory_for_plan（轨迹级相似任务召回）
+  -> ask_human / refuse / predict_risk
        ├─ safe
-       │   -> memory_for_tool
+       │   -> [auto] memory_for_tool（工具级安全记录检索）
        │      ├─ hit  -> direct_tool
        │      └─ miss -> tool_try -> judge_try_result
        │                         ├─ safe   -> direct_tool
@@ -24,8 +24,9 @@ user input
 
 几个关键点：
 
-- 第一轮只能走 `memory_for_plan / ask_human / refuse`，不再显式暴露 `thinking_step`。
-- `memory_for_plan` 是无参数纯检索工具，以轨迹级（session）粒度召回相似历史任务的完整工具调用链，只展示真实工具执行，不含 flow tool 细节。
+- `memory_for_plan` 和 `memory_for_tool` 均由代码自动执行，不作为 flow tool 暴露给模型。
+- `memory_for_plan` 以轨迹级（session）粒度召回相似历史任务的完整工具调用链，只展示真实工具执行，不含 flow tool 细节。
+- `memory_for_tool` 按工具名（非精确参数签名）检索安全记录，返回最近 2 条匹配结果。命中则跳过 `tool_try` 直接执行，未命中则进入沙箱试执行。
 - `predict_risk`、`judge_try_result`、`replan`、`completion_check` 都是参数驱动的控制工具：判断内容写在 `arguments`，observation 只返回确认和状态推进。
 - `replan` 现在一次只生成一个替代 step，字段是 `arguments.new_step`，不再使用 `new_steps` 数组。
 - 主循环带有 tool-call 校验失败重试；错误会写入 `last_tool_error` 反馈给模型，而不是第一次字段错误就直接崩溃。
@@ -35,7 +36,7 @@ user input
 `safety_pipeline/` 会在本地维护三类数据：
 
 - `memory/experience_memory.json`：逐 step 保存决策和完整 flow tool 轨迹。每条记录只保留 `task, turn_id, step_index, dialogue_snapshot, flow_tool_calls, step, decision, outcome`，所有详细信息通过 `flow_tool_calls` 获取。每个工具调用带有全局递增的 `call_index`。
-- `memory/tool_memory.json`：缓存完全相同签名的安全工具调用。
+- `memory/tool_memory.json`：按工具签名缓存安全调用记录，运行时按工具名级别检索（返回最近 2 条）。
 - `memory/plan_memory.faiss` + `memory/plan_memory_meta.json`：基于本地 embedding + FAISS 的轨迹级语义检索索引，按 session 粒度索引，召回完整工具调用链。
 
 每次运行结束后都会自动刷新：
@@ -52,6 +53,7 @@ user input
 
 当前导出约定还包括：
 
+- `memory_for_plan` 和 `memory_for_tool` 虽然运行时由代码自动执行，但 SFT 导出时以 `function_call({}) + observation` 形式注入对话，让训练数据看起来像模型主动调用的
 - `ask_human` 如果收到了真实用户回复，会导出成 `function_call(ask_human) -> human(...)`，而不是在 `observation` 里重复一遍 `human_reply`
 - `completion_check.status=done` 时，会在最后追加一条 `gpt`，内容来自 `reply`
 - 样本目标格式与 LLaMAFactory 的 ShareGPT/tool-calling 交替规则保持一致
