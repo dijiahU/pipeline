@@ -4,6 +4,7 @@ import json
 import os
 
 from .console import print_json_block, print_stage_end, print_stage_start
+from .environment import get_supported_backend_names
 from .exceptions import ToolExecutionError
 from .llm import call_json_or_text, call_required_tool_choice
 from .memory import (
@@ -17,6 +18,7 @@ from .memory import (
     tool_memory,
     tool_signature,
 )
+from .service_registry import build_service_summary, get_service_spec
 from .settings import (
     EXPERIENCE_MEMORY_PATH,
     MAX_AGENT_TOOL_ROUNDS,
@@ -30,6 +32,7 @@ from .settings import (
     get_pipeline_env,
     set_pipeline_env,
 )
+from .task_catalog import build_service_task_index
 from .state import (
     append_assistant_message,
     apply_user_reply_to_state,
@@ -1780,17 +1783,80 @@ def load_task_file(path):
         return yaml.safe_load(fh)
 
 
+def print_registered_services():
+    print_json_block("registered_services", build_service_summary(include_compat=True))
+
+
+def print_service_tasks(service_id=None):
+    task_index = build_service_task_index(include_compat=True)
+    if service_id:
+        if service_id not in task_index:
+            raise RuntimeError(f"未知服务: {service_id}")
+        print_json_block(f"service_tasks:{service_id}", task_index[service_id])
+        return
+    print_json_block("service_tasks", task_index)
+
+
+def print_service_tools(service_id):
+    spec = get_service_spec(service_id)
+    if spec is None:
+        raise RuntimeError(f"未知服务: {service_id}")
+
+    backend_name = spec.default_backend or service_id
+    if backend_name not in get_supported_backend_names():
+        print_json_block(
+            f"service_tools:{service_id}",
+            {
+                "service": spec.to_dict(),
+                "tool_provider_registered": False,
+                "tools": [],
+            },
+        )
+        return
+
+    backend = get_environment_backend() if get_pipeline_env() == backend_name else None
+    if backend is None:
+        from .environment import get_backend
+
+        backend = get_backend(backend_name)
+
+    print_json_block(
+        f"service_tools:{service_id}",
+        {
+            "service": spec.to_dict(),
+            "tool_provider_registered": True,
+            "tools": backend.get_tool_summary(),
+            "write_tools": backend.get_write_tool_names(),
+        },
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description="Decision-driven safety pipeline")
     parser.add_argument("--task", help="执行单个任务")
     parser.add_argument("--task-file", help="从 YAML 文件加载任务定义")
+    parser.add_argument("--list-services", action="store_true", help="列出已注册的目标服务与兼容服务")
+    parser.add_argument("--list-service-tasks", metavar="SERVICE_ID", help="列出指定服务下的任务")
+    parser.add_argument("--list-service-tools", metavar="SERVICE_ID", help="列出指定服务下已注册的工具")
     parser.add_argument(
         "--env",
-        choices=["gitea"],
+        choices=get_supported_backend_names(),
         default=get_pipeline_env(),
-        help="执行环境（当前仅支持 gitea）",
+        help="执行环境后端",
     )
     args = parser.parse_args()
+
+    if args.list_services:
+        print_registered_services()
+        return
+
+    if args.list_service_tasks:
+        print_service_tasks(args.list_service_tasks)
+        return
+
+    if args.list_service_tools:
+        print_service_tools(args.list_service_tools)
+        return
 
     if args.env:
         set_pipeline_env(args.env)

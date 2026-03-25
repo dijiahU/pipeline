@@ -1,10 +1,11 @@
 # Agent Safety Pipeline
 
-当前仓库已经切换为 **Gitea-only** 环境。主实现集中在 [`safety_pipeline/`](./safety_pipeline) 包中，采用 **decision-driven、step-level** 的安全执行 pipeline：每轮只推进一个最小可执行 step，再根据证据决定进入真实执行、试执行提交、重规划、向人追问或拒绝。
+当前仓库的代码结构已经开始按多服务扩展。当前 8 个目标服务是 `gitea`、`rocketchat`、`owncloud`、`nocodb`、`zammad`、`erpnext`、`openemr`、`discourse`，其中当前已实现运行时后端的是 `gitea`。主实现集中在 [`safety_pipeline/`](./safety_pipeline) 包中，采用 **decision-driven、step-level** 的安全执行 pipeline：每轮只推进一个最小可执行 step，再根据证据决定进入真实执行、试执行提交、重规划、向人追问或拒绝。
 
 ## 当前环境
 
-- 服务后端：Gitea
+- 已实现后端：Gitea
+- 目标部署服务：Gitea、Rocket.Chat、ownCloud、NocoDB、Zammad、ERPNext、OpenEMR、Discourse
 - 主要真实工具：项目列表、分支、issue、PR、仓库文件、分支保护
 - 写操作：`delete_branch`、`close_issue`、`update_branch_protection`
 - `tool_try` 当前使用真实试执行；`unsafe -> ask_human` 前会自动回滚
@@ -43,6 +44,9 @@ bash scripts/reset_env.sh
 运行任务：
 
 ```bash
+python -m safety_pipeline --list-services
+python -m safety_pipeline --list-service-tasks gitea
+python -m safety_pipeline --list-service-tools gitea
 python -m safety_pipeline --task-file tasks/openclaw-read-readme.yaml
 python -m safety_pipeline --task-file tasks/openclaw-delete-stale-branch.yaml
 python -m safety_pipeline.evaluation --task-file tasks/openclaw-change-branch-policy.yaml --eval-only
@@ -51,6 +55,8 @@ python -m safety_pipeline.evaluation --task-file tasks/openclaw-change-branch-po
 ## 主要文件
 
 - `safety_pipeline/runtime.py`：主流程编排与状态机
+- `safety_pipeline/service_registry.py`：目标服务与兼容服务注册表
+- `safety_pipeline/task_catalog.py`：任务到服务的索引与发现逻辑
 - `safety_pipeline/gitea_tools.py`：Gitea API 工具注册与字段映射
 - `safety_pipeline/environment.py`：`EnvironmentBackend` 抽象与 `GiteaBackend`
 - `safety_pipeline/evaluation.py`：任务级评测框架
@@ -62,4 +68,4 @@ python -m safety_pipeline.evaluation --task-file tasks/openclaw-change-branch-po
 
 - `memory_for_plan` 和 `memory_for_tool` 由代码自动执行。
 - 若本机缺少 `faiss-cpu`，plan memory 会自动降级为空召回，不再阻塞 pipeline。
-- `tasks/*.yaml` 现在默认都以 `openclaw` 作为主要测试仓库。
+- `tasks/*.yaml` 现在要求显式声明 `service` 与 `environment`；当前示例任务仍以 `openclaw` / Gitea 作为主要测试场景。

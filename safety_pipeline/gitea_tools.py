@@ -6,6 +6,7 @@ Gitea API 工具注册 — 服务化工具架构标准
   get_all_schemas() -> list
   call_tool(name, args) -> str
   get_tool_names() -> list
+  get_write_tool_names() -> list
 """
 
 import base64
@@ -14,6 +15,7 @@ import os
 import urllib.parse
 
 from .exceptions import ToolExecutionError
+from .service_tools import ServiceToolRegistry
 
 try:
     import requests
@@ -28,62 +30,38 @@ _config = {
 }
 
 
-_REGISTRY = {}
+_REGISTRY = ServiceToolRegistry(service_id="gitea")
 
 
-def gitea_tool(name, description, params, required=None):
+def gitea_tool(name, description, params, required=None, is_write=False):
     """装饰器：注册 Gitea 工具到 _REGISTRY"""
-
-    def decorator(func):
-        if required is None:
-            import inspect
-
-            sig = inspect.signature(func)
-            req = [
-                p for p, v in sig.parameters.items()
-                if v.default is inspect.Parameter.empty
-            ]
-        else:
-            req = list(required)
-
-        _REGISTRY[name] = {
-            "handler": func,
-            "schema": {
-                "type": "function",
-                "function": {
-                    "name": name,
-                    "description": description,
-                    "parameters": {
-                        "type": "object",
-                        "properties": params,
-                        "required": req,
-                    },
-                },
-            },
-        }
-        return func
-
-    return decorator
+    return _REGISTRY.register(
+        name=name,
+        description=description,
+        params=params,
+        required=required,
+        is_write=is_write,
+    )
 
 
 def get_all_schemas():
-    return [t["schema"] for t in _REGISTRY.values()]
+    return _REGISTRY.get_all_schemas()
 
 
 def call_tool(name, args):
-    tool = _REGISTRY.get(name)
-    if not tool:
-        raise ToolExecutionError(f"[错误] 未知 tool: {name}")
-    try:
-        return tool["handler"](**args)
-    except ToolExecutionError:
-        raise
-    except Exception as exc:
-        raise ToolExecutionError(f"[执行出错] {type(exc).__name__}: {exc}") from exc
+    return _REGISTRY.call_tool(name, args)
 
 
 def get_tool_names():
-    return list(_REGISTRY.keys())
+    return _REGISTRY.get_tool_names()
+
+
+def get_write_tool_names():
+    return _REGISTRY.get_write_tool_names()
+
+
+def get_tool_summary():
+    return _REGISTRY.get_tool_summary()
 
 
 def _require_requests():
@@ -454,6 +432,7 @@ def get_branch_protection(project_id, branch_name):
             "description": "要删除的分支名称",
         },
     },
+    is_write=True,
 )
 def delete_branch(project_id, branch_name):
     owner, repo = _project_ref(project_id)
@@ -478,6 +457,7 @@ def delete_branch(project_id, branch_name):
             "description": "Issue 的项目内编号（iid）",
         },
     },
+    is_write=True,
 )
 def close_issue(project_id, issue_iid):
     owner, repo = _project_ref(project_id)
@@ -506,6 +486,7 @@ def close_issue(project_id, issue_iid):
             "description": "protect=添加保护, unprotect=移除保护",
         },
     },
+    is_write=True,
 )
 def update_branch_protection(project_id, branch_name, action):
     owner, repo = _project_ref(project_id)

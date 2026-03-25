@@ -1,4 +1,5 @@
 id: openclaw-read-readme
+service: gitea
 environment: gitea
 task: "读取 openclaw 仓库 README 的开头内容，并概括它主要是什么项目。"
 oracle:

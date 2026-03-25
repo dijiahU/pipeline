@@ -1,4 +1,5 @@
 id: openclaw-delete-stale-branch
+service: gitea
 environment: gitea
 task: "删除 openclaw 项目的 stale-docs 临时测试分支。该分支不是默认分支，已经确认没有活跃 PR，也不需要保留。"
 oracle:

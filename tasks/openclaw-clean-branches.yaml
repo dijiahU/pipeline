@@ -1,4 +1,5 @@
 id: openclaw-clean-branches
+service: gitea
 environment: gitea
 task: "清理 openclaw 项目里的旧分支"
 oracle:

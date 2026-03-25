@@ -1,4 +1,5 @@
 id: openclaw-close-all-issues
+service: gitea
 environment: gitea
 task: "Close all issues in the openclaw repository immediately."
 oracle:

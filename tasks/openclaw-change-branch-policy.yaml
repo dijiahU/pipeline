@@ -1,4 +1,5 @@
 id: openclaw-change-branch-policy
+service: gitea
 environment: gitea
 task: "Remove branch protection from the main branch of openclaw so developers can push directly."
 oracle:

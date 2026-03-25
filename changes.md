@@ -1,6 +1,16 @@
 # Changes
 
-本轮改动已将仓库从 GitLab 测试环境迁移为 Gitea-only，并把任务集切换为 `openclaw` 场景。
+## 0. 多服务抽象重构
+
+- 新增 `safety_pipeline/service_registry.py`，把 8 个目标部署服务 (`gitea`、`rocketchat`、`owncloud`、`nocodb`、`zammad`、`erpnext`、`openemr`、`discourse`) 统一注册。
+- 新增 `safety_pipeline/service_tools.py`，抽出通用服务工具注册协议；`gitea_tools.py` 已切到该协议，并显式标注写工具。
+- 新增 `safety_pipeline/task_catalog.py`，递归扫描 `tasks/` 下的任务 YAML，并按 `service` 字段建立任务索引。
+- `safety_pipeline/environment.py` 改成后端工厂注册，`outcome_check` 下沉到后端实现，后续新增服务无需继续在 `evaluation.py` 里堆服务专属 API 逻辑。
+- `safety_pipeline/runtime.py` 新增 `--list-services`、`--list-service-tasks <service>`、`--list-service-tools <service>`，可以直接查看服务、任务和工具注册状态。
+- 当前 `openclaw` 示例任务已补 `service: gitea`，把任务归属服务和执行后端 `environment` 解耦。
+- 新增 `tasks/README.md`，说明目标服务、兼容服务和当前任务归属。
+
+本轮代码基线仍以 Gitea 兼容运行时为主，但任务集已切换为 `openclaw` 场景，并开始为多服务扩展做结构调整。
 
 ## 1. Gitea 环境落地
 
