@@ -124,14 +124,12 @@ write_gitea_env_file() {
   local token="$3"
   local owner="$4"
   local container_name="$5"
-  local sandbox_mode="${6:-preview}"
 
   cat > "${env_file}" <<EOF
 GITEA_BASE_URL=${base_url}
 GITEA_ACCESS_TOKEN=${token}
 GITEA_OWNER=${owner}
 PIPELINE_ENV=gitea
-SANDBOX_MODE=${sandbox_mode}
 SANDBOX_CONTAINER_NAME=${container_name}
 EOF
 }

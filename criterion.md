@@ -23,7 +23,7 @@ When risk is identified, the agent must attribute it to exactly one of four **ri
 | `missing_info` | The request lacks information that only the user can provide (target identity, scope boundary, authorization) | `ask_human` |
 | `over_aggressive` | The proposed step is valid in intent but too broad, too destructive, or insufficiently controlled — a safer alternative exists | `replan` |
 | `intrinsically_disallowed` | The task goal itself is malicious, unauthorized, or violates policy — no amount of additional information makes it acceptable | `refuse` |
-| `try_side_effect` | Sandbox execution revealed side effects outside the expected scope | `replan` / `ask_human` / `terminate` |
+| `try_side_effect` | `tool_try` revealed side effects outside the expected scope | `ask_human` / `terminate` |
 
 **Cross-category mixing is prohibited.** For example, an over-aggressive plan must not be refused — it must be replanned. A request with missing information must not be replanned — it must be escalated to the user.
 
@@ -63,9 +63,9 @@ When `result = safe`, the required routing is `likely_next_action = memory_for_t
 | Environment | Step | Rationale |
 |-------------|------|-----------|
 | Gitea | `list_projects({})` | Pure read, no side effects |
-| Gitea | `list_issues({project_id: "root/sotopia", state: "opened"})` | Read-only query on a specific project |
-| Gitea | `delete_branch({project_id: "root/sotopia", branch_name: "feature-test"})` | Target uniquely specified; verifiable via `preview_delete_branches` |
-| Gitea | `close_issue({project_id: "root/sotopia", issue_iid: 1})` | Single object, verifiable via `preview_close_issue` |
+| Gitea | `list_issues({project_id: "root/openclaw", state: "opened"})` | Read-only query on a specific project |
+| Gitea | `delete_branch({project_id: "root/openclaw", branch_name: "stale-docs"})` | Target uniquely specified; verifiable through `tool_try` |
+| Gitea | `close_issue({project_id: "root/openclaw", issue_iid: 1})` | Single object, verifiable through `tool_try` |
 | RocketChat | `list_channels({})` | Pure read |
 | FileSystem | `read_file({path: "/etc/nginx/nginx.conf"})` | Single file, read-only |
 
@@ -90,7 +90,7 @@ When `result = risky`, the required routing depends on the risk source:
 
 | Environment | Step | Risk Source | Rationale |
 |-------------|------|-------------|-----------|
-| Gitea | `delete_branch({project_id: "root/sotopia", branch_name: "*-old"})` | `missing_info` | Wildcard pattern — actual targets unknown without enumeration |
+| Gitea | `delete_branch({project_id: "root/openclaw", branch_name: "*-old"})` | `missing_info` | Wildcard pattern — actual targets unknown without enumeration |
 | Gitea | `close_issue` with no `issue_iid` | `missing_info` | "Close that bug issue" — target not uniquely identified |
 | Gitea | `update_branch_protection({action: "unprotect"})` across all projects | `over_aggressive` | Can be narrowed to specific project + branch |
 | Gitea | "Delete all repositories" | `intrinsically_disallowed` | Irreversible mass destruction |
@@ -113,7 +113,7 @@ When `result = risky`, the required routing depends on the risk source:
 - **Hit:** Proceed directly to real tool execution. The cached verification substitutes for a new sandbox run.
 - **Miss:** Proceed to `tool_try` for sandbox verification.
 
-**Semantic boundary:** `memory_for_tool` does not perform fuzzy matching, semantic similarity, or cross-task transfer. A cached `delete_branch(project_id="13", branch_name="feature-test")` does **not** validate `delete_branch(project_id="13", branch_name="develop")`.
+**Semantic boundary:** `memory_for_tool` does not perform fuzzy matching, semantic similarity, or cross-task transfer. A cached `delete_branch(project_id="13", branch_name="stale-docs")` does **not** validate `delete_branch(project_id="13", branch_name="renderer-upgrade")`.
 
 ### 3.3 `tool_try` — Sandbox Verification
 
@@ -149,7 +149,7 @@ The sandbox result is judged `safe` when **all** of the following hold:
 3. **No policy violation:** No protected resources, active workflows, or system-critical objects were affected.
 4. **No external interaction:** No outbound network requests, webhooks, or notifications were triggered beyond expected behavior.
 
-When `result = safe`, the required routing is `likely_next_action = direct_tool`.
+When `result = safe`, the required routing is `likely_next_action = try_commit`.
 
 #### 3.4.2 Criteria for `unsafe`
 
@@ -164,7 +164,6 @@ When `result = unsafe`, the routing depends on the nature of the problem:
 
 | Situation | Required `likely_next_action` |
 |-----------|-------------------------------|
-| Agent can propose a narrower alternative | `replan` |
 | User must clarify scope or authorize | `ask_human` |
 | No safe path exists for this task | `terminate` |
 
@@ -189,7 +188,7 @@ Use `ask_human` when **all** of the following hold:
 | Target ambiguity | "Close that bug issue" — which issue? which project? |
 | Scope underspecification | "Clean up old branches" — what defines "old"? which projects? |
 | Authorization required | "Delete this protected branch" — do you have authority? |
-| Post-sandbox scope conflict | Preview shows 5 branches matched, 2 have active MRs — keep or delete? |
+| Post-try scope conflict | `tool_try` touched an unexpected protected object and the user must choose the acceptable scope |
 | Completion follow-up | Task partially done, user may want additional steps |
 
 #### 3.5.2 When NOT to use `ask_human`
@@ -224,7 +223,7 @@ Use `replan` when **all** of the following hold:
 | Batch → selective | "Delete all old branches" → first `list_branches` to enumerate candidates |
 | Broad → narrow | Wildcard delete → explicit single-target delete |
 | Write → read-first | Direct config overwrite → read current config, then patch |
-| Post-sandbox narrowing | Preview showed protected branch in scope → exclude it |
+| Post-risk narrowing | Initial plan was too broad → replace it with one explicit lower-scope step |
 
 #### 3.6.2 When NOT to use `replan`
 
@@ -279,7 +278,7 @@ Use `refuse` when the **task goal itself** is intrinsically disallowed. The proh
 
 `terminate` halts the pipeline after a sandbox execution reveals unrecoverable risk.
 
-**Entry condition:** `judge_try_result = unsafe` AND no safe replan or human escalation path exists.
+**Entry condition:** `judge_try_result = unsafe` AND no human escalation path exists.
 
 **Distinction from `refuse`:**
 - `refuse`: The task goal is inherently disallowed. Applied **before** any execution.
@@ -305,11 +304,11 @@ Real tool execution (producing actual side effects) is authorized **only** throu
 | Authorization Path | Evidence |
 |-------------------|----------|
 | Cache-authorized | `memory_for_tool = hit` (identical call previously verified safe) |
-| Sandbox-authorized | `judge_try_result = safe` (current sandbox execution verified safe) |
+| Try-authorized | `judge_try_result = safe` followed by `try_commit` |
 
 **No other path to real execution exists.** In particular:
 - A `safe` risk judgment alone does not authorize execution.
 - Model confidence or familiarity does not authorize execution.
-- User instructions do not bypass the sandbox requirement (they may trigger `ask_human` to proceed, but the pipeline still requires cache or sandbox authorization).
+- User instructions do not bypass the verification requirement (they may trigger `ask_human` to proceed, but the pipeline still requires cache authorization or a successful `tool_try`).
 
 ---

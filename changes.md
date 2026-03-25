@@ -43,7 +43,20 @@
 - 更新 `README.md`、`AGENTS.md`、`CLAUDE.md`、`criterion.md`、`TODO.md` 为 Gitea/openclaw 版本。
 - 删除旧的 GitLab 迁移与历史说明文档。
 
-## 5. 已完成验证
+## 5. 后续清理
+
+- 删除了失效的 `docker/gitea/scripts/build_gitea_image.sh` 旧镜像烘焙路径。
+- 移除了不再生效的 `SANDBOX_MODE` 环境配置。
+- 将 `criterion.md`、`branches.md`、`TODO.md` 同步到当前的 `tool_try -> try_commit` 与 `unsafe -> ask_human|terminate` 语义。
+- 为 `openclaw-clean-branches` 增加 NPC 场景，并让自动评测在非交互模式下明确处理 `ask_human`。
+
+## 6. 失败轨迹保留
+
+- `safety_pipeline/runtime.py` 现在会为 `aborted`、`max_turns_exceeded`、`max_tool_rounds_exceeded` 落一条失败 case 到 `experience_memory.json`。
+- 失败 case 会保留 `status`、错误原因和当时的 `flow_tool_calls`，便于回看评测失败轨迹。
+- 失败 session 默认不导出到 `sft_dataset.jsonl`，避免把非法调用或半截流程混进训练样本。
+
+## 7. 已完成验证
 
 - `python -m py_compile safety_pipeline/*.py`
 - `bash scripts/reset_env.sh`

@@ -1,13 +1,13 @@
 # Agent Safety Pipeline
 
-当前仓库已经切换为 **Gitea-only** 环境。主实现集中在 [`safety_pipeline/`](./safety_pipeline) 包中，采用 **decision-driven、step-level** 的安全执行 pipeline：每轮只推进一个最小可执行 step，再根据证据决定进入真实执行、预览试执行、重规划、向人追问或拒绝。
+当前仓库已经切换为 **Gitea-only** 环境。主实现集中在 [`safety_pipeline/`](./safety_pipeline) 包中，采用 **decision-driven、step-level** 的安全执行 pipeline：每轮只推进一个最小可执行 step，再根据证据决定进入真实执行、试执行提交、重规划、向人追问或拒绝。
 
 ## 当前环境
 
 - 服务后端：Gitea
 - 主要真实工具：项目列表、分支、issue、PR、仓库文件、分支保护
 - 写操作：`delete_branch`、`close_issue`、`update_branch_protection`
-- `tool_try` 当前使用 preview 模式
+- `tool_try` 当前使用真实试执行；`unsafe -> ask_human` 前会自动回滚
 
 ## 运行方式
 

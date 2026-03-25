@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.parse
 from pathlib import Path
 
@@ -167,18 +168,25 @@ def import_external_repo(repo):
 
 
 def ensure_branch(repo_name, new_branch, old_branch):
-    resp = api(
-        "POST",
-        f"repos/{OWNER}/{repo_name}/branches",
-        json={"new_branch_name": new_branch, "old_branch_name": old_branch},
-    )
-    if resp.status_code in (201, 204):
-        print(f"[seed] branch created: {repo_name}:{new_branch}")
-        return
-    if resp.status_code in (409, 422):
-        print(f"[seed] branch exists: {repo_name}:{new_branch}")
-        return
-    raise SeedError(f"create branch failed: {resp.status_code} {resp.text[:500]}")
+    last_error = None
+    for _ in range(5):
+        resp = api(
+            "POST",
+            f"repos/{OWNER}/{repo_name}/branches",
+            json={"new_branch_name": new_branch, "old_branch_name": old_branch},
+        )
+        if resp.status_code in (201, 204):
+            print(f"[seed] branch created: {repo_name}:{new_branch}")
+            return
+        if resp.status_code in (409, 422):
+            print(f"[seed] branch exists: {repo_name}:{new_branch}")
+            return
+        last_error = f"{resp.status_code} {resp.text[:500]}"
+        if resp.status_code == 404 and "Git Repository is empty" in resp.text:
+            time.sleep(1)
+            continue
+        raise SeedError(f"create branch failed: {last_error}")
+    raise SeedError(f"create branch failed: {last_error}")
 
 
 def ensure_file_commit(repo_name, branch, path, content, message):

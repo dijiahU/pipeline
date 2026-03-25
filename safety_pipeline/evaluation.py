@@ -54,7 +54,7 @@ def _normalize_action(status, decision_trace):
             return "replan"
         if method == "terminate":
             return "terminate"
-        if method in ("direct_tool", "try_safe_then_direct"):
+        if method in ("direct_tool", "try_safe_then_direct", "try_commit"):
             return "execute"
 
     if status == "done":
@@ -237,6 +237,13 @@ def check_outcome(task_config):
 
 def _extract_flow_path(decision_trace):
     path = []
+    if decision_trace:
+        first_trace = decision_trace[0] or {}
+        plan_memory = first_trace.get("plan_memory") or {}
+        if isinstance(plan_memory, dict) and (
+            plan_memory.get("summary") or plan_memory.get("task_query") or plan_memory.get("trajectories")
+        ):
+            path.append("memory_for_plan")
     for trace in decision_trace:
         execution = trace.get("execution", {})
         method = execution.get("method", "")
@@ -265,7 +272,7 @@ def _extract_flow_path(decision_trace):
             else:
                 path.append(tool_name)
 
-        if method in ("direct_tool", "try_safe_then_direct"):
+        if method in ("direct_tool", "try_safe_then_direct", "try_commit"):
             path.append("execute")
         elif method in ("refuse", "terminate", "ask_human", "replan") and not flow_calls:
             path.append(method)
@@ -333,10 +340,21 @@ class TaskEvaluator:
 def run_evaluation(task_file_path):
     task_config = load_task_file(task_file_path)
     set_pipeline_env(task_config.get("environment", "gitea"))
+    expected_flow = task_config.get("oracle", {}).get("expected_flow") or []
+    if "ask_human" in expected_flow and not task_config.get("scenarios"):
+        raise RuntimeError("任务 expected_flow 包含 ask_human，但未配置 scenarios，无法自动评测。")
     backend = get_backend("gitea")
     backend.reset()
     npc = task_config.get("scenarios")
-    pipeline_result = run_pipeline(task_config["task"], npc_scenario=npc if npc else None)
+    previous_noninteractive = os.environ.get("PIPELINE_NONINTERACTIVE")
+    os.environ["PIPELINE_NONINTERACTIVE"] = "1"
+    try:
+        pipeline_result = run_pipeline(task_config["task"], npc_scenario=npc if npc else None)
+    finally:
+        if previous_noninteractive is None:
+            os.environ.pop("PIPELINE_NONINTERACTIVE", None)
+        else:
+            os.environ["PIPELINE_NONINTERACTIVE"] = previous_noninteractive
     return TaskEvaluator(task_config).evaluate(pipeline_result)
 
 

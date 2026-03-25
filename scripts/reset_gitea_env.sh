@@ -33,7 +33,7 @@ if [ "${VERIFY_CODE}" != "200" ]; then
   exit 1
 fi
 
-write_gitea_env_file "${ENV_FILE}" "${BASE_URL}" "${TOKEN}" "${OWNER}" "${CONTAINER_NAME}" "${SANDBOX_MODE:-preview}"
+write_gitea_env_file "${ENV_FILE}" "${BASE_URL}" "${TOKEN}" "${OWNER}" "${CONTAINER_NAME}"
 
 if [ "${AUTO_SEED}" = "true" ]; then
   seed_gitea_data "${ROOT_DIR}" "${BASE_URL}" "${TOKEN}" "${OWNER}" "${MANIFEST_PATH}" reset

@@ -8,7 +8,7 @@
 - `predict_risk = safe`
 - `memory_for_tool = hit`
 
-### 2. 无风险 + 已知工具 + 未命中缓存 + 沙箱安全 -> try 后执行
+### 2. 无风险 + 已知工具 + 未命中缓存 + try 安全 -> try_commit
 
 进入条件：
 - `predict_risk = safe`
@@ -77,24 +77,17 @@
 
 ## tool_try 不安全后续细分
 
-### 12. tool_try 不安全 -> 回到重规划
-
-进入条件：
-- `judge_try_result = unsafe`
-- 但 agent 能提出更安全的替代方案
-
-### 13. tool_try 不安全 -> ask_human
+### 12. tool_try 不安全 -> ask_human（先回滚）
 
 进入条件：
 - `judge_try_result = unsafe`
 - 且要继续安全完成任务必须用户补充信息
 
-### 14. tool_try 不安全 -> 终止
+### 13. tool_try 不安全 -> 终止
 
 进入条件：
 - `judge_try_result = unsafe`
 - 不存在安全替代方案，或者用户不希望继续
-
 
 
 

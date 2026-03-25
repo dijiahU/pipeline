@@ -1,4 +1,5 @@
 import json
+import os
 
 from .llm import call_json
 from .settings import MAX_DIALOGUE_SUMMARY_CHARS
@@ -25,6 +26,7 @@ def init_conversation_state(initial_user_input, npc_scenario=None):
         "tool_call_counter": 0,
         "flow_phase": "need_step",
         "pending_execution_method": "",
+        "current_step_recorded": False,
         "replan_counts": {},
         "status": "running",
         "turn_count": 1,
@@ -64,6 +66,7 @@ def reset_step_artifacts(state):
     state["current_try_exec_result"] = None
     state["current_try_judgment"] = None
     state["pending_execution_method"] = ""
+    state["current_step_recorded"] = False
 
 
 def get_current_step(state):
@@ -223,6 +226,14 @@ def apply_user_reply_to_state(state, question, user_reply):
 def request_user_input_for_state(state, question, missing_context=None):
     append_assistant_message(state, question)
     print(f"\n[HUMAN] 问题: {question}")
+    if os.environ.get("PIPELINE_NONINTERACTIVE") == "1":
+        state["status"] = "aborted"
+        return {
+            "status": "aborted",
+            "human_reply": "",
+            "state_update": {},
+            "error": "non_interactive_ask_human",
+        }
     human_reply = input("[HUMAN] 请回复 (输入 'abort' 终止): ").strip()
     if human_reply.lower() == "abort":
         state["status"] = "aborted"

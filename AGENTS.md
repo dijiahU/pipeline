@@ -26,4 +26,4 @@ This repo relies mainly on scenario-based validation. After each change, run `py
 Follow the existing short Conventional Commit style, for example `feat: add gitea backend` or `docs: update runtime guide`. Pull requests should explain the behavior change, why it was needed, how it was validated, and include sample terminal output when prompts, routing, or generated artifacts change.
 
 ## Security & Architecture Notes
-Do not hardcode secrets. Set `OPENAI_API_KEY`, and use `GITEA_BASE_URL`, `GITEA_ACCESS_TOKEN`, and `GITEA_OWNER` for the local backend. When editing `safety_pipeline/runtime.py`, preserve the current step architecture: generate one step, assess risk, choose `act`, `try`, `replan`, `ask_human`, or `refuse`, then persist artifacts safely.
+Do not hardcode secrets. Set `OPENAI_API_KEY`, and use `GITEA_BASE_URL`, `GITEA_ACCESS_TOKEN`, and `GITEA_OWNER` for the local backend. When editing `safety_pipeline/runtime.py`, preserve the current step architecture: generate one step, assess risk, route through `memory_for_tool` or `tool_try`, commit safe try results with `try_commit`, and only allow `unsafe` tries to continue via `ask_human` or `terminate`.

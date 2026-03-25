@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-This repository is now **Gitea-only**. The runtime is a decision-driven, step-level safety pipeline that routes each step through `predict_risk`, `memory_for_tool`, `tool_try`, `judge_try_result`, `replan`, `ask_human`, `refuse`, or `terminate`.
+This repository is now **Gitea-only**. The runtime is a decision-driven, step-level safety pipeline that routes each step through `predict_risk`, `memory_for_tool`, `tool_try`, `judge_try_result`, `try_commit`, `replan`, `ask_human`, `refuse`, or `terminate`.
 
 ## Commands
 
@@ -28,4 +28,5 @@ python -m py_compile safety_pipeline/*.py
 
 - `PIPELINE_ENV` is fixed to `gitea`.
 - `memory_for_plan` degrades gracefully when `faiss-cpu` is unavailable.
+- `tool_try` is a real speculative execution. Safe tries are committed immediately; `unsafe -> ask_human` rolls the environment back first.
 - `tasks/*.yaml` are the primary evaluation scenarios.

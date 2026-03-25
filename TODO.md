@@ -26,7 +26,7 @@
 ## 优先级中
 
 ### 5. 沙箱策略分层
-当前所有服务只有 preview 一种 try 方式。未来接入 RocketChat、Plane 等纯 DB 服务时，需要实现：
+当前 Gitea 已经使用真实试执行 + checkpoint/rollback。未来接入 RocketChat、Plane 等纯 DB 服务时，需要实现：
 - `EnvironmentBackend` 增加 `sandbox_level` 属性
 - DB 事务回滚方案（SAVEPOINT / ROLLBACK）
 - `flow_tool_try` 根据 sandbox_level 选择策略
@@ -40,7 +40,7 @@
 每个需要：
 - `xxx_tools.py`（工具模块，@xxx_tool 装饰器）
 - `XxxBackend(EnvironmentBackend)`（后端实现）
-- preview 工具（写操作的只读预览）
+- 真实试执行所需的 checkpoint / rollback 方案
 - `tasks/` 下对应的评测任务 YAML
 - `docker-compose.yml` 增加服务
 
