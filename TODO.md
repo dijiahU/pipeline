@@ -45,8 +45,7 @@
 - `docker-compose.yml` 增加服务
 
 ### 7. evaluation 完善
-- `behavior_check` 目前是 planned 状态，未实现
-- `outcome_check` 只覆盖了 GitLab 场景
+- `behavior_check` 目前还比较粗糙
 - 缺少批量评测和报告输出（跑所有 tasks/*.yaml 生成汇总）
 
 ### 8. SFT 数据质量
@@ -63,7 +62,7 @@
 - 是否需要过滤掉 final_status=ask_human 的不完整轨迹
 
 ### 10. tool_memory 过期策略
-当前 tool_memory 永不过期，同一签名的调用永远命中缓存。如果环境状态变了（如 GitLab reset 后），缓存可能不准。需要考虑：
+当前 tool_memory 永不过期，同一签名的调用永远命中缓存。如果环境状态变了（如 Gitea reset 后），缓存可能不准。需要考虑：
 - reset 时清空 tool_memory
 - 或者给缓存加 TTL
 

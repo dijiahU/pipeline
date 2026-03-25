@@ -2,20 +2,29 @@ import os
 
 REPO_ROOT = os.path.dirname(os.path.dirname(__file__))
 
-# 自动加载项目根目录的 .env 文件
-_env_path = os.path.join(REPO_ROOT, ".env")
-if os.path.isfile(_env_path):
-    with open(_env_path) as _f:
-        for _line in _f:
-            _line = _line.strip()
-            if _line and not _line.startswith("#") and "=" in _line:
-                _key, _, _val = _line.partition("=")
-                os.environ[_key.strip()] = _val.strip()
+def _load_env_file(path):
+    if not os.path.isfile(path):
+        return
+    with open(path) as env_file:
+        for line in env_file:
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, _, val = line.partition("=")
+                os.environ[key.strip()] = val.strip()
+
+
+# 自动加载项目根目录的环境文件
+def reload_runtime_env():
+    _load_env_file(os.path.join(REPO_ROOT, ".env"))
+    _load_env_file(os.path.join(REPO_ROOT, ".env.gitea.generated"))
+
+
+reload_runtime_env()
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "your_openai_api_key")
 OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", None)
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5.2")
-DEFAULT_PIPELINE_ENV = "gitlab"
+DEFAULT_PIPELINE_ENV = os.environ.get("PIPELINE_ENV", "gitea")
 MAX_STEP_REPLAN = 2
 MAX_CONVERSATION_TURNS = 8
 MAX_DIALOGUE_SUMMARY_CHARS = 400

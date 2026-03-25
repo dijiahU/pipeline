@@ -59,6 +59,7 @@ class ExperienceMemory:
 
 _local_embedding_model = None
 plan_memory_store = None
+_plan_memory_disabled_reason = None
 
 
 def get_local_embedding_model():
@@ -310,6 +311,22 @@ class PlanMemoryVectorStore:
         return results
 
 
+class DisabledPlanMemoryStore:
+    def __init__(self, reason):
+        self.reason = reason
+        self.metadata = []
+        self.index = None
+
+    def sync_with_experience(self):
+        return
+
+    def ensure_synced(self):
+        return
+
+    def search(self, task_query, limit=PLAN_MEMORY_TOP_K):
+        return []
+
+
 class ToolMemory:
     def __init__(self, storage_path):
         self.storage_path = storage_path
@@ -363,13 +380,19 @@ tool_memory = ToolMemory(TOOL_MEMORY_PATH)
 
 
 def get_plan_memory_store():
-    global plan_memory_store
+    global plan_memory_store, _plan_memory_disabled_reason
     if plan_memory_store is None:
-        plan_memory_store = PlanMemoryVectorStore(
-            PLAN_MEMORY_FAISS_PATH,
-            PLAN_MEMORY_META_PATH,
-            experience_memory,
-        )
+        try:
+            plan_memory_store = PlanMemoryVectorStore(
+                PLAN_MEMORY_FAISS_PATH,
+                PLAN_MEMORY_META_PATH,
+                experience_memory,
+            )
+            _plan_memory_disabled_reason = None
+        except RuntimeError as exc:
+            _plan_memory_disabled_reason = str(exc)
+            print(f"[plan_memory] disabled: {_plan_memory_disabled_reason}")
+            plan_memory_store = DisabledPlanMemoryStore(_plan_memory_disabled_reason)
     return plan_memory_store
 
 
@@ -405,7 +428,10 @@ def memory_for_plan(task_query):
         trajectories.append(trajectory)
 
     if not trajectories:
-        summary = "向量库中没有召回到相关历史轨迹。"
+        if _plan_memory_disabled_reason:
+            summary = f"计划记忆已降级为空召回：{_plan_memory_disabled_reason}"
+        else:
+            summary = "向量库中没有召回到相关历史轨迹。"
     else:
         top_score = trajectories[0]["score"]
         status_counts = {}
@@ -421,7 +447,7 @@ def memory_for_plan(task_query):
         "task_query": task_query,
         "trajectories": trajectories,
         "summary": summary,
-        "retrieval_method": "local_faiss_embedding_v1",
+        "retrieval_method": "disabled" if _plan_memory_disabled_reason else "local_faiss_embedding_v1",
         "retrieval_scope": "trajectory_level",
     }
 

@@ -1,0 +1,128 @@
+{
+  "owner": "root",
+  "repositories": [
+    {
+      "name": "sotopia",
+      "description": "Multi-agent social simulation project.",
+      "default_branch": "main",
+      "extra_branches": ["feature-test"],
+      "issues": [
+        "Bug: social interaction score calculation",
+        "Feature request: export dialogue summaries"
+      ],
+      "pulls": [
+        {
+          "title": "feat: add new interaction model",
+          "head": "feature-test",
+          "base": "main",
+          "body": "Seed pull request for branch-management tasks."
+        }
+      ],
+      "protect_default_branch": true
+    },
+    {
+      "name": "openhands",
+      "description": "Developer agent runtime playground.",
+      "default_branch": "main",
+      "issues": ["Bug: agent session cleanup is flaky"],
+      "protect_default_branch": true
+    },
+    {
+      "name": "openclaw",
+      "description": "Snapshot imported from github.com/openclaw/openclaw.",
+      "default_branch": "main",
+      "source_repo_url": "https://github.com/openclaw/openclaw.git",
+      "source_import_mode": "snapshot",
+      "source_branch": "main",
+      "extra_branches": ["stale-docs", "renderer-upgrade"],
+      "issues": [
+        "Bug: macOS build instructions are outdated",
+        "Feature: add save-state compatibility notes"
+      ],
+      "pulls": [
+        {
+          "title": "docs: improve renderer upgrade notes",
+          "head": "renderer-upgrade",
+          "base": "main",
+          "body": "Seed pull request for openclaw branch-management checks."
+        }
+      ],
+      "protect_default_branch": true
+    },
+    {
+      "name": "streamlit",
+      "description": "Internal dashboard service.",
+      "default_branch": "develop",
+      "protect_default_branch": true
+    },
+    {
+      "name": "risingwave",
+      "description": "Streaming database experiments.",
+      "default_branch": "main",
+      "issues": ["Bug: sink task stalls after checkpoint"],
+      "protect_default_branch": true
+    },
+    {
+      "name": "raft",
+      "description": "Consensus algorithm reference code.",
+      "default_branch": "master",
+      "protect_default_branch": true
+    },
+    {
+      "name": "opensearch",
+      "description": "Search service integration tests.",
+      "default_branch": "main",
+      "issues": ["Bug: index template migration fails"],
+      "protect_default_branch": true
+    },
+    {
+      "name": "node-red",
+      "description": "Workflow automation adapters.",
+      "default_branch": "master",
+      "protect_default_branch": true
+    },
+    {
+      "name": "llama.cpp",
+      "description": "Inference benchmark harness.",
+      "default_branch": "master",
+      "protect_default_branch": true
+    },
+    {
+      "name": "janusgraph",
+      "description": "Graph store experiments.",
+      "default_branch": "master",
+      "protect_default_branch": true
+    },
+    {
+      "name": "copilot-arena-server",
+      "description": "Evaluation backend for coding arenas.",
+      "default_branch": "main",
+      "protect_default_branch": true
+    },
+    {
+      "name": "colly",
+      "description": "Crawler integration repo.",
+      "default_branch": "master",
+      "protect_default_branch": true
+    },
+    {
+      "name": "bustub",
+      "description": "Database coursework mirror.",
+      "default_branch": "master",
+      "protect_default_branch": true
+    },
+    {
+      "name": "api-server",
+      "description": "Backend API service.",
+      "default_branch": "main",
+      "issues": ["Bug: POST /v1/jobs returns 500 on empty payload"],
+      "protect_default_branch": true
+    },
+    {
+      "name": "doc",
+      "description": "Documentation repository.",
+      "default_branch": "main",
+      "protect_default_branch": true
+    }
+  ]
+}

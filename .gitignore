@@ -4,3 +4,4 @@ memory/
 __pycache__/
 gitlab/
 .env
+.env.gitea.generated
