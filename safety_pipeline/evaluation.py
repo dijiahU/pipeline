@@ -244,12 +244,6 @@ def _extract_flow_path(decision_trace):
                 elif tool_name == "judge_try_result":
                     try_result = (trace.get("try_judgment", {}) or {}).get("result", "")
                     path.append(f"judge_try_result:{try_result}" if try_result else "judge_try_result")
-                elif tool_name == "completion_check":
-                    comp_result = result.get("next_phase", "")
-                    if comp_result == "done":
-                        path.append("completion_check:done")
-                    else:
-                        path.append("completion_check:ask_human")
                 else:
                     path.append(tool_name)
             else:
@@ -258,7 +252,7 @@ def _extract_flow_path(decision_trace):
         # 最终执行方法
         if method in ("direct_tool", "try_safe_then_direct"):
             path.append("execute")
-        elif method in ("refuse", "terminate", "ask_human", "replan", "completion_check"):
+        elif method in ("refuse", "terminate", "ask_human", "replan"):
             # 这些已经在 flow_calls 里了，但如果 flow_calls 为空则补上
             if not flow_calls:
                 path.append(method)

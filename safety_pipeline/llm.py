@@ -64,3 +64,24 @@ def call_required_tool_choice(system_prompt, snapshot, tools):
     if not message.tool_calls:
         raise RuntimeError("模型未返回任何 tool call。")
     return message.tool_calls[0]
+
+
+def call_auto_tool_choice(system_prompt, snapshot, tools):
+    """tool_choice=auto: 模型可以选择调用工具，也可以直接回复文本。
+
+    返回 (tool_call, None) 或 (None, text_content)。
+    """
+    llm_client = get_openai_client()
+    response = llm_client.chat.completions.create(
+        model=OPENAI_MODEL,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": json.dumps(snapshot, ensure_ascii=False, indent=2)},
+        ],
+        tools=tools,
+        tool_choice="auto",
+    )
+    message = response.choices[0].message
+    if message.tool_calls:
+        return message.tool_calls[0], None
+    return None, (message.content or "").strip()
