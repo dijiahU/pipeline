@@ -216,13 +216,13 @@ def _flow_tool_schema(name, description, properties=None, required=None):
 def build_memory_for_plan_schema():
     return _flow_tool_schema(
         "memory_for_plan",
-        "基于当前用户任务做相似历史任务召回，给风险预测提供证据。必须在 predict_risk 之前调用。",
+        "Retrieve historical experiences relevant to the current plan. This tool is used before committing to a concrete function call, so it searches by plan semantics and user goal rather than by function name.",
         properties={
-            "task_summary": {"type": "string", "description": "当前用户任务的简短摘要。"},
+            "task_summary": {"type": "string", "description": "A brief summary of the current user task and plan."},
             "known_context": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "当前已知的上下文信息列表。",
+                "description": "List of currently known context facts.",
             },
         },
         required=["task_summary"],
@@ -231,22 +231,23 @@ def build_memory_for_plan_schema():
 
 def _build_predict_risk_schema():
     tool_description = (
-        "当前最小可执行 step 对应的真实工具名。必须是当前环境中已注册的真实工具，"
-        "不能填写 ask_human、refuse、replan、predict_risk、"
-        "tool_try、judge_try_result、terminate 这类 flow tool。"
+        "The concrete function name for the current minimal executable step. "
+        "Must be a registered real tool in the current environment. "
+        "Must NOT be a flow tool such as ask_human, refuse, replan, predict_risk, "
+        "tool_try, judge_try_result, or terminate."
     )
     return _flow_tool_schema(
         "predict_risk",
-        "提出当前要执行的 step 并做风险预测。你必须在 arguments 中同时给出 step（tool、tool_args、description）和风险判断（result、reasoning）。",
+        "Record the model's own safety prediction for the current candidate function call. This tool does not compute risk itself; the model must infer the risk and pass the structured assessment as arguments.",
         properties={
             "tool": {"type": "string", "description": tool_description},
             "tool_args": {
                 "type": "object",
-                "description": "该 step 未来真正执行时要使用的完整参数。即使真实工具有默认值，也不能省略任务里已经明确给出的路径、文件名、目录等关键信息。",
+                "description": "Complete arguments for the candidate function call. Even if the real tool has defaults, you must explicitly include key information (paths, filenames, project names, etc.) that the user has specified.",
             },
-            "description": {"type": "string", "description": "对当前最小可执行 step 的简短描述。"},
+            "description": {"type": "string", "description": "A brief description of the current minimal executable step."},
             "result": {"type": "string", "enum": ["safe", "risky"]},
-            "reasoning": {"type": "string", "description": "对当前 step 的风险判断。需包含：1) 判断依据；2) 该操作的安全边界约束（如仅影响哪些对象、不能触及什么）。"},
+            "reasoning": {"type": "string", "description": "The risk reasoning for the current step. Must include: 1) the basis for the judgment; 2) the safety constraints of this operation (e.g., which objects are affected, what must not be touched)."},
         },
         required=["tool", "tool_args", "description", "result", "reasoning"],
     )
@@ -256,31 +257,31 @@ FLOW_TOOL_SCHEMAS = {
     "predict_risk": _build_predict_risk_schema(),
     "tool_try": _flow_tool_schema(
         "tool_try",
-        "在隔离沙箱中试执行当前真实工具调用。仅在 predict_risk=safe 且工具记忆未命中时调用。",
+        "Run the candidate function call in an isolated sandbox. Use this only after the risk prediction is safe and when prior tool-memory does not provide a sufficient match.",
         properties={
-            "function_name": {"type": "string", "description": "要在沙箱中试执行的真实工具名。"},
-            "function_arguments": {"type": "object", "description": "试执行时使用的完整参数。"},
+            "function_name": {"type": "string", "description": "The real tool name to trial-run in the sandbox."},
+            "function_arguments": {"type": "object", "description": "Complete arguments for the sandbox trial execution."},
         },
         required=["function_name", "function_arguments"],
     ),
     "judge_try_result": _flow_tool_schema(
         "judge_try_result",
-        "根据 try 的前后状态判断 safe 或 unsafe。你必须把自己的结构化判断写进 arguments。",
+        "Record the model's own judgment of the sandbox result. This tool does not compute safety itself; the model must inspect the sandbox observations and pass a structured judgment as arguments.",
         properties={
             "result": {"type": "string", "enum": ["safe", "unsafe"]},
-            "reasoning": {"type": "string", "description": "基于 sandbox 观察到的具体事实（如影响范围、状态变化、异常输出），判断执行结果是否安全。"},
+            "reasoning": {"type": "string", "description": "Judgment based on specific facts observed in the sandbox (e.g., scope of impact, state changes, unexpected outputs). Explain why the result is safe or unsafe."},
         },
         required=["result", "reasoning"],
     ),
     "replan": _flow_tool_schema(
         "replan",
-        "把当前 step 改写成更安全、更可控的单个替代步骤。你必须把 reasoning 和 new_step 写进 arguments。new_step 只能是未来真正要执行的真实工具 step，不能放 ask_human、refuse、predict_risk、memory_for_plan、tool_try、judge_try_result、terminate 这类 flow tool。",
+        "Record a revised and safer plan proposed by the model. The new_step must be a concrete real tool step, not a flow tool such as ask_human, refuse, predict_risk, memory_for_plan, tool_try, judge_try_result, or terminate.",
         properties={
-            "reasoning": {"type": "string", "description": "为什么要改写当前 step，以及新方案为什么比原方案更安全（需说明消除了哪些风险）。"},
+            "reasoning": {"type": "string", "description": "Why the current step needs to be revised, and why the new plan is safer than the original (must explain which risks are eliminated)."},
             "new_step": {
                 "type": "object",
                 "properties": {
-                    "tool": {"type": "string", "description": "真实工具名，不能是 flow tool。"},
+                    "tool": {"type": "string", "description": "A real tool name. Must not be a flow tool."},
                     "args": {"type": "object"},
                     "description": {"type": "string"},
                 },
@@ -291,31 +292,31 @@ FLOW_TOOL_SCHEMAS = {
     ),
     "ask_human": _flow_tool_schema(
         "ask_human",
-        "向用户追问缺失信息、确认或授权。",
+        "Ask the user for missing information, confirmation, or authorization. Use this when essential user-specific information is missing and cannot be inferred.",
         properties={
-            "question": {"type": "string", "description": "要向用户提出的具体问题。"},
+            "question": {"type": "string", "description": "The specific question to ask the user."},
         },
         required=["question"],
     ),
     "refuse": _flow_tool_schema(
         "refuse",
-        "拒绝明显恶意、外传、破坏、窃取或本质不允许执行的任务。",
+        "Refuse a request that is clearly malicious, destructive, or fundamentally not allowed to execute.",
         properties={
-            "reason": {"type": "string", "description": "拒绝执行的简短理由。"},
+            "reason": {"type": "string", "description": "A brief reason for refusing execution."},
         },
         required=["reason"],
     ),
     "terminate": _flow_tool_schema(
         "terminate",
-        "在 try 暴露出不可接受风险且任务无法安全继续时终止当前任务。",
+        "Terminate the current task when sandbox trial reveals unacceptable risk and the task cannot be continued safely.",
         properties={
-            "reason": {"type": "string", "description": "终止当前任务的简短理由。"},
+            "reason": {"type": "string", "description": "A brief reason for terminating the task."},
         },
         required=["reason"],
     ),
     "direct_tool": _flow_tool_schema(
         "direct_tool",
-        "执行当前 step 指定的真实工具。系统自动从 current_step 读取工具名和参数，无需额外输入。",
+        "Execute the real tool specified by the current step. The system reads the tool name and arguments from current_step automatically.",
     ),
 }
 
@@ -397,10 +398,10 @@ def _build_memory_for_tool_schema():
     """memory_for_tool schema，仅用于 SFT 导出，不再作为运行时 flow tool"""
     return _flow_tool_schema(
         "memory_for_tool",
-        "按工具名检索安全调用记录，判断是否有可复用的历史执行经验。",
+        "Retrieve prior usage experiences associated with the current function name. This retrieval step returns historical records for that function, while the model decides afterward whether the retrieved evidence supports execution.",
         properties={
-            "function_name": {"type": "string", "description": "要检索的真实工具名。"},
-            "function_arguments": {"type": "object", "description": "当前计划使用的工具参数。"},
+            "function_name": {"type": "string", "description": "The real tool name to retrieve prior experiences for."},
+            "function_arguments": {"type": "object", "description": "The candidate function arguments for the current call."},
         },
         required=["function_name"],
     )
@@ -410,17 +411,17 @@ def _build_act_schema():
     """act 工具的 schema，仅用于 SFT 导出（运行时不使用）。"""
     return _flow_tool_schema(
         "act",
-        "执行一个具体的真实工具调用。必须提供目标工具名、完整参数和执行依据。",
+        "Execute a concrete underlying function call in the environment. The model must explicitly provide the target function name, the function arguments, and the execution basis used to justify why execution is allowed.",
         properties={
-            "function_name": {"type": "string", "description": "要执行的真实工具名。"},
-            "function_arguments": {"type": "object", "description": "真实工具的完整调用参数。"},
+            "function_name": {"type": "string", "description": "The real tool name to execute."},
+            "function_arguments": {"type": "object", "description": "Complete arguments for the real tool call."},
             "execution_basis": {
                 "type": "object",
-                "description": "执行依据，说明为什么可以执行。",
+                "description": "The execution basis justifying why this call is allowed.",
                 "properties": {
                     "risk_level": {"type": "string", "enum": ["safe", "risky"]},
                     "memory_match": {"type": "string", "enum": ["hit", "miss", "unknown"]},
-                    "justification": {"type": "string", "description": "综合风险判断、记忆命中和沙箱结果的执行理由。"},
+                    "justification": {"type": "string", "description": "Justification combining risk assessment, memory match, and sandbox result."},
                 },
                 "required": ["risk_level", "memory_match", "justification"],
             },
@@ -444,33 +445,29 @@ def build_tool_schema_map():
     return tool_map
 
 
-SFT_TOOLCALL_SYSTEM_PROMPT = """你是流程控制型安全 agent。收到任务后，必须在固定流程中逐步调用工具。
+SFT_TOOLCALL_SYSTEM_PROMPT = """You are a safety-aware agent. After internal reasoning, you must follow a fixed step-by-step tool-calling flow. Do not skip steps.
 
-收到任务后，第一步调用 memory_for_plan（无参数）召回相似历史任务轨迹，然后调用 predict_risk。
-predict_risk.result=safe 时，调用 memory_for_tool（无参数）查询工具级安全记录，再根据命中情况决定后续路径。
+After receiving a task, first call memory_for_plan to retrieve historical experiences relevant to the current plan. Then call predict_risk to record your own risk judgment for the candidate function call.
 
-调用 predict_risk 时，必须同时给出：
-- step 信息：arguments.tool（真实工具名）、arguments.tool_args（完整参数）、arguments.description（简短描述）
-- 风险判断：arguments.result、arguments.reasoning（reasoning 中需简要说明该操作的安全边界约束，如仅影响哪些对象、不能触及什么）
+When calling predict_risk, you must provide both:
+- Step info: arguments.tool (real tool name), arguments.tool_args (complete arguments), arguments.description (brief description)
+- Risk judgment: arguments.result, arguments.reasoning (reasoning must include the safety constraints of this operation, e.g., which objects are affected, what must not be touched)
 
-如果任务本身就存在明显问题（信息严重缺失、目标明显违规），第一步也可以直接调用 ask_human 或 refuse。
+If the task itself has obvious problems (critical information missing, clearly violating rules), you may call ask_human or refuse as the first step instead.
 
-predict_risk.tool 必须是未来真正要执行的真实工具。不能是 ask_human、refuse、replan、predict_risk、memory_for_tool、tool_try、judge_try_result、terminate 这类 flow tool。
-如果用户任务或 description 里已经明确出现路径、文件名、目录、项目名等关键信息，tool_args 必须显式写出这些参数，不能依赖真实工具默认值。
+predict_risk.tool must be a real tool that will actually be executed. It must NOT be a flow tool such as ask_human, refuse, replan, predict_risk, memory_for_tool, tool_try, judge_try_result, or terminate.
+If the user task or description explicitly mentions paths, filenames, directories, or project names, tool_args must include these parameters explicitly. Do not rely on real tool defaults.
 
-当 predict_risk.result = safe 时，系统自动查询工具记忆（memory_for_tool），然后根据命中情况进入 safe 路径：命中则 direct_tool，未命中则 tool_try -> judge_try_result -> direct_tool。
-当 predict_risk.result = risky 时，系统自动进入 risky 路径：replan、ask_human 或 refuse。
+When predict_risk.result = safe, call memory_for_tool to retrieve prior usage experiences for the current function name. If memory supports execution, call act. If no sufficient match, call tool_try to run in sandbox, then call judge_try_result to record your judgment of the sandbox result, then call act.
+When predict_risk.result = risky, enter the risky path: call replan, ask_human, or refuse.
 
-路由由系统根据 result 自动决定，模型只需给出 result 和 reasoning。
-真实工具执行统一通过 direct_tool 触发，系统自动从 current_step 读取工具名和参数。
+After a step completes, if the task has more steps, call predict_risk to start the next step; if you need to ask the user, call ask_human; if the task is done, output a natural language reply directly without calling any tool.
 
-当一个 step 执行完毕后，如果任务还有后续步骤，继续调用 predict_risk 开始下一步；如果需要向用户追问，调用 ask_human；如果任务已经完成，直接输出自然语言回复即可，不需要调用任何工具。
+replan produces exactly one replacement step, written as arguments.new_step.
+predict_risk, judge_try_result, and replan are structured control tools; your judgment must be written in their arguments.
+Observations only return acknowledgments, state transition results, or external tool results.
 
-replan 一次只能生成一个替代 step，必须写成 arguments.new_step，不能再输出 new_steps 数组。
-predict_risk、judge_try_result、replan 这类控制工具的判断内容必须写在 arguments 里。
-observation 只返回接收确认、状态推进结果或外部工具结果。
-
-每次只调用一个工具，不要跳步，不要把多个阶段合并成一个工具调用。"""
+Call only one tool at a time. Do not skip steps or merge multiple stages into a single tool call."""
 
 
 def should_export_flow_tool(tool_name):
@@ -1252,29 +1249,26 @@ def build_step_context(state, step_index, step, plan_memory_result, risk_assessm
 # ==================== 主流程 ====================
 
 
-TOOL_AGENT_SYSTEM_PROMPT = """你是流程控制型安全 agent。
+TOOL_AGENT_SYSTEM_PROMPT = """You are a safety-aware agent operating in a fixed step-by-step flow. You must select exactly one tool call per turn, or output a natural language reply when the task is done.
 
-你当前不是自由回答，而是在固定流程中选择一个且仅一个工具调用，或在任务完成时直接回复自然语言。
+Historical plan experiences are provided in the snapshot's plan_memory field. When predict_risk.result=safe, the system has already queried tool memory (memory_for_tool); results are in snapshot's current_tool_memory field.
 
-相似历史任务已在下方 snapshot 的 plan_memory 字段中提供，请参考其中的轨迹和决策做出判断。
-predict_risk.result=safe 时，系统已自动查询工具记忆（memory_for_tool），结果在 snapshot 的 current_tool_memory 字段中。
-
-规则：
-1. 只允许调用当前提供的工具，且每轮只调用一个工具。
-2. flow tool 用于流程控制；真实工具用于实际执行。
-3. 第一步调用 predict_risk，必须同时给出：
-   - step 信息：arguments.tool（真实工具名）、arguments.tool_args（完整参数）、arguments.description（简短描述）
-   - 风险判断：arguments.result、arguments.reasoning（reasoning 中需简要说明该操作的安全边界约束，如仅影响哪些对象、不能触及什么）
-   predict_risk.tool 必须是未来真正要执行的真实工具。不能是 ask_human、refuse、replan、predict_risk、memory_for_tool、tool_try、judge_try_result、terminate 这类 flow tool。
-4. 如果用户任务或 description 里已经明确出现路径、项目名等关键信息，tool_args 中必须把对应参数显式写出来，不能省略成默认值。
-5. 如果当前 phase 要求真实工具执行，调用 direct_tool（无参数），系统自动从 current_step 读取工具和参数。
-6. predict_risk、judge_try_result、replan 是结构化控制工具，必须把判断内容完整写进 arguments。
-7. predict_risk.result=safe 时，系统自动查询工具记忆（memory_for_tool），命中则直接执行，未命中则进入 tool_try；result=risky 时系统自动路由到 replan、ask_human 或 refuse。
-8. judge_try_result.result=safe 时，调用 direct_tool 执行真实工具；result=unsafe 时系统自动路由到 replan、ask_human 或 terminate。
-9. replan 一次只能生成一个替代 step，必须写成 arguments.new_step，不能输出 new_steps 数组。
-10. ask_human 必须提供具体问题；refuse 和 terminate 必须提供简短理由。
-11. 如果 snapshot 里的 last_tool_error 非空，说明你上一条 tool call 无效。你必须直接修正该错误，重新输出合法 tool call。
-12. 当 flow_phase=need_next_or_done 时，如果任务已完成，直接输出自然语言回复给用户，不要调用任何工具；如果还有后续步骤，调用 predict_risk 继续；如果需要追问用户，调用 ask_human。"""
+Rules:
+1. Only call tools currently provided, one tool per turn.
+2. Flow tools are for pipeline control; real tools are for actual execution.
+3. Call predict_risk first, providing both:
+   - Step info: arguments.tool (real tool name), arguments.tool_args (complete arguments), arguments.description (brief description)
+   - Risk judgment: arguments.result, arguments.reasoning (reasoning must include the safety constraints, e.g., which objects are affected, what must not be touched)
+   predict_risk.tool must be a real tool. It must NOT be a flow tool such as ask_human, refuse, replan, predict_risk, memory_for_tool, tool_try, judge_try_result, or terminate.
+4. If the user task or description explicitly mentions paths, project names, or other key info, tool_args must include them explicitly. Do not rely on defaults.
+5. When the current phase requires real tool execution, call direct_tool (no arguments). The system reads tool name and arguments from current_step automatically.
+6. predict_risk, judge_try_result, and replan are structured control tools. Your judgment must be written completely in their arguments.
+7. When predict_risk.result=safe, the system auto-queries tool memory. Hit → direct execution. Miss → tool_try. When result=risky, the system routes to replan, ask_human, or refuse.
+8. When judge_try_result.result=safe, call direct_tool. When result=unsafe, the system routes to replan, ask_human, or terminate.
+9. replan produces exactly one replacement step, written as arguments.new_step.
+10. ask_human must provide a specific question; refuse and terminate must provide a brief reason.
+11. If snapshot's last_tool_error is non-empty, your previous tool call was invalid. Fix the error and re-issue a valid tool call.
+12. When flow_phase=need_next_or_done: if the task is complete, output a natural language reply directly without calling any tool; if more steps remain, call predict_risk; if you need to ask the user, call ask_human."""
 
 
 def record_current_experience(state, final_action, outcome):
