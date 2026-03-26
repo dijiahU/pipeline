@@ -75,8 +75,13 @@ def get_local_embedding_model():
         )
     print(f"[plan_memory] loading local embedding model: {LOCAL_EMBEDDING_MODEL}")
     import logging
+    import warnings
     logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
-    _local_embedding_model = SentenceTransformer(LOCAL_EMBEDDING_MODEL)
+    logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=".*position_ids.*")
+        warnings.filterwarnings("ignore", message=".*unauthenticated.*")
+        _local_embedding_model = SentenceTransformer(LOCAL_EMBEDDING_MODEL)
     return _local_embedding_model
 
 

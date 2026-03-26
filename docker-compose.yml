@@ -12,3 +12,98 @@ services:
       - GITEA__service__DISABLE_REGISTRATION=true
       - GITEA__actions__ENABLED=true
       - GITEA__server__ROOT_URL=${GITEA_BASE_URL:-http://localhost:3000}
+
+  nocodb:
+    image: ${NOCODB_IMAGE:-nocodb/nocodb:latest}
+    container_name: ${NOCODB_CONTAINER_NAME:-pipeline-nocodb}
+    restart: unless-stopped
+    ports:
+      - "${NOCODB_PORT:-8080}:8080"
+    environment:
+      - NC_DB=pg://nocodb-db:5432?u=nocodb&p=nocodb123&d=nocodb
+      - NC_AUTH_JWT_SECRET=${NOCODB_JWT_SECRET:-pipeline-nocodb-secret}
+      - NC_DISABLE_TELE=true
+    depends_on:
+      nocodb-db:
+        condition: service_healthy
+    volumes:
+      - nocodb_data:/usr/app/data
+
+  nocodb-db:
+    image: postgres:16-alpine
+    container_name: ${NOCODB_PG_CONTAINER:-pipeline-nocodb-pg}
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=nocodb
+      - POSTGRES_PASSWORD=nocodb123
+      - POSTGRES_DB=nocodb
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nocodb"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - nocodb_pg_data:/var/lib/postgresql/data
+
+  owncloud:
+    image: ${OWNCLOUD_IMAGE:-owncloud/ocis:latest}
+    container_name: ${OWNCLOUD_CONTAINER_NAME:-pipeline-owncloud}
+    restart: unless-stopped
+    ports:
+      - "${OWNCLOUD_PORT:-9200}:9200"
+    environment:
+      - OCIS_INSECURE=true
+      - PROXY_HTTP_ADDR=0.0.0.0:9200
+      - OCIS_URL=${OWNCLOUD_BASE_URL:-https://localhost:9200}
+      - IDM_ADMIN_PASSWORD=${OWNCLOUD_ADMIN_PASSWORD:-Admin123!}
+      - OCIS_LOG_LEVEL=warn
+      - PROXY_ENABLE_BASIC_AUTH=true
+    entrypoint: ["/bin/sh"]
+    command: ["-c", "ocis init --insecure true 2>/dev/null || true; ocis server"]
+    volumes:
+      - owncloud_data:/var/lib/ocis
+
+  rocketchat:
+    image: ${ROCKETCHAT_IMAGE:-rocket.chat:latest}
+    platform: linux/amd64
+    container_name: ${ROCKETCHAT_CONTAINER_NAME:-pipeline-rocketchat}
+    restart: unless-stopped
+    ports:
+      - "${ROCKETCHAT_PORT:-3100}:3000"
+    environment:
+      - ROOT_URL=${ROCKETCHAT_BASE_URL:-http://localhost:3100}
+      - MONGO_URL=mongodb://rocketchat-mongo:27017/rocketchat?replicaSet=rs0
+      - MONGO_OPLOG_URL=mongodb://rocketchat-mongo:27017/local?replicaSet=rs0
+      - DEPLOY_METHOD=docker
+      - OVERWRITE_SETTING_Show_Setup_Wizard=completed
+      - OVERWRITE_SETTING_API_Enable_Rate_Limiter=false
+      - CREATE_TOKENS_FOR_USERS=true
+      - ADMIN_USERNAME=${ROCKETCHAT_ADMIN_USER:-admin}
+      - ADMIN_PASS=${ROCKETCHAT_ADMIN_PASSWORD:-Admin123!}
+      - ADMIN_EMAIL=${ROCKETCHAT_ADMIN_EMAIL:-admin@example.com}
+    depends_on:
+      rocketchat-mongo:
+        condition: service_healthy
+    volumes:
+      - rocketchat_uploads:/app/uploads
+
+  rocketchat-mongo:
+    image: mongo:8.0
+    container_name: ${ROCKETCHAT_MONGO_CONTAINER:-pipeline-rocketchat-mongo}
+    restart: unless-stopped
+    command: ["mongod", "--replSet", "rs0", "--oplogSize", "128"]
+    healthcheck:
+      test: >
+        mongosh --eval "try { rs.status().ok } catch(e) { rs.initiate({_id:'rs0',members:[{_id:0,host:'rocketchat-mongo:27017'}]}).ok }"
+      interval: 5s
+      timeout: 10s
+      retries: 10
+    volumes:
+      - rocketchat_mongo_data:/data/db
+
+volumes:
+  nocodb_data:
+  nocodb_pg_data:
+  owncloud_data:
+  rocketchat_uploads:
+  rocketchat_mongo_data:

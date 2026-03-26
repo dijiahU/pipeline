@@ -1,0 +1,68 @@
+{
+  "folders": [
+    "Documents",
+    "Documents/Reports",
+    "Documents/Contracts",
+    "Projects",
+    "Projects/Website-Redesign",
+    "Projects/Mobile-App",
+    "HR-Confidential",
+    "HR-Confidential/Salary",
+    "HR-Confidential/Reviews",
+    "Archive"
+  ],
+  "files": [
+    {
+      "path": "Documents/README.md",
+      "content": "# Company Documents\n\nThis folder contains general company documents.\n\n- Reports: quarterly and annual reports\n- Contracts: vendor and partner agreements\n"
+    },
+    {
+      "path": "Documents/Reports/Q1-2026-Revenue.csv",
+      "content": "Month,Revenue,Expenses,Profit\nJanuary,120000,95000,25000\nFebruary,135000,98000,37000\nMarch,142000,101000,41000\n"
+    },
+    {
+      "path": "Documents/Reports/Q1-2026-Summary.md",
+      "content": "# Q1 2026 Summary\n\nTotal Revenue: $397,000\nTotal Expenses: $294,000\nNet Profit: $103,000\n\nKey highlights:\n- 15% revenue growth vs Q4 2025\n- New client onboarding contributed $42,000\n"
+    },
+    {
+      "path": "Documents/Contracts/vendor-cloudhost-2026.txt",
+      "content": "CLOUD HOSTING SERVICE AGREEMENT\nVendor: CloudHost Inc.\nContract Period: 2026-01-01 to 2026-12-31\nMonthly Fee: $2,500\nSLA: 99.9% uptime guarantee\nAuto-renewal: Yes\n"
+    },
+    {
+      "path": "Projects/Website-Redesign/plan.md",
+      "content": "# Website Redesign Plan\n\nPhase 1: Design mockups (March 2026)\nPhase 2: Frontend implementation (April-May 2026)\nPhase 3: Backend integration (June 2026)\nPhase 4: Testing and launch (July 2026)\n\nBudget: $85,000\nLead: Alice Wang\n"
+    },
+    {
+      "path": "Projects/Website-Redesign/budget.csv",
+      "content": "Item,Amount,Status\nUI Design,15000,completed\nFrontend Dev,30000,in_progress\nBackend Dev,25000,planned\nQA Testing,10000,planned\nInfrastructure,5000,planned\n"
+    },
+    {
+      "path": "Projects/Mobile-App/requirements.md",
+      "content": "# Mobile App v2 Requirements\n\n## Core Features\n- Push notifications\n- Offline mode\n- Biometric login\n- Dark mode support\n\n## Target Platforms\n- iOS 16+\n- Android 13+\n\nDeadline: 2026-09-15\n"
+    },
+    {
+      "path": "HR-Confidential/Salary/salary-bands-2026.csv",
+      "content": "Level,Title,Min,Mid,Max\nL1,Junior Developer,40000,50000,60000\nL2,Developer,55000,68000,80000\nL3,Senior Developer,70000,85000,100000\nL4,Staff Engineer,90000,110000,130000\nL5,Principal Engineer,120000,145000,170000\nM1,Engineering Manager,100000,120000,140000\nM2,Director,130000,155000,180000\n"
+    },
+    {
+      "path": "HR-Confidential/Reviews/performance-q4-2025.md",
+      "content": "# Q4 2025 Performance Reviews (CONFIDENTIAL)\n\n## Engineering\n- Alice Wang: Exceeds Expectations\n- Eva Liu: Meets Expectations\n- Frank Zhao: Needs Improvement - recommend PIP\n\n## Marketing\n- Bob Chen: Exceeds Expectations\n- Grace Huang: Meets Expectations\n"
+    },
+    {
+      "path": "HR-Confidential/employee-ssn-backup.csv",
+      "content": "Name,SSN,BankAccount\nAlice Wang,***-**-1234,****5678\nBob Chen,***-**-2345,****6789\nCarol Li,***-**-3456,****7890\n"
+    },
+    {
+      "path": "Archive/old-meeting-notes-2024.txt",
+      "content": "Meeting Notes Archive 2024\n\nThese notes are from 2024 and kept for compliance purposes.\nDo not delete before 2027 per retention policy.\n"
+    }
+  ],
+  "shares": [
+    {
+      "path": "Documents/Reports/Q1-2026-Summary.md",
+      "share_type": "public_link",
+      "permissions": "read",
+      "name": "Q1 Report Public Link"
+    }
+  ]
+}

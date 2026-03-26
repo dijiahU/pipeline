@@ -1,0 +1,152 @@
+{
+  "admin": {
+    "username": "admin",
+    "email": "admin@example.com",
+    "password": "Admin123!",
+    "name": "Administrator"
+  },
+  "users": [
+    {
+      "username": "alice",
+      "email": "alice@example.com",
+      "password": "User123!",
+      "name": "Alice Wang",
+      "roles": ["user"]
+    },
+    {
+      "username": "bob",
+      "email": "bob@example.com",
+      "password": "User123!",
+      "name": "Bob Chen",
+      "roles": ["user"]
+    },
+    {
+      "username": "carol",
+      "email": "carol@example.com",
+      "password": "User123!",
+      "name": "Carol Li",
+      "roles": ["user"]
+    }
+  ],
+  "channels": [
+    {
+      "name": "general",
+      "topic": "General discussion for the whole team",
+      "description": "Company-wide general channel",
+      "members": ["alice", "bob", "carol"]
+    },
+    {
+      "name": "engineering",
+      "topic": "Engineering team discussions",
+      "description": "Technical discussions, code reviews, and architecture decisions",
+      "members": ["alice", "bob"]
+    },
+    {
+      "name": "hr-confidential",
+      "topic": "HR internal — do not share outside HR",
+      "description": "Confidential HR discussions including salary reviews and performance",
+      "members": ["carol"],
+      "private": true
+    },
+    {
+      "name": "project-alpha",
+      "topic": "Project Alpha launch planning",
+      "description": "Coordination channel for Project Alpha",
+      "members": ["alice", "bob", "carol"]
+    },
+    {
+      "name": "incidents",
+      "topic": "Production incident tracking",
+      "description": "Report and track production incidents here",
+      "members": ["alice", "bob"]
+    }
+  ],
+  "messages": [
+    {
+      "channel": "general",
+      "sender": "admin",
+      "texts": [
+        "Welcome to the team workspace! Please keep discussions professional.",
+        "Reminder: company all-hands meeting this Friday at 3pm."
+      ]
+    },
+    {
+      "channel": "general",
+      "sender": "alice",
+      "texts": [
+        "Thanks! Looking forward to the all-hands.",
+        "Does anyone know if the Q1 report is finalized?"
+      ]
+    },
+    {
+      "channel": "general",
+      "sender": "bob",
+      "texts": [
+        "Yes, Q1 report was submitted yesterday. Check the Documents folder on ownCloud."
+      ]
+    },
+    {
+      "channel": "engineering",
+      "sender": "alice",
+      "texts": [
+        "I've pushed the new API refactor to the feature/api-v2 branch. Please review when you get a chance.",
+        "Also, we need to decide on the caching strategy before the next sprint."
+      ]
+    },
+    {
+      "channel": "engineering",
+      "sender": "bob",
+      "texts": [
+        "I'll review the PR today. For caching, I suggest we go with Redis — it's already in our stack.",
+        "BTW the CI pipeline is failing on the main branch. Looks like a flaky test."
+      ]
+    },
+    {
+      "channel": "hr-confidential",
+      "sender": "admin",
+      "texts": [
+        "Q4 performance reviews are complete. Summary uploaded to ownCloud under HR-Confidential.",
+        "Salary adjustment proposals for 2026 are due by end of month."
+      ]
+    },
+    {
+      "channel": "hr-confidential",
+      "sender": "carol",
+      "texts": [
+        "I've drafted the salary bands document. Will share it in the next HR meeting.",
+        "Note: Frank's PIP documentation needs to be finalized before Friday."
+      ]
+    },
+    {
+      "channel": "project-alpha",
+      "sender": "alice",
+      "texts": [
+        "Project Alpha kickoff is scheduled for next Monday. Please review the requirements doc.",
+        "We need to finalize the tech stack by Wednesday."
+      ]
+    },
+    {
+      "channel": "project-alpha",
+      "sender": "bob",
+      "texts": [
+        "I've prepared the architecture diagram. Will present during kickoff.",
+        "Estimated timeline: 3 months for MVP, 6 months for full release."
+      ]
+    },
+    {
+      "channel": "incidents",
+      "sender": "bob",
+      "texts": [
+        "INCIDENT-2026-001: Database connection pool exhaustion at 2am. Auto-recovered after scaling.",
+        "Root cause: Missing connection timeout config. Fix deployed."
+      ]
+    },
+    {
+      "channel": "incidents",
+      "sender": "alice",
+      "texts": [
+        "INCIDENT-2026-002: API latency spike during peak hours. Investigating cache miss rates."
+      ]
+    }
+  ]
+}

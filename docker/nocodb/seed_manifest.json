@@ -1,0 +1,108 @@
+{
+  "bases": [
+    {
+      "name": "company_hr",
+      "description": "Human resources database with employee and department data.",
+      "tables": [
+        {
+          "name": "departments",
+          "columns": [
+            {"name": "Name", "uidt": "SingleLineText"},
+            {"name": "Head", "uidt": "SingleLineText"},
+            {"name": "Budget", "uidt": "Number"},
+            {"name": "Location", "uidt": "SingleLineText"}
+          ],
+          "records": [
+            {"Name": "Engineering", "Head": "Alice Wang", "Budget": 500000, "Location": "Building A"},
+            {"Name": "Marketing", "Head": "Bob Chen", "Budget": 200000, "Location": "Building B"},
+            {"Name": "Finance", "Head": "Carol Li", "Budget": 150000, "Location": "Building A"},
+            {"Name": "Human Resources", "Head": "David Zhang", "Budget": 120000, "Location": "Building C"}
+          ]
+        },
+        {
+          "name": "employees",
+          "columns": [
+            {"name": "FullName", "uidt": "SingleLineText"},
+            {"name": "Email", "uidt": "Email"},
+            {"name": "Department", "uidt": "SingleLineText"},
+            {"name": "Position", "uidt": "SingleLineText"},
+            {"name": "Salary", "uidt": "Number"},
+            {"name": "HireDate", "uidt": "Date"},
+            {"name": "Phone", "uidt": "PhoneNumber"},
+            {"name": "Status", "uidt": "SingleLineText"}
+          ],
+          "records": [
+            {"FullName": "Alice Wang", "Email": "alice@example.com", "Department": "Engineering", "Position": "VP of Engineering", "Salary": 95000, "HireDate": "2019-03-15", "Phone": "13800001111", "Status": "active"},
+            {"FullName": "Bob Chen", "Email": "bob@example.com", "Department": "Marketing", "Position": "Marketing Director", "Salary": 82000, "HireDate": "2020-06-01", "Phone": "13800002222", "Status": "active"},
+            {"FullName": "Carol Li", "Email": "carol@example.com", "Department": "Finance", "Position": "CFO", "Salary": 105000, "HireDate": "2018-01-10", "Phone": "13800003333", "Status": "active"},
+            {"FullName": "David Zhang", "Email": "david@example.com", "Department": "Human Resources", "Position": "HR Director", "Salary": 78000, "HireDate": "2020-09-20", "Phone": "13800004444", "Status": "active"},
+            {"FullName": "Eva Liu", "Email": "eva@example.com", "Department": "Engineering", "Position": "Senior Developer", "Salary": 72000, "HireDate": "2021-02-14", "Phone": "13800005555", "Status": "active"},
+            {"FullName": "Frank Zhao", "Email": "frank@example.com", "Department": "Engineering", "Position": "Junior Developer", "Salary": 45000, "HireDate": "2023-07-01", "Phone": "13800006666", "Status": "active"},
+            {"FullName": "Grace Huang", "Email": "grace@example.com", "Department": "Marketing", "Position": "Content Specialist", "Salary": 48000, "HireDate": "2022-11-15", "Phone": "13800007777", "Status": "active"},
+            {"FullName": "Henry Wu", "Email": "henry@example.com", "Department": "Finance", "Position": "Accountant", "Salary": 52000, "HireDate": "2021-08-01", "Phone": "13800008888", "Status": "on_leave"}
+          ]
+        },
+        {
+          "name": "salary_records",
+          "columns": [
+            {"name": "EmployeeName", "uidt": "SingleLineText"},
+            {"name": "Month", "uidt": "SingleLineText"},
+            {"name": "BaseSalary", "uidt": "Number"},
+            {"name": "Bonus", "uidt": "Number"},
+            {"name": "Deduction", "uidt": "Number"},
+            {"name": "NetPay", "uidt": "Number"}
+          ],
+          "records": [
+            {"EmployeeName": "Alice Wang", "Month": "2026-01", "BaseSalary": 95000, "Bonus": 15000, "Deduction": 8500, "NetPay": 101500},
+            {"EmployeeName": "Alice Wang", "Month": "2026-02", "BaseSalary": 95000, "Bonus": 10000, "Deduction": 8500, "NetPay": 96500},
+            {"EmployeeName": "Bob Chen", "Month": "2026-01", "BaseSalary": 82000, "Bonus": 8000, "Deduction": 7200, "NetPay": 82800},
+            {"EmployeeName": "Eva Liu", "Month": "2026-01", "BaseSalary": 72000, "Bonus": 5000, "Deduction": 6500, "NetPay": 70500},
+            {"EmployeeName": "Frank Zhao", "Month": "2026-01", "BaseSalary": 45000, "Bonus": 2000, "Deduction": 4200, "NetPay": 42800}
+          ]
+        }
+      ]
+    },
+    {
+      "name": "project_tracker",
+      "description": "Project management and task tracking database.",
+      "tables": [
+        {
+          "name": "projects",
+          "columns": [
+            {"name": "ProjectName", "uidt": "SingleLineText"},
+            {"name": "Owner", "uidt": "SingleLineText"},
+            {"name": "Status", "uidt": "SingleLineText"},
+            {"name": "Priority", "uidt": "SingleLineText"},
+            {"name": "Deadline", "uidt": "Date"},
+            {"name": "Description", "uidt": "LongText"}
+          ],
+          "records": [
+            {"ProjectName": "Website Redesign", "Owner": "Alice Wang", "Status": "in_progress", "Priority": "high", "Deadline": "2026-06-30", "Description": "Complete redesign of the company website with new branding."},
+            {"ProjectName": "Mobile App v2", "Owner": "Eva Liu", "Status": "planning", "Priority": "high", "Deadline": "2026-09-15", "Description": "Major version upgrade for the mobile application."},
+            {"ProjectName": "Data Migration", "Owner": "Carol Li", "Status": "in_progress", "Priority": "critical", "Deadline": "2026-04-30", "Description": "Migrate legacy database to new cloud infrastructure."},
+            {"ProjectName": "Marketing Campaign Q2", "Owner": "Bob Chen", "Status": "planning", "Priority": "medium", "Deadline": "2026-05-15", "Description": "Q2 marketing campaign for product launch."}
+          ]
+        },
+        {
+          "name": "tasks",
+          "columns": [
+            {"name": "Title", "uidt": "SingleLineText"},
+            {"name": "Project", "uidt": "SingleLineText"},
+            {"name": "Assignee", "uidt": "SingleLineText"},
+            {"name": "Status", "uidt": "SingleLineText"},
+            {"name": "Priority", "uidt": "SingleLineText"},
+            {"name": "DueDate", "uidt": "Date"}
+          ],
+          "records": [
+            {"Title": "Design homepage mockup", "Project": "Website Redesign", "Assignee": "Grace Huang", "Status": "completed", "Priority": "high", "DueDate": "2026-03-01"},
+            {"Title": "Implement responsive layout", "Project": "Website Redesign", "Assignee": "Frank Zhao", "Status": "in_progress", "Priority": "high", "DueDate": "2026-04-15"},
+            {"Title": "Set up CI/CD pipeline", "Project": "Mobile App v2", "Assignee": "Eva Liu", "Status": "todo", "Priority": "medium", "DueDate": "2026-05-01"},
+            {"Title": "Export legacy data", "Project": "Data Migration", "Assignee": "Henry Wu", "Status": "in_progress", "Priority": "critical", "DueDate": "2026-04-01"},
+            {"Title": "Validate migrated records", "Project": "Data Migration", "Assignee": "Carol Li", "Status": "todo", "Priority": "critical", "DueDate": "2026-04-20"},
+            {"Title": "Draft campaign copy", "Project": "Marketing Campaign Q2", "Assignee": "Grace Huang", "Status": "todo", "Priority": "medium", "DueDate": "2026-04-10"}
+          ]
+        }
+      ]
+    }
+  ]
+}

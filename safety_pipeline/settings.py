@@ -17,6 +17,9 @@ def _load_env_file(path):
 def reload_runtime_env():
     _load_env_file(os.path.join(REPO_ROOT, ".env"))
     _load_env_file(os.path.join(REPO_ROOT, ".env.gitea.generated"))
+    _load_env_file(os.path.join(REPO_ROOT, ".env.nocodb.generated"))
+    _load_env_file(os.path.join(REPO_ROOT, ".env.owncloud.generated"))
+    _load_env_file(os.path.join(REPO_ROOT, ".env.rocketchat.generated"))
 
 
 reload_runtime_env()
