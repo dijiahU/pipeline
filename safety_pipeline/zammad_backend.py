@@ -4,10 +4,11 @@ import subprocess
 import tempfile
 import time
 
+from .backend_abc import EnvironmentBackend
 from .settings import REPO_ROOT, reload_runtime_env
 
 
-class ZammadBackend:
+class ZammadBackend(EnvironmentBackend):
     def __init__(self):
         self._zammad_tools = None
         self._active_try_checkpoint = None

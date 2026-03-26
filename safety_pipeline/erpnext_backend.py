@@ -4,10 +4,11 @@ import subprocess
 import tempfile
 import time
 
+from .backend_abc import EnvironmentBackend
 from .settings import REPO_ROOT, reload_runtime_env
 
 
-class ERPNextBackend:
+class ERPNextBackend(EnvironmentBackend):
     def __init__(self):
         self._erpnext_tools = None
         self._active_try_checkpoint = None
@@ -160,8 +161,8 @@ class ERPNextBackend:
                 "-lc",
                 (
                     f"mysql -uroot -p{self._db_root_password()} "
-                    f"-e \"DROP DATABASE IF EXISTS \\\\`{db_name}\\\\`; "
-                    f"CREATE DATABASE \\\\`{db_name}\\\\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\""
+                    f"-e 'DROP DATABASE IF EXISTS `{db_name}`; "
+                    f"CREATE DATABASE `{db_name}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;'"
                 ),
             ]
         )

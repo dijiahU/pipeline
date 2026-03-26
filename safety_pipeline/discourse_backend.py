@@ -1,13 +1,28 @@
 import os
 import shutil
+import stat
 import subprocess
 import tempfile
 import time
 
+from .backend_abc import EnvironmentBackend
 from .settings import REPO_ROOT, reload_runtime_env
 
 
-class DiscourseBackend:
+def _ignore_sockets(directory, entries):
+    """shutil.copytree ignore function: skip Unix socket files."""
+    ignored = []
+    for entry in entries:
+        full_path = os.path.join(directory, entry)
+        try:
+            if stat.S_ISSOCK(os.lstat(full_path).st_mode):
+                ignored.append(entry)
+        except OSError:
+            pass
+    return ignored
+
+
+class DiscourseBackend(EnvironmentBackend):
     def __init__(self):
         self._discourse_tools = None
         self._active_try_checkpoint = None
@@ -81,7 +96,7 @@ class DiscourseBackend:
         snapshot_dir = os.path.join(checkpoint_root, "shared")
         self._stop_container()
         try:
-            shutil.copytree(self._shared_dir(), snapshot_dir)
+            shutil.copytree(self._shared_dir(), snapshot_dir, ignore=_ignore_sockets)
         finally:
             self._start_container()
         checkpoint = {"kind": "shared_dir_copy", "checkpoint_root": checkpoint_root, "snapshot_dir": snapshot_dir}
@@ -94,7 +109,7 @@ class DiscourseBackend:
         self._stop_container()
         try:
             shutil.rmtree(self._shared_dir(), ignore_errors=True)
-            shutil.copytree(checkpoint["snapshot_dir"], self._shared_dir())
+            shutil.copytree(checkpoint["snapshot_dir"], self._shared_dir(), ignore=_ignore_sockets)
         finally:
             self._start_container()
 

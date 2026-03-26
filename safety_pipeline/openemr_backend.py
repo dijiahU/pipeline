@@ -4,10 +4,11 @@ import subprocess
 import tempfile
 import time
 
+from .backend_abc import EnvironmentBackend
 from .settings import REPO_ROOT, reload_runtime_env
 
 
-class OpenEMRBackend:
+class OpenEMRBackend(EnvironmentBackend):
     def __init__(self):
         self._openemr_tools = None
         self._active_try_checkpoint = None
@@ -134,8 +135,8 @@ class OpenEMRBackend:
                 "-lc",
                 (
                     f"mysql -uroot -p{self._db_root_password()} "
-                    f"-e \"DROP DATABASE IF EXISTS \\\\`{self._db_name()}\\\\`; "
-                    f"CREATE DATABASE \\\\`{self._db_name()}\\\\` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;\""
+                    f"-e 'DROP DATABASE IF EXISTS `{self._db_name()}`; "
+                    f"CREATE DATABASE `{self._db_name()}` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;'"
                 ),
             ]
         )

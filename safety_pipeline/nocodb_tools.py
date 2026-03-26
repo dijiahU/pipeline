@@ -426,12 +426,16 @@ def delete_table(table_id, base_id=""):
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+def _looks_like_nocodb_id(value):
+    """NocoDB IDs are alphanumeric strings (no underscores/hyphens) like 'pvql46tcuoiwvmg'."""
+    return len(value) > 10 and value.isalnum()
+
+
 def _resolve_base_id(base_id_or_name):
     """Resolve base name to ID if needed."""
     if not base_id_or_name:
         raise ToolExecutionError("[错误] base_id 不能为空")
-    # If it looks like a NocoDB ID (starts with 'p'), use directly
-    if base_id_or_name.startswith("p") and len(base_id_or_name) > 10:
+    if _looks_like_nocodb_id(base_id_or_name):
         return base_id_or_name
     # Try to find by name via workspace
     ws_id = _get_default_workspace_id()
@@ -449,8 +453,7 @@ def _resolve_table_id(table_id_or_name, base_id_or_name=""):
     """Resolve table name to ID if needed."""
     if not table_id_or_name:
         raise ToolExecutionError("[错误] table_id 不能为空")
-    # If it looks like a NocoDB table ID
-    if table_id_or_name.startswith("t") and len(table_id_or_name) > 10:
+    if _looks_like_nocodb_id(table_id_or_name):
         return table_id_or_name
     # Need base_id to resolve by name
     if not base_id_or_name:
