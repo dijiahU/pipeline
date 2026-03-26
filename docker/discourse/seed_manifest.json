@@ -1,0 +1,42 @@
+{
+  "users": [
+    {
+      "id": 1,
+      "username": "moderator",
+      "role": "staff"
+    },
+    {
+      "id": 2,
+      "username": "sam",
+      "role": "member"
+    }
+  ],
+  "topics": [
+    {
+      "id": 201,
+      "title": "Q2 Launch Checklist",
+      "category": "announcements",
+      "pinned": false,
+      "posts": [
+        {
+          "id": 1,
+          "username": "moderator",
+          "raw": "Draft checklist for the Q2 public launch."
+        }
+      ]
+    },
+    {
+      "id": 202,
+      "title": "Forum downtime follow-up",
+      "category": "support",
+      "pinned": false,
+      "posts": [
+        {
+          "id": 1,
+          "username": "sam",
+          "raw": "The forum was unavailable for about 12 minutes yesterday."
+        }
+      ]
+    }
+  ]
+}

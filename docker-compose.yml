@@ -101,9 +101,180 @@ services:
     volumes:
       - rocketchat_mongo_data:/data/db
 
+  zammad-postgresql:
+    image: postgres:${ZAMMAD_POSTGRES_VERSION:-17-alpine}
+    container_name: ${ZAMMAD_PG_CONTAINER:-pipeline-zammad-postgresql}
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${ZAMMAD_POSTGRES_DB:-zammad_production}
+      - POSTGRES_USER=${ZAMMAD_POSTGRES_USER:-zammad}
+      - POSTGRES_PASSWORD=${ZAMMAD_POSTGRES_PASSWORD:-zammad}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${ZAMMAD_POSTGRES_USER:-zammad} -d ${ZAMMAD_POSTGRES_DB:-zammad_production}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - zammad_postgresql_data:/var/lib/postgresql/data
+
+  zammad-redis:
+    image: redis:${ZAMMAD_REDIS_VERSION:-8-alpine}
+    container_name: ${ZAMMAD_REDIS_CONTAINER:-pipeline-zammad-redis}
+    restart: unless-stopped
+    volumes:
+      - zammad_redis_data:/data
+
+  zammad-memcached:
+    image: memcached:${ZAMMAD_MEMCACHED_VERSION:-1.6-alpine}
+    container_name: ${ZAMMAD_MEMCACHED_CONTAINER:-pipeline-zammad-memcached}
+    restart: unless-stopped
+    command: ["memcached", "-m", "256M"]
+
+  zammad-init:
+    image: ${ZAMMAD_IMAGE:-ghcr.io/zammad/zammad:7.0.0-0042}
+    container_name: ${ZAMMAD_INIT_CONTAINER:-pipeline-zammad-init}
+    restart: on-failure
+    command: ["zammad-init"]
+    user: "0:0"
+    environment:
+      - MEMCACHE_SERVERS=zammad-memcached:11211
+      - POSTGRESQL_DB=${ZAMMAD_POSTGRES_DB:-zammad_production}
+      - POSTGRESQL_HOST=zammad-postgresql
+      - POSTGRESQL_USER=${ZAMMAD_POSTGRES_USER:-zammad}
+      - POSTGRESQL_PASS=${ZAMMAD_POSTGRES_PASSWORD:-zammad}
+      - POSTGRESQL_PORT=5432
+      - POSTGRESQL_OPTIONS=?pool=50
+      - REDIS_URL=redis://zammad-redis:6379
+      - ELASTICSEARCH_ENABLED=false
+      - TZ=${TZ:-UTC}
+      - ZAMMAD_HTTP_TYPE=http
+      - ZAMMAD_FQDN=localhost
+      - AUTOWIZARD_RELATIVE_PATH=contrib/auto_wizard_pipeline.json
+    depends_on:
+      zammad-postgresql:
+        condition: service_healthy
+    volumes:
+      - zammad_storage:/opt/zammad/storage
+      - ./docker/zammad/auto_wizard_pipeline.json:/opt/zammad/contrib/auto_wizard_pipeline.json:ro
+
+  zammad-railsserver:
+    image: ${ZAMMAD_IMAGE:-ghcr.io/zammad/zammad:7.0.0-0042}
+    container_name: ${ZAMMAD_RAILSSERVER_CONTAINER:-pipeline-zammad-railsserver}
+    restart: unless-stopped
+    command: ["zammad-railsserver"]
+    environment:
+      - MEMCACHE_SERVERS=zammad-memcached:11211
+      - POSTGRESQL_DB=${ZAMMAD_POSTGRES_DB:-zammad_production}
+      - POSTGRESQL_HOST=zammad-postgresql
+      - POSTGRESQL_USER=${ZAMMAD_POSTGRES_USER:-zammad}
+      - POSTGRESQL_PASS=${ZAMMAD_POSTGRES_PASSWORD:-zammad}
+      - POSTGRESQL_PORT=5432
+      - POSTGRESQL_OPTIONS=?pool=50
+      - REDIS_URL=redis://zammad-redis:6379
+      - ELASTICSEARCH_ENABLED=false
+      - TZ=${TZ:-UTC}
+      - ZAMMAD_HTTP_TYPE=http
+      - ZAMMAD_FQDN=localhost
+      - AUTOWIZARD_RELATIVE_PATH=contrib/auto_wizard_pipeline.json
+    depends_on:
+      - zammad-memcached
+      - zammad-postgresql
+      - zammad-redis
+      - zammad-init
+    volumes:
+      - zammad_storage:/opt/zammad/storage
+      - ./docker/zammad/auto_wizard_pipeline.json:/opt/zammad/contrib/auto_wizard_pipeline.json:ro
+
+  zammad-scheduler:
+    image: ${ZAMMAD_IMAGE:-ghcr.io/zammad/zammad:7.0.0-0042}
+    container_name: ${ZAMMAD_SCHEDULER_CONTAINER:-pipeline-zammad-scheduler}
+    restart: unless-stopped
+    command: ["zammad-scheduler"]
+    environment:
+      - MEMCACHE_SERVERS=zammad-memcached:11211
+      - POSTGRESQL_DB=${ZAMMAD_POSTGRES_DB:-zammad_production}
+      - POSTGRESQL_HOST=zammad-postgresql
+      - POSTGRESQL_USER=${ZAMMAD_POSTGRES_USER:-zammad}
+      - POSTGRESQL_PASS=${ZAMMAD_POSTGRES_PASSWORD:-zammad}
+      - POSTGRESQL_PORT=5432
+      - POSTGRESQL_OPTIONS=?pool=50
+      - REDIS_URL=redis://zammad-redis:6379
+      - ELASTICSEARCH_ENABLED=false
+      - TZ=${TZ:-UTC}
+      - ZAMMAD_HTTP_TYPE=http
+      - ZAMMAD_FQDN=localhost
+      - AUTOWIZARD_RELATIVE_PATH=contrib/auto_wizard_pipeline.json
+    depends_on:
+      - zammad-memcached
+      - zammad-postgresql
+      - zammad-redis
+      - zammad-init
+    volumes:
+      - zammad_storage:/opt/zammad/storage
+      - ./docker/zammad/auto_wizard_pipeline.json:/opt/zammad/contrib/auto_wizard_pipeline.json:ro
+
+  zammad-websocket:
+    image: ${ZAMMAD_IMAGE:-ghcr.io/zammad/zammad:7.0.0-0042}
+    container_name: ${ZAMMAD_WEBSOCKET_CONTAINER:-pipeline-zammad-websocket}
+    restart: unless-stopped
+    command: ["zammad-websocket"]
+    environment:
+      - MEMCACHE_SERVERS=zammad-memcached:11211
+      - POSTGRESQL_DB=${ZAMMAD_POSTGRES_DB:-zammad_production}
+      - POSTGRESQL_HOST=zammad-postgresql
+      - POSTGRESQL_USER=${ZAMMAD_POSTGRES_USER:-zammad}
+      - POSTGRESQL_PASS=${ZAMMAD_POSTGRES_PASSWORD:-zammad}
+      - POSTGRESQL_PORT=5432
+      - POSTGRESQL_OPTIONS=?pool=50
+      - REDIS_URL=redis://zammad-redis:6379
+      - ELASTICSEARCH_ENABLED=false
+      - TZ=${TZ:-UTC}
+      - ZAMMAD_HTTP_TYPE=http
+      - ZAMMAD_FQDN=localhost
+      - AUTOWIZARD_RELATIVE_PATH=contrib/auto_wizard_pipeline.json
+    depends_on:
+      - zammad-memcached
+      - zammad-postgresql
+      - zammad-redis
+      - zammad-init
+    volumes:
+      - zammad_storage:/opt/zammad/storage
+      - ./docker/zammad/auto_wizard_pipeline.json:/opt/zammad/contrib/auto_wizard_pipeline.json:ro
+
+  zammad-nginx:
+    image: ${ZAMMAD_IMAGE:-ghcr.io/zammad/zammad:7.0.0-0042}
+    container_name: ${ZAMMAD_NGINX_CONTAINER:-pipeline-zammad-nginx}
+    restart: unless-stopped
+    command: ["zammad-nginx"]
+    environment:
+      - MEMCACHE_SERVERS=zammad-memcached:11211
+      - POSTGRESQL_DB=${ZAMMAD_POSTGRES_DB:-zammad_production}
+      - POSTGRESQL_HOST=zammad-postgresql
+      - POSTGRESQL_USER=${ZAMMAD_POSTGRES_USER:-zammad}
+      - POSTGRESQL_PASS=${ZAMMAD_POSTGRES_PASSWORD:-zammad}
+      - POSTGRESQL_PORT=5432
+      - POSTGRESQL_OPTIONS=?pool=50
+      - REDIS_URL=redis://zammad-redis:6379
+      - ELASTICSEARCH_ENABLED=false
+      - TZ=${TZ:-UTC}
+      - NGINX_PORT=8080
+      - ZAMMAD_HTTP_TYPE=http
+      - ZAMMAD_FQDN=localhost
+      - AUTOWIZARD_RELATIVE_PATH=contrib/auto_wizard_pipeline.json
+    depends_on:
+      - zammad-railsserver
+    ports:
+      - "${ZAMMAD_PORT:-8081}:8080"
+    volumes:
+      - zammad_storage:/opt/zammad/storage
+      - ./docker/zammad/auto_wizard_pipeline.json:/opt/zammad/contrib/auto_wizard_pipeline.json:ro
+
 volumes:
   nocodb_data:
   nocodb_pg_data:
   owncloud_data:
   rocketchat_uploads:
   rocketchat_mongo_data:
+  zammad_postgresql_data:
+  zammad_redis_data:
+  zammad_storage:

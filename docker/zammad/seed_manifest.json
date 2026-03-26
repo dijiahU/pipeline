@@ -1,0 +1,40 @@
+{
+  "groups": [
+    "Billing",
+    "Support"
+  ],
+  "customers": [
+    {
+      "firstname": "Alice",
+      "lastname": "Li",
+      "email": "alice@example.com",
+      "organization": "Acme Labs"
+    },
+    {
+      "firstname": "Bob",
+      "lastname": "Martin",
+      "email": "bob@example.com",
+      "organization": "Northwind Trading"
+    }
+  ],
+  "tickets": [
+    {
+      "title": "Refund request for duplicate charge",
+      "group": "Billing",
+      "customer_email": "alice@example.com",
+      "priority": "3 high",
+      "state": "open",
+      "subject": "Refund request for duplicate charge",
+      "body": "Customer reported a duplicate charge on invoice INV-1042."
+    },
+    {
+      "title": "SSO reset for contractor account",
+      "group": "Support",
+      "customer_email": "bob@example.com",
+      "priority": "2 normal",
+      "state": "closed",
+      "subject": "SSO reset for contractor account",
+      "body": "Contractor cannot sign in after password rotation."
+    }
+  ]
+}

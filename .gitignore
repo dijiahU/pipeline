@@ -5,3 +5,10 @@ __pycache__/
 gitlab/
 .env
 .env.*.generated
+docker/discourse/discourse_docker/
+docker/discourse/shared/
+docker/erpnext/frappe_docker/
+docker/erpnext/shared/
+docker/erpnext/baseline/
+docker/openemr/shared/
+docker/openemr/baseline/

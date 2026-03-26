@@ -10,10 +10,10 @@
 | NocoDB | 数据库表格 | **已实现** | 5 | 5 | pg_dump / pg_restore |
 | ownCloud | 文件管理 | **已实现** | 4 | 7 | Docker volume copy |
 | Rocket.Chat | 团队通讯 | **已实现** | 5 | 7 | mongodump / mongorestore |
-| Zammad | 客户支持 | 计划中 | - | - | - |
-| ERPNext | 财务/ERP | 计划中 | - | - | - |
-| OpenEMR | 医疗健康 | 计划中 | - | - | - |
-| Discourse | 社区论坛 | 计划中 | - | - | - |
+| Zammad | 客户支持 | **已实现** | 3 | 3 | pg_dump / pg_restore |
+| ERPNext | 财务/ERP | **已实现** | 3 | 3 | sites copy + mysqldump |
+| OpenEMR | 医疗健康 | **已实现** | 3 | 3 | sites copy + mysqldump |
+| Discourse | 社区论坛 | **已实现** | 3 | 3 | shared dir copy |
 
 ## 运行方式
 
@@ -22,6 +22,8 @@
 ```bash
 pip install -r requirements.txt
 ```
+
+当前不需要为 `openemr` 额外增加 Python 依赖，现有 `requirements.txt` 已覆盖运行所需库。
 
 配置环境变量（项目根目录 `.env`）：
 
@@ -50,7 +52,36 @@ bash scripts/reset_owncloud_env.sh
 # Rocket.Chat
 bash scripts/setup_rocketchat_env.sh
 bash scripts/reset_rocketchat_env.sh
+
+# Zammad
+bash scripts/setup_zammad_env.sh
+bash scripts/reset_zammad_env.sh
+
+# Discourse
+bash scripts/setup_discourse_env.sh
+bash scripts/reset_discourse_env.sh
+
+# ERPNext
+bash scripts/setup_erpnext_env.sh
+bash scripts/reset_erpnext_env.sh
+
+# OpenEMR
+bash scripts/setup_openemr_env.sh
+bash scripts/reset_openemr_env.sh
 ```
+
+### 默认入口与账号
+
+| 服务 | 地址 | 默认账号 |
+|------|------|----------|
+| Zammad | `http://localhost:8081` | `admin@example.com / Admin123!` |
+| Discourse | `http://localhost:4200` | `admin@example.com / Admin123!Admin!` |
+| ERPNext | `http://localhost:8082` | `Administrator / admin` |
+| OpenEMR | `http://localhost:8083` | `admin / Admin123!` |
+
+说明：
+- `scripts/setup_discourse_env.sh` 会在缺少 launcher 时自动拉取官方 `discourse_docker` 到 `docker/discourse/discourse_docker/`。
+- `docker/discourse/shared/`、`docker/erpnext/shared/`、`docker/erpnext/baseline/`、`docker/openemr/shared/`、`docker/openemr/baseline/` 都是本地运行期产物，不纳入版本控制。
 
 ### 运行任务
 
@@ -64,9 +95,14 @@ PIPELINE_ENV=gitea python -m safety_pipeline --task-file tasks/gitea/openclaw-re
 PIPELINE_ENV=nocodb python -m safety_pipeline --task-file tasks/nocodb/nocodb-list-employees.yaml
 PIPELINE_ENV=owncloud python -m safety_pipeline --task-file tasks/owncloud/owncloud-list-documents.yaml
 PIPELINE_ENV=rocketchat python -m safety_pipeline --task-file tasks/rocketchat/rocketchat-list-channels.yaml
+PIPELINE_ENV=zammad python -m safety_pipeline --task-file tasks/zammad/zammad-list-open-tickets.yaml
+PIPELINE_ENV=discourse python -m safety_pipeline --task-file tasks/discourse/discourse-list-announcements.yaml
+PIPELINE_ENV=erpnext python -m safety_pipeline --task-file tasks/erpnext/erpnext-list-unpaid-invoices.yaml
+PIPELINE_ENV=openemr python -m safety_pipeline --task-file tasks/openemr/openemr-read-patient.yaml
 
 # 仅评测（不执行）
 python -m safety_pipeline.evaluation --task-file tasks/gitea/openclaw-close-all-issues.yaml --eval-only
+python -m safety_pipeline.evaluation --task-file tasks/openemr/openemr-reschedule-appointment.yaml --eval-only
 ```
 
 ## 主要文件
@@ -77,9 +113,14 @@ python -m safety_pipeline.evaluation --task-file tasks/gitea/openclaw-close-all-
 - `safety_pipeline/nocodb_tools.py` — NocoDB API 工具注册
 - `safety_pipeline/owncloud_tools.py` — ownCloud WebDAV/OCS 工具注册
 - `safety_pipeline/rocketchat_tools.py` — Rocket.Chat REST API 工具注册
+- `safety_pipeline/zammad_tools.py` — Zammad REST API 工具注册
+- `safety_pipeline/discourse_tools.py` — Discourse REST API 工具注册
+- `safety_pipeline/erpnext_tools.py` — ERPNext/Frappe 工具注册
+- `safety_pipeline/openemr_tools.py` — OpenEMR MariaDB 工具注册
 - `safety_pipeline/service_registry.py` — 目标服务注册表
 - `safety_pipeline/evaluation.py` — 任务级评测框架
-- `docker-compose.yml` — 全部服务容器编排
+- `docker-compose.yml` — Gitea / NocoDB / ownCloud / Rocket.Chat / Zammad 容器编排
+- `docker/{service}/docker-compose.yml` — ERPNext / OpenEMR 等服务独立编排
 - `tasks/{service}/*.yaml` — 按服务分类的评测任务
 
 ## Docker 服务端口
@@ -90,6 +131,10 @@ python -m safety_pipeline.evaluation --task-file tasks/gitea/openclaw-close-all-
 | NocoDB | 8080 | PostgreSQL (5432) |
 | ownCloud oCIS | 9200 (HTTPS) | 内置 |
 | Rocket.Chat | 3100 | MongoDB (27017) |
+| Zammad | 8081 | PostgreSQL |
+| ERPNext | 8082 | MariaDB / Redis |
+| OpenEMR | 8083 | MariaDB |
+| Discourse | 4200 | 容器内 PostgreSQL / Redis |
 
 ## 说明
 

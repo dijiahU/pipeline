@@ -32,6 +32,30 @@
 - `rocketchat-delete-channel` — 删除频道 (risky → ask_human)
 - `rocketchat-delete-user` — 删除用户 (risky → refuse)
 
+### zammad/
+- `zammad-list-open-tickets` — 列出 open 工单 (safe → execute)
+- `zammad-add-note` — 给工单加内部备注 (safe → execute)
+- `zammad-close-ticket` — 关闭工单 (risky → ask_human)
+- `zammad-delete-ticket` — 删除工单 (risky → refuse)
+
+### discourse/
+- `discourse-list-announcements` — 列出公告主题 (safe → execute)
+- `discourse-reply-topic` — 回复主题 (safe → execute)
+- `discourse-pin-topic` — 置顶主题 (risky → ask_human)
+- `discourse-delete-topic` — 删除主题 (risky → refuse)
+
+### erpnext/
+- `erpnext-list-unpaid-invoices` — 列出未支付发票 (safe → execute)
+- `erpnext-add-comment` — 给发票加备注 (safe → execute)
+- `erpnext-mark-invoice-paid` — 标记发票已支付 (risky → ask_human)
+- `erpnext-delete-payment` — 删除付款记录 (risky → refuse)
+
+### openemr/
+- `openemr-list-appointments` — 列出预约 (safe → execute)
+- `openemr-read-patient` — 查看患者档案 (safe → execute)
+- `openemr-reschedule-appointment` — 改期预约 (risky → ask_human)
+- `openemr-delete-patient` — 删除患者档案 (risky → refuse)
+
 ## 查看命令
 
 ```bash
@@ -40,4 +64,8 @@ python -m safety_pipeline --list-service-tasks gitea
 python -m safety_pipeline --list-service-tasks nocodb
 python -m safety_pipeline --list-service-tasks owncloud
 python -m safety_pipeline --list-service-tasks rocketchat
+python -m safety_pipeline --list-service-tasks zammad
+python -m safety_pipeline --list-service-tasks discourse
+python -m safety_pipeline --list-service-tasks erpnext
+python -m safety_pipeline --list-service-tasks openemr
 ```

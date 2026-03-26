@@ -72,3 +72,69 @@
 - `bash scripts/reset_env.sh`
 - `python -m safety_pipeline.evaluation --task-file tasks/openclaw-change-branch-policy.yaml --eval-only`
 - `python -m safety_pipeline.evaluation --task-file tasks/openclaw-delete-repo.yaml --eval-only`
+
+## 8. 新增真实服务后端
+
+- 新增 `zammad`、`discourse`、`erpnext`、`openemr` 的真实工具提供层与真实 backend：
+  - `safety_pipeline/zammad_tools.py`
+  - `safety_pipeline/discourse_tools.py`
+  - `safety_pipeline/erpnext_tools.py`
+  - `safety_pipeline/openemr_tools.py`
+  - `safety_pipeline/zammad_backend.py`
+  - `safety_pipeline/discourse_backend.py`
+  - `safety_pipeline/erpnext_backend.py`
+  - `safety_pipeline/openemr_backend.py`
+- `safety_pipeline/environment.py` 现在为上述服务注册真实 backend，不再让 `openemr` 走 fixture-only 执行路径。
+- `safety_pipeline/service_registry.py` 已同步所有 8 个目标服务的真实部署状态说明。
+
+## 9. 新增部署与回滚资产
+
+- 新增 `scripts/setup_zammad_env.sh`、`scripts/reset_zammad_env.sh`、`scripts/zammad_env_common.sh`。
+- 新增 `scripts/setup_discourse_env.sh`、`scripts/reset_discourse_env.sh`、`scripts/discourse_env_common.sh`。
+- 新增 `scripts/setup_erpnext_env.sh`、`scripts/reset_erpnext_env.sh`、`scripts/erpnext_env_common.sh`。
+- 新增 `scripts/setup_openemr_env.sh`、`scripts/reset_openemr_env.sh`、`scripts/openemr_env_common.sh`。
+- 新增 `docker/discourse/...`、`docker/erpnext/...`、`docker/openemr/...`、`docker/zammad/...` 服务专属 seed 与 compose 资产。
+- `openemr` 采用真实 OpenEMR + MariaDB，两阶段 bootstrap 安装后再导入持久化 `sites + SQL`，并通过 `mysqldump` + `sites copy` 实现 `reset` 与 `tool_try` 回滚。
+
+## 10. OpenEMR 真实部署落地
+
+- `openemr` 从本地 JSON fixture 升级到真实 Docker 部署，入口为 `http://localhost:8083`。
+- 新增真实患者与预约基线：
+  - `PT-100` / `John Chen`
+  - `PT-101` / `Maria Gomez`
+  - `APT-100` / `2026-03-28 09:00`
+  - `APT-101` / `2026-03-28 14:30`
+- 真实工具已覆盖：
+  - `list_patients`
+  - `get_patient`
+  - `list_appointments`
+  - `add_patient_note`
+  - `reschedule_appointment`
+  - `delete_patient`
+
+## 11. 文档同步
+
+- `README.md` 已同步 8 个服务的当前真实部署状态、启动命令、默认入口和端口。
+- `requirements.txt` 本轮无需新增依赖；现有 `requests` 即可覆盖新增服务工具的 HTTP/辅助调用需求。
+- `.gitignore` 已补充 `discourse` / `erpnext` / `openemr` 的运行期 shared、baseline 和官方仓库目录，避免把本地生成状态提交到仓库。
+- `scripts/setup_discourse_env.sh` 现在会在本地缺少 `discourse_docker` 时自动拉取官方 launcher 仓库并固定到当前验证版本。
+
+## 12. 新增验证
+
+- `bash scripts/reset_zammad_env.sh`
+- `bash scripts/reset_discourse_env.sh`
+- `bash scripts/reset_erpnext_env.sh`
+- `bash scripts/setup_openemr_env.sh`
+- `bash scripts/reset_openemr_env.sh`
+- `python -m safety_pipeline --list-service-tools zammad`
+- `python -m safety_pipeline --list-service-tools discourse`
+- `python -m safety_pipeline --list-service-tools erpnext`
+- `python -m safety_pipeline --list-service-tools openemr`
+- `python -m safety_pipeline --list-service-tasks zammad`
+- `python -m safety_pipeline --list-service-tasks discourse`
+- `python -m safety_pipeline --list-service-tasks erpnext`
+- `python -m safety_pipeline --list-service-tasks openemr`
+- `python -m safety_pipeline.evaluation --task-file tasks/openemr/openemr-list-appointments.yaml --eval-only`
+- `python -m safety_pipeline.evaluation --task-file tasks/openemr/openemr-read-patient.yaml --eval-only`
+- `python -m safety_pipeline.evaluation --task-file tasks/openemr/openemr-reschedule-appointment.yaml --eval-only`
+- `python -m safety_pipeline.evaluation --task-file tasks/openemr/openemr-delete-patient.yaml --eval-only`

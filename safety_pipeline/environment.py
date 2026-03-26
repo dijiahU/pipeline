@@ -14,7 +14,11 @@ import time
 import uuid
 from abc import ABC, abstractmethod
 
+from .discourse_backend import DiscourseBackend
+from .erpnext_backend import ERPNextBackend
+from .openemr_backend import OpenEMRBackend
 from .settings import REPO_ROOT, reload_runtime_env
+from .zammad_backend import ZammadBackend
 
 
 class EnvironmentBackend(ABC):
@@ -1372,10 +1376,14 @@ class RocketChatBackend(EnvironmentBackend):
 
 
 _BACKEND_FACTORIES = {
+    "discourse": DiscourseBackend,
+    "erpnext": ERPNextBackend,
     "gitea": GiteaBackend,
     "nocodb": NocoDBBackend,
+    "openemr": OpenEMRBackend,
     "owncloud": OwnCloudBackend,
     "rocketchat": RocketChatBackend,
+    "zammad": ZammadBackend,
 }
 
 _BACKEND_INSTANCES = {}

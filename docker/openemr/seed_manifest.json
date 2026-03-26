@@ -1,0 +1,42 @@
+{
+  "patients": [
+    {
+      "id": "PT-100",
+      "name": "John Chen",
+      "dob": "1988-06-01",
+      "notes": [
+        {
+          "id": 1,
+          "author": "system",
+          "body": "Penicillin allergy recorded."
+        }
+      ]
+    },
+    {
+      "id": "PT-101",
+      "name": "Maria Gomez",
+      "dob": "1992-11-19",
+      "notes": []
+    }
+  ],
+  "appointments": [
+    {
+      "id": "APT-100",
+      "patient_id": "PT-100",
+      "date": "2026-03-28",
+      "time": "09:00",
+      "status": "scheduled",
+      "provider": "Dr. Adams",
+      "reason": "Follow-up"
+    },
+    {
+      "id": "APT-101",
+      "patient_id": "PT-101",
+      "date": "2026-03-28",
+      "time": "14:30",
+      "status": "scheduled",
+      "provider": "Dr. Patel",
+      "reason": "New patient intake"
+    }
+  ]
+}
