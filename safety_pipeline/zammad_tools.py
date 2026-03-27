@@ -294,3 +294,167 @@ def delete_ticket(ticket_id):
     if resp.status_code >= 400:
         raise ToolExecutionError(f"[Zammad API 错误] {resp.status_code}: {resp.text[:500]}")
     return _format_json({"deleted_ticket_id": ticket_id})
+
+
+# ---------------------------------------------------------------------------
+# New tools based on Zammad REST API v1
+# ---------------------------------------------------------------------------
+
+@zammad_tool(
+    "get_customer",
+    "获取单个客户的详细信息。",
+    {
+        "customer_id": {"type": "integer", "description": "客户 ID"},
+    },
+)
+def get_customer(customer_id):
+    user = _api_json("GET", f"users/{customer_id}")
+    roles = _roles_by_id()
+    role_names = [roles.get(rid, "") for rid in user.get("role_ids", [])]
+    return _format_json({
+        "id": user.get("id"),
+        "firstname": user.get("firstname", ""),
+        "lastname": user.get("lastname", ""),
+        "email": user.get("email", ""),
+        "phone": user.get("phone", ""),
+        "organization_id": user.get("organization_id"),
+        "roles": role_names,
+        "active": user.get("active", True),
+        "note": user.get("note", ""),
+    })
+
+
+@zammad_tool(
+    "search_tickets",
+    "全文搜索工单。",
+    {
+        "query": {"type": "string", "description": "搜索关键词"},
+        "limit": {"type": "integer", "description": "返回数量限制，默认 20"},
+    },
+    required=["query"],
+)
+def search_tickets(query, limit=20):
+    data = _api_json("GET", "tickets/search", params={"query": query, "limit": limit, "expand": "true"})
+    assets = data if isinstance(data, list) else (data.get("assets", {}).get("Ticket", {}).values() if isinstance(data, dict) else [])
+    results = []
+    for ticket in assets:
+        if not isinstance(ticket, dict):
+            continue
+        results.append({
+            "id": ticket.get("id"),
+            "number": ticket.get("number", ""),
+            "title": ticket.get("title", ""),
+            "state": ticket.get("state", ""),
+            "group": ticket.get("group", ""),
+        })
+    return _format_json(results[:limit])
+
+
+@zammad_tool(
+    "list_ticket_articles",
+    "获取指定工单的所有文章/回复。",
+    {
+        "ticket_id": {"type": "integer", "description": "工单 ID"},
+    },
+)
+def list_ticket_articles(ticket_id):
+    articles = _api_json("GET", f"ticket_articles/by_ticket/{ticket_id}") or []
+    results = []
+    for article in articles:
+        results.append({
+            "id": article.get("id"),
+            "ticket_id": article.get("ticket_id"),
+            "subject": article.get("subject"),
+            "body": article.get("body", ""),
+            "internal": article.get("internal", False),
+            "sender": article.get("sender", ""),
+            "type": article.get("type", ""),
+            "created_at": article.get("created_at", ""),
+        })
+    return _format_json(results)
+
+
+@zammad_tool(
+    "create_ticket",
+    "创建一个新工单。",
+    {
+        "title": {"type": "string", "description": "工单标题"},
+        "group": {"type": "string", "description": "工单分组，如 Users"},
+        "customer_email": {"type": "string", "description": "客户邮箱"},
+        "body": {"type": "string", "description": "工单初始内容"},
+        "priority": {"type": "string", "description": "优先级，如 1 low、2 normal、3 high"},
+    },
+    required=["title", "group", "body"],
+    is_write=True,
+)
+def create_ticket(title, group, body, customer_email="", priority="2 normal"):
+    payload = {
+        "title": title,
+        "group": group,
+        "priority": priority,
+        "article": {
+            "subject": title,
+            "body": body,
+            "type": "note",
+            "internal": False,
+        },
+    }
+    if customer_email:
+        payload["customer"] = customer_email
+    data = _api_json("POST", "tickets", json=payload)
+    return _format_json({
+        "id": data.get("id"),
+        "number": data.get("number", ""),
+        "title": data.get("title", ""),
+    })
+
+
+@zammad_tool(
+    "update_ticket",
+    "更新工单属性（标题、优先级、分组、负责人等）。",
+    {
+        "ticket_id": {"type": "integer", "description": "工单 ID"},
+        "title": {"type": "string", "description": "新标题"},
+        "group": {"type": "string", "description": "新分组"},
+        "priority": {"type": "string", "description": "新优先级，如 1 low、2 normal、3 high"},
+        "owner_email": {"type": "string", "description": "新负责人邮箱"},
+    },
+    required=["ticket_id"],
+    is_write=True,
+)
+def update_ticket(ticket_id, title="", group="", priority="", owner_email=""):
+    payload = {}
+    if title:
+        payload["title"] = title
+    if group:
+        payload["group"] = group
+    if priority:
+        payload["priority"] = priority
+    if owner_email:
+        user = _find_user_by_email(owner_email)
+        if not user:
+            raise ToolExecutionError(f"[错误] 找不到用户: {owner_email}")
+        payload["owner_id"] = user["id"]
+    if not payload:
+        raise ToolExecutionError("[错误] 至少需要提供一个要更新的字段")
+    data = _api_json("PUT", f"tickets/{ticket_id}", json=payload)
+    return _format_json({"ticket_id": data.get("id"), "updated_fields": list(payload.keys())})
+
+
+@zammad_tool(
+    "add_ticket_tag",
+    "为工单添加标签。",
+    {
+        "ticket_id": {"type": "integer", "description": "工单 ID"},
+        "tag": {"type": "string", "description": "标签名称"},
+    },
+    required=["ticket_id", "tag"],
+    is_write=True,
+)
+def add_ticket_tag(ticket_id, tag):
+    _api_json("POST", "tags/add", json={
+        "object": "Ticket",
+        "o_id": ticket_id,
+        "item": tag,
+    })
+    return _format_json({"ticket_id": ticket_id, "tag": tag})

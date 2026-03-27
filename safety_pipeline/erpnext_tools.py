@@ -188,3 +188,103 @@ def update_invoice_status(invoice_name, status):
 )
 def delete_payment_entry(payment_name):
     return _format_json(_run_site_action("delete_payment_entry", {"payment_name": payment_name}))
+
+
+# ---------------------------------------------------------------------------
+# New tools based on ERPNext Frappe REST API
+# ---------------------------------------------------------------------------
+
+@erpnext_tool(
+    "list_customers",
+    "列出客户，可按名称筛选。",
+    {
+        "name_query": {"type": "string", "description": "客户名称关键词"},
+    },
+)
+def list_customers(name_query=""):
+    return _format_json(_run_site_action("list_customers", {"name_query": name_query}))
+
+
+@erpnext_tool(
+    "get_customer",
+    "获取单个客户详情。",
+    {
+        "customer_name": {"type": "string", "description": "客户名称"},
+    },
+    required=["customer_name"],
+)
+def get_customer(customer_name):
+    payload = _run_site_action("get_customer", {"customer_name": customer_name})
+    if not payload:
+        raise ToolExecutionError(f"[错误] 找不到客户: {customer_name}")
+    return _format_json(payload)
+
+
+@erpnext_tool(
+    "get_payment",
+    "获取单个付款记录详情。",
+    {
+        "payment_name": {"type": "string", "description": "付款记录编号"},
+    },
+    required=["payment_name"],
+)
+def get_payment(payment_name):
+    payload = _run_site_action("get_payment", {"payment_name": payment_name})
+    if not payload:
+        raise ToolExecutionError(f"[错误] 找不到付款记录: {payment_name}")
+    return _format_json(payload)
+
+
+@erpnext_tool(
+    "create_invoice",
+    "创建销售发票。",
+    {
+        "customer": {"type": "string", "description": "客户名称"},
+        "items": {
+            "type": "array",
+            "items": {"type": "object"},
+            "description": "发票行项目列表，每项包含 item_code、qty、rate",
+        },
+        "due_date": {"type": "string", "description": "到期日期，如 2026-04-15"},
+    },
+    required=["customer", "items"],
+    is_write=True,
+)
+def create_invoice(customer, items, due_date=""):
+    return _format_json(_run_site_action("create_invoice", {
+        "customer": customer,
+        "items": items,
+        "due_date": due_date,
+    }))
+
+
+@erpnext_tool(
+    "create_payment_entry",
+    "创建付款记录。",
+    {
+        "invoice_name": {"type": "string", "description": "关联的发票编号"},
+        "amount": {"type": "number", "description": "付款金额"},
+        "mode_of_payment": {"type": "string", "description": "付款方式，如 Cash、Wire Transfer"},
+    },
+    required=["invoice_name", "amount"],
+    is_write=True,
+)
+def create_payment_entry(invoice_name, amount, mode_of_payment="Cash"):
+    return _format_json(_run_site_action("create_payment_entry", {
+        "invoice_name": invoice_name,
+        "amount": amount,
+        "mode_of_payment": mode_of_payment,
+    }))
+
+
+@erpnext_tool(
+    "cancel_invoice",
+    "取消销售发票。已提交的发票才能取消。",
+    {
+        "invoice_name": {"type": "string", "description": "发票编号"},
+    },
+    required=["invoice_name"],
+    is_write=True,
+)
+def cancel_invoice(invoice_name):
+    return _format_json(_run_site_action("cancel_invoice", {"invoice_name": invoice_name}))

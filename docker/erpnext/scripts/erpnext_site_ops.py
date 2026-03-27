@@ -338,6 +338,118 @@ def action_delete_payment_entry(payload):
     return {"deleted_payment_name": payment_name}
 
 
+def action_list_customers(payload):
+    name_query = payload.get("name_query", "")
+    filters = {}
+    if name_query:
+        filters["customer_name"] = ["like", f"%{name_query}%"]
+    docs = frappe.get_all(
+        "Customer",
+        filters=filters,
+        fields=["name", "customer_name", "customer_type", "customer_group", "territory"],
+        order_by="name asc",
+    )
+    return [
+        {
+            "name": d["name"],
+            "customer_name": d["customer_name"],
+            "customer_type": d.get("customer_type", ""),
+            "customer_group": d.get("customer_group", ""),
+            "territory": d.get("territory", ""),
+        }
+        for d in docs
+    ]
+
+
+def action_get_customer(payload):
+    customer_name = payload["customer_name"]
+    if not frappe.db.exists("Customer", customer_name):
+        return None
+    doc = frappe.get_doc("Customer", customer_name)
+    invoices = frappe.get_all(
+        "Sales Invoice",
+        filters={"customer": customer_name},
+        fields=["name", "status", "grand_total"],
+        order_by="name asc",
+    )
+    return {
+        "name": doc.name,
+        "customer_name": doc.customer_name,
+        "customer_type": doc.customer_type or "",
+        "customer_group": doc.customer_group or "",
+        "territory": doc.territory or "",
+        "invoice_count": len(invoices),
+        "invoices": [
+            {"name": inv["name"], "status": inv["status"], "grand_total": float(inv.get("grand_total") or 0)}
+            for inv in invoices
+        ],
+    }
+
+
+def action_create_invoice(payload):
+    customer = payload["customer"]
+    items = payload.get("items", [])
+    due_date = payload.get("due_date") or frappe.utils.add_days(frappe.utils.nowdate(), 30)
+    _ensure_customer(customer)
+    company = frappe.db.get_single_value("Global Defaults", "default_company")
+    invoice_items = []
+    for item in items:
+        _ensure_item(item["item_code"], item.get("item_name", item["item_code"]))
+        invoice_items.append({
+            "item_code": item["item_code"],
+            "qty": item.get("qty", 1),
+            "rate": float(item.get("rate", 0)),
+        })
+    doc = frappe.get_doc({
+        "doctype": "Sales Invoice",
+        "naming_series": "ACC-SINV-.YYYY.-.####",
+        "customer": customer,
+        "company": company,
+        "posting_date": frappe.utils.nowdate(),
+        "due_date": due_date,
+        "set_posting_time": 1,
+        "items": invoice_items,
+    })
+    doc.insert(ignore_permissions=True)
+    doc.submit()
+    doc.reload()
+    return _invoice_summary(doc)
+
+
+def action_create_payment_entry(payload):
+    invoice_name = payload["invoice_name"]
+    amount = float(payload["amount"])
+    mode_of_payment = payload.get("mode_of_payment", "Cash")
+    if not frappe.db.exists("Sales Invoice", invoice_name):
+        raise frappe.DoesNotExistError(f"Sales Invoice {invoice_name} does not exist")
+
+    from erpnext.accounts.doctype.payment_entry.payment_entry import get_payment_entry
+
+    payment_doc = get_payment_entry("Sales Invoice", invoice_name)
+    payment_doc.naming_series = "ACC-PAY-.YYYY.-.####"
+    payment_doc.reference_no = f"PIPELINE-{invoice_name}"
+    payment_doc.reference_date = frappe.utils.nowdate()
+    payment_doc.posting_date = frappe.utils.nowdate()
+    payment_doc.mode_of_payment = mode_of_payment
+    payment_doc.paid_amount = amount
+    payment_doc.received_amount = amount
+    payment_doc.insert(ignore_permissions=True)
+    payment_doc.reload()
+    return _payment_summary(payment_doc)
+
+
+def action_cancel_invoice(payload):
+    invoice_name = payload["invoice_name"]
+    if not frappe.db.exists("Sales Invoice", invoice_name):
+        raise frappe.DoesNotExistError(f"Sales Invoice {invoice_name} does not exist")
+    doc = frappe.get_doc("Sales Invoice", invoice_name)
+    if doc.docstatus != 1:
+        raise ValueError(f"发票 {invoice_name} 尚未提交（docstatus={doc.docstatus}），无法取消")
+    doc.cancel()
+    doc.reload()
+    return {"invoice_name": invoice_name, "status": doc.status, "docstatus": doc.docstatus}
+
+
 ACTIONS = {
     "bootstrap": action_bootstrap,
     "seed": action_seed,
@@ -348,6 +460,11 @@ ACTIONS = {
     "add_invoice_comment": action_add_invoice_comment,
     "update_invoice_status": action_update_invoice_status,
     "delete_payment_entry": action_delete_payment_entry,
+    "list_customers": action_list_customers,
+    "get_customer": action_get_customer,
+    "create_invoice": action_create_invoice,
+    "create_payment_entry": action_create_payment_entry,
+    "cancel_invoice": action_cancel_invoice,
 }
 
 

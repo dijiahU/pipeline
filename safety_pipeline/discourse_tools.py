@@ -292,3 +292,139 @@ def set_topic_pinned(topic_id, pinned=True):
 def delete_topic(topic_id):
     _api("DELETE", f"t/{int(topic_id)}.json")
     return _format_json({"deleted_topic_id": int(topic_id)})
+
+
+# ---------------------------------------------------------------------------
+# New tools based on Discourse REST API
+# ---------------------------------------------------------------------------
+
+@discourse_tool(
+    "list_categories",
+    "列出论坛的所有分类。",
+    {},
+)
+def list_categories():
+    categories = _categories()
+    results = []
+    for cat in categories.values():
+        results.append({
+            "id": cat["id"],
+            "name": cat["name"],
+            "slug": cat["slug"],
+        })
+    return _format_json(results)
+
+
+@discourse_tool(
+    "get_user",
+    "获取指定用户的详细信息。",
+    {
+        "username": {"type": "string", "description": "用户名"},
+    },
+    required=["username"],
+)
+def get_user(username):
+    payload = _api_json("GET", f"u/{username}.json")
+    user = payload.get("user", {}) if isinstance(payload, dict) else {}
+    return _format_json({
+        "id": user.get("id"),
+        "username": user.get("username", ""),
+        "name": user.get("name", ""),
+        "admin": bool(user.get("admin", False)),
+        "moderator": bool(user.get("moderator", False)),
+        "trust_level": user.get("trust_level", 0),
+        "created_at": user.get("created_at", ""),
+        "post_count": user.get("post_count", 0),
+        "topic_count": user.get("topic_count", 0),
+    })
+
+
+@discourse_tool(
+    "search_topics",
+    "搜索论坛主题。",
+    {
+        "query": {"type": "string", "description": "搜索关键词"},
+    },
+    required=["query"],
+)
+def search_topics(query):
+    payload = _api_json("GET", "search.json", params={"q": query})
+    topics = (payload.get("topics") or []) if isinstance(payload, dict) else []
+    results = []
+    for topic in topics:
+        results.append({
+            "id": topic.get("id"),
+            "title": topic.get("title", ""),
+            "slug": topic.get("slug", ""),
+            "posts_count": topic.get("posts_count", 0),
+            "created_at": topic.get("created_at", ""),
+        })
+    return _format_json(results)
+
+
+@discourse_tool(
+    "create_topic",
+    "创建一个新的论坛主题。",
+    {
+        "title": {"type": "string", "description": "主题标题"},
+        "raw": {"type": "string", "description": "主题内容（第一条帖子）"},
+        "category": {"type": "string", "description": "分类名称"},
+        "username": {"type": "string", "description": "发帖用户名"},
+    },
+    required=["title", "raw"],
+    is_write=True,
+)
+def create_topic(title, raw, category="", username="admin"):
+    data = {"title": title, "raw": raw}
+    if category:
+        cat_id = _category_id_by_name(category)
+        if cat_id is not None:
+            data["category"] = cat_id
+    payload = _api_json("POST", "posts.json", username=username, data=data)
+    return _format_json({
+        "topic_id": payload.get("topic_id"),
+        "post_id": payload.get("id"),
+        "title": title,
+        "username": username,
+    })
+
+
+@discourse_tool(
+    "close_topic",
+    "关闭或重新打开论坛主题。",
+    {
+        "topic_id": {"type": "integer", "description": "主题 ID"},
+        "closed": {"type": "boolean", "description": "true 关闭，false 重新打开"},
+    },
+    required=["topic_id"],
+    is_write=True,
+)
+def close_topic(topic_id, closed=True):
+    _api(
+        "PUT",
+        f"t/{int(topic_id)}/status",
+        data={"status": "closed", "enabled": "true" if closed else "false"},
+    )
+    return _format_json({"topic_id": int(topic_id), "closed": closed})
+
+
+@discourse_tool(
+    "suspend_user",
+    "暂停用户账号，阻止其发帖和登录。",
+    {
+        "user_id": {"type": "integer", "description": "用户 ID"},
+        "duration_days": {"type": "integer", "description": "暂停天数"},
+        "reason": {"type": "string", "description": "暂停原因"},
+    },
+    required=["user_id", "reason"],
+    is_write=True,
+)
+def suspend_user(user_id, reason, duration_days=365):
+    import datetime as _dt
+    suspend_until = (_dt.datetime.utcnow() + _dt.timedelta(days=duration_days)).strftime("%Y-%m-%d")
+    _api(
+        "PUT",
+        f"admin/users/{int(user_id)}/suspend.json",
+        json={"suspend_until": suspend_until, "reason": reason},
+    )
+    return _format_json({"user_id": int(user_id), "suspended": True, "reason": reason, "duration_days": duration_days})

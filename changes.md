@@ -138,3 +138,46 @@
 - `python -m safety_pipeline.evaluation --task-file tasks/openemr/openemr-read-patient.yaml --eval-only`
 - `python -m safety_pipeline.evaluation --task-file tasks/openemr/openemr-reschedule-appointment.yaml --eval-only`
 - `python -m safety_pipeline.evaluation --task-file tasks/openemr/openemr-delete-patient.yaml --eval-only`
+
+## 13. 工具扩展与任务全路径覆盖
+
+### 13.1 四服务工具扩展（+24 工具）
+
+为 Zammad、ERPNext、OpenEMR、Discourse 各新增 6 个工具，总计从 68 扩展到 92 个工具（每服务 10-12 个）：
+
+- **Zammad**（+6）：`get_customer`、`search_tickets`、`list_ticket_articles`、`create_ticket`、`update_ticket`、`add_ticket_tag`
+- **ERPNext**（+6）：`list_customers`、`get_customer`、`get_payment`、`create_invoice`、`create_payment_entry`、`cancel_invoice`
+- **OpenEMR**（+6）：`get_appointment`、`list_encounters`、`list_patient_allergies`、`create_appointment`、`update_patient`、`add_allergy`
+- **Discourse**（+6）：`list_categories`、`get_user`、`search_topics`、`create_topic`、`close_topic`、`suspend_user`
+
+修改文件：
+- `safety_pipeline/zammad_tools.py`
+- `safety_pipeline/erpnext_tools.py`
+- `safety_pipeline/openemr_tools.py`
+- `safety_pipeline/discourse_tools.py`
+- `docker/erpnext/scripts/erpnext_site_ops.py`（新增 5 个 action handler）
+
+### 13.2 任务全路径覆盖（+55 任务 YAML）
+
+新增 55 个任务 YAML（47 个服务覆盖任务 + 4 个 replan 路径 + 4 个 terminate 路径），总计 107 个任务。
+
+流程路径分布：
+
+| 路径 | 数量 | 说明 |
+|------|------|------|
+| A: safe → execute | 37 | 安全读取直接执行 |
+| B: safe → try → safe → execute | 26 | 写操作经沙箱验证后执行 |
+| C: risky → refuse | 13 | 风险操作拒绝 |
+| D: risky → ask_human | 16 | 风险操作请求人工确认 |
+| E: risky → replan | 4 | 风险操作→重新规划更安全的方案 |
+| G: try → unsafe → ask_human | 1 | 沙箱检测到不安全→请求人工 |
+| H: try → unsafe → terminate | 4 | 沙箱检测到不可恢复风险→终止 |
+| I: immediate refuse | 6 | 明显恶意立即拒绝 |
+
+每服务 12-14 个任务，分布均匀：discourse(14)、erpnext(14)、openemr(14)、zammad(14)、gitea(13)、owncloud(13)、rocketchat(13)、nocodb(12)。
+
+### 13.3 设计原则
+
+- **工具抽象**：一个工具 = 一个 try/judge 周期 = 一个 commit/rollback 决策点。读工具可合并，写工具按回滚边界拆分。
+- **replan 任务**：用户原始请求有风险，但 agent 可以提出更安全的替代方案（如"批量转移所有工单"→"只转两个低优先级工单"）。
+- **terminate 任务**：sandbox 执行后发现不可恢复损害且无人工干预通道（如篡改患者病历归属、覆盖共享文件）。

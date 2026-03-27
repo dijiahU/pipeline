@@ -395,3 +395,198 @@ def delete_patient(patient_id):
         )
     )
     return _format_json({"deleted_patient_id": patient_id})
+
+
+# ---------------------------------------------------------------------------
+# New tools based on OpenEMR REST API
+# ---------------------------------------------------------------------------
+
+@openemr_tool(
+    "get_appointment",
+    "获取单个预约的详细信息。",
+    {
+        "appointment_id": {"type": "string", "description": "预约 ID，如 APT-100"},
+    },
+    required=["appointment_id"],
+)
+def get_appointment(appointment_id):
+    appointment = _require_appointment(appointment_id)
+    return _format_json(appointment)
+
+
+@openemr_tool(
+    "list_encounters",
+    "列出患者的就诊记录。",
+    {
+        "patient_id": {"type": "string", "description": "患者 ID"},
+    },
+    required=["patient_id"],
+)
+def list_encounters(patient_id):
+    patient = _require_patient(patient_id)
+    rows = _query_rows(
+        """
+        SELECT
+          CAST(id AS CHAR),
+          COALESCE(DATE_FORMAT(date, '%Y-%m-%d'), ''),
+          COALESCE(reason, ''),
+          COALESCE(facility, ''),
+          COALESCE(pc_catid, ''),
+          COALESCE(provider_id, '')
+        FROM form_encounter
+        WHERE pid = {pid}
+        ORDER BY date DESC;
+        """.format(pid=patient["pid"]),
+        ["id", "date", "reason", "facility", "category", "provider_id"],
+    )
+    return _format_json([
+        {
+            "id": row["id"],
+            "patient_id": patient_id,
+            "date": row["date"],
+            "reason": row["reason"],
+            "facility": row["facility"],
+        }
+        for row in rows
+    ])
+
+
+@openemr_tool(
+    "list_patient_allergies",
+    "列出患者的过敏记录。",
+    {
+        "patient_id": {"type": "string", "description": "患者 ID"},
+    },
+    required=["patient_id"],
+)
+def list_patient_allergies(patient_id):
+    patient = _require_patient(patient_id)
+    rows = _query_rows(
+        """
+        SELECT
+          CAST(id AS CHAR),
+          COALESCE(title, ''),
+          COALESCE(reaction, ''),
+          COALESCE(severity_al, ''),
+          COALESCE(DATE_FORMAT(begdate, '%Y-%m-%d'), ''),
+          COALESCE(activity, 1)
+        FROM lists
+        WHERE pid = {pid} AND type = 'allergy'
+        ORDER BY begdate DESC;
+        """.format(pid=patient["pid"]),
+        ["id", "title", "reaction", "severity", "begin_date", "active"],
+    )
+    return _format_json([
+        {
+            "id": row["id"],
+            "patient_id": patient_id,
+            "allergen": row["title"],
+            "reaction": row["reaction"],
+            "severity": row["severity"],
+            "begin_date": row["begin_date"],
+            "active": row["active"] != "0",
+        }
+        for row in rows
+    ])
+
+
+@openemr_tool(
+    "create_appointment",
+    "为患者创建新预约。",
+    {
+        "patient_id": {"type": "string", "description": "患者 ID"},
+        "date": {"type": "string", "description": "日期，如 2026-04-01"},
+        "time": {"type": "string", "description": "时间，如 09:30"},
+        "reason": {"type": "string", "description": "预约原因"},
+        "provider": {"type": "string", "description": "医生"},
+    },
+    required=["patient_id", "date", "time"],
+    is_write=True,
+)
+def create_appointment(patient_id, date, time, reason="", provider=""):
+    patient = _require_patient(patient_id)
+    start_dt = datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M")
+    end_dt = start_dt + timedelta(minutes=30)
+    _run_mysql(
+        """
+        INSERT INTO openemr_postcalendar_events
+          (pc_catid, pc_multiple, pc_aid, pc_pid, pc_topic, pc_eventDate, pc_endDate, pc_duration,
+           pc_recurrtype, pc_recurrfreq, pc_startTime, pc_endTime, pc_alldayevent, pc_eventstatus,
+           pc_sharing, pc_apptstatus, pc_prefcatid, pc_facility, pc_sendalertsms, pc_sendalertemail,
+           pc_billing_location, pc_room, pc_title, pc_hometext)
+        VALUES
+          (9, 0, 'admin', {pid}, 1, {date}, {date}, 1800, 0, 0,
+           {start_time}, {end_time}, 0, 0, 0, 'scheduled', 0, 0, 'NO', 'NO', 0, '',
+           {reason}, {provider});
+        """.format(
+            pid=_sql_literal(str(patient["pid"])),
+            date=_sql_literal(date),
+            start_time=_sql_literal(start_dt.strftime("%H:%M:%S")),
+            end_time=_sql_literal(end_dt.strftime("%H:%M:%S")),
+            reason=_sql_literal(reason),
+            provider=_sql_literal(provider),
+        )
+    )
+    new_id = _run_mysql("SELECT LAST_INSERT_ID();", expect_rows=True).strip()
+    return _format_json({"appointment_id": f"APT-{new_id}", "patient_id": patient_id, "date": date, "time": time})
+
+
+@openemr_tool(
+    "update_patient",
+    "更新患者的基本信息。",
+    {
+        "patient_id": {"type": "string", "description": "患者 ID"},
+        "phone": {"type": "string", "description": "新电话号码"},
+        "email": {"type": "string", "description": "新邮箱"},
+        "sex": {"type": "string", "description": "性别，如 Male、Female"},
+    },
+    required=["patient_id"],
+    is_write=True,
+)
+def update_patient(patient_id, phone="", email="", sex=""):
+    patient = _require_patient(patient_id)
+    updates = []
+    if phone:
+        updates.append(f"phone_home = {_sql_literal(phone)}")
+    if email:
+        updates.append(f"email = {_sql_literal(email)}")
+    if sex:
+        updates.append(f"sex = {_sql_literal(sex)}")
+    if not updates:
+        raise ToolExecutionError("[错误] 至少需要提供一个要更新的字段")
+    _run_mysql(
+        "UPDATE patient_data SET {updates} WHERE pid = {pid} LIMIT 1;".format(
+            updates=", ".join(updates),
+            pid=patient["pid"],
+        )
+    )
+    updated = _patient_record_by_external_id(patient_id)
+    return _format_json(updated)
+
+
+@openemr_tool(
+    "add_allergy",
+    "为患者添加过敏记录。",
+    {
+        "patient_id": {"type": "string", "description": "患者 ID"},
+        "allergen": {"type": "string", "description": "过敏原名称"},
+        "reaction": {"type": "string", "description": "过敏反应"},
+        "severity": {"type": "string", "description": "严重程度，如 mild、moderate、severe"},
+    },
+    required=["patient_id", "allergen"],
+    is_write=True,
+)
+def add_allergy(patient_id, allergen, reaction="", severity=""):
+    patient = _require_patient(patient_id)
+    _run_mysql(
+        """
+        INSERT INTO lists (date, type, title, reaction, severity_al, pid, activity, begdate, user, groupname)
+        VALUES (NOW(), 'allergy', {allergen}, {reaction}, {severity}, {pid}, 1, CURDATE(), 'admin', 'Default');
+        """.format(
+            allergen=_sql_literal(allergen),
+            reaction=_sql_literal(reaction),
+            severity=_sql_literal(severity),
+            pid=patient["pid"],
+        )
+    )
+    return _format_json({"patient_id": patient_id, "allergen": allergen, "reaction": reaction, "severity": severity})
