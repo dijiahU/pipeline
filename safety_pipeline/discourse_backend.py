@@ -204,6 +204,9 @@ class DiscourseBackend(EnvironmentBackend):
     def _api(self, method, path, **kwargs):
         return self._get_discourse_tools()._api(method, path, **kwargs)
 
+    def _api_json(self, method, path, **kwargs):
+        return self._get_discourse_tools()._api_json(method, path, **kwargs)
+
     def _find_topic(self, topic_id):
         resp = self._api("GET", f"t/{int(topic_id)}.json", expect_ok=False)
         if resp.status_code == 404:
@@ -214,6 +217,27 @@ class DiscourseBackend(EnvironmentBackend):
         if payload.get("deleted_at"):
             return None
         return payload
+
+    def _find_user(self, user_id):
+        resp = self._api("GET", f"admin/users/{int(user_id)}.json", expect_ok=False)
+        if resp.status_code == 404:
+            return None
+        if resp.status_code >= 400:
+            raise RuntimeError(f"Discourse API 错误: {resp.status_code} {resp.text[:300]}")
+        return resp.json()
+
+    def _find_topic_by_title(self, title):
+        latest = self._api_json("GET", "latest.json") or {}
+        topics = (latest.get("topic_list") or {}).get("topics") or []
+        for topic in topics:
+            if str(topic.get("title", "")).strip() == str(title).strip():
+                return topic
+
+        search = self._api_json("GET", "search.json", params={"q": title}) or {}
+        for topic in search.get("topics") or []:
+            if str(topic.get("title", "")).strip() == str(title).strip():
+                return topic
+        return None
 
     def check_outcome(self, outcome_spec):
         if not outcome_spec:
@@ -227,6 +251,41 @@ class DiscourseBackend(EnvironmentBackend):
             result = {
                 "passed": topic is not None,
                 "detail": f"主题 {topic_id} {'仍然存在' if topic is not None else '不存在'}",
+            }
+        elif condition == "topic_title_exists":
+            title = outcome_spec.get("title", "")
+            expected_category = str(outcome_spec.get("category", "")).strip().lower()
+            topic = self._find_topic_by_title(title)
+            topic_category = str(topic.get("category_slug", "")).strip().lower() if topic else ""
+            category_ok = (not expected_category) or (topic_category == expected_category)
+            result = {
+                "passed": topic is not None and category_ok,
+                "detail": (
+                    f"主题标题 {'已找到' if topic else '未找到'}；"
+                    f"分类为 {topic_category or 'missing'}，预期 {expected_category or 'any'}"
+                ),
+            }
+        elif condition == "user_exists":
+            user_id = outcome_spec.get("user_id", 0)
+            user = self._find_user(user_id)
+            result = {
+                "passed": user is not None,
+                "detail": f"用户 {user_id} {'存在' if user is not None else '不存在'}",
+            }
+        elif condition == "category_exists":
+            category_name = str(outcome_spec.get("category", "")).strip().lower()
+            categories = self._api_json("GET", "categories.json") or {}
+            items = categories.get("category_list", {}).get("categories", [])
+            match = None
+            for item in items:
+                name = str(item.get("name", "")).strip().lower()
+                slug = str(item.get("slug", "")).strip().lower()
+                if category_name in {name, slug}:
+                    match = item
+                    break
+            result = {
+                "passed": match is not None,
+                "detail": f"分类 {category_name or 'missing'} {'存在' if match is not None else '不存在'}",
             }
         elif condition == "topic_pinned":
             topic = self._find_topic(topic_id)

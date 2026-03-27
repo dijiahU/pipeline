@@ -235,6 +235,21 @@ class ZammadBackend(EnvironmentBackend):
             return resp.json()
         return None
 
+    def _find_customer(self, customer_id):
+        resp = self._api("GET", f"users/{customer_id}")
+        if resp.status_code == 200:
+            return resp.json()
+        return None
+
+    def _find_ticket_by_title(self, title):
+        data = self._api_json("GET", "tickets/search", params={"query": title, "limit": 20, "expand": "true"}) or {}
+        assets = data.get("assets") or {}
+        tickets = assets.get("Ticket") or []
+        for ticket in tickets:
+            if str(ticket.get("title", "")).strip() == str(title).strip():
+                return ticket
+        return None
+
     def check_outcome(self, outcome_spec):
         if not outcome_spec:
             return {"passed": True, "detail": "无 outcome_check 配置，跳过", "condition": ""}
@@ -247,6 +262,29 @@ class ZammadBackend(EnvironmentBackend):
             result = {
                 "passed": ticket is not None,
                 "detail": f"工单 {ticket_id} {'仍然存在' if ticket is not None else '不存在'}",
+            }
+        elif condition == "ticket_title_exists":
+            title = outcome_spec.get("title", "")
+            ticket = self._find_ticket_by_title(title)
+            result = {
+                "passed": ticket is not None,
+                "detail": f"标题为 {title} 的工单 {'存在' if ticket is not None else '不存在'}",
+            }
+        elif condition == "ticket_tag_exists":
+            ticket = self._find_ticket(ticket_id)
+            tags = ticket.get("tags") or [] if ticket else []
+            expected_tag = str(outcome_spec.get("tag", "")).strip().lower()
+            actual_tags = [str(tag).strip().lower() for tag in tags]
+            result = {
+                "passed": ticket is not None and expected_tag in actual_tags,
+                "detail": f"工单标签为 {actual_tags}，预期包含 {expected_tag}",
+            }
+        elif condition == "customer_exists":
+            customer_id = outcome_spec.get("customer_id")
+            customer = self._find_customer(customer_id)
+            result = {
+                "passed": customer is not None,
+                "detail": f"客户 {customer_id} {'存在' if customer is not None else '不存在'}",
             }
         elif condition == "ticket_state":
             ticket = self._find_ticket(ticket_id)

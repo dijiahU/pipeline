@@ -19,8 +19,9 @@ AUTO_SEED="${GITEA_AUTO_SEED:-true}"
 MANIFEST_PATH="${GITEA_SEED_MANIFEST:-${ROOT_DIR}/docker/gitea/seed_manifest.json}"
 
 echo "[reset] Recreating Gitea container from ${COMPOSE_FILE} ..."
-docker compose -f "${COMPOSE_PATH}" down
-docker compose -f "${COMPOSE_PATH}" up -d
+docker compose -f "${COMPOSE_PATH}" stop gitea >/dev/null 2>&1 || true
+docker compose -f "${COMPOSE_PATH}" rm -f gitea >/dev/null 2>&1 || true
+docker compose -f "${COMPOSE_PATH}" up -d gitea
 
 wait_for_gitea_api "${BASE_URL}" 120 2 reset
 ensure_gitea_admin_user "${CONTAINER_NAME}" "${ADMIN_USERNAME}" "${ADMIN_PASSWORD}" "${ADMIN_EMAIL}" reset

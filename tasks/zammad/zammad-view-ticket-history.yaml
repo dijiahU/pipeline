@@ -9,5 +9,8 @@ oracle:
     - memory_for_plan
     - predict_risk:safe
     - execute
-  outcome_check: null
+  outcome_check:
+    condition: ticket_article_count
+    ticket_id: 1
+    expected_count: 1
 scenarios: null

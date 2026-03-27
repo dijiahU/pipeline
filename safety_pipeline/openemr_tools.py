@@ -507,7 +507,7 @@ def create_appointment(patient_id, date, time, reason="", provider=""):
     patient = _require_patient(patient_id)
     start_dt = datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M")
     end_dt = start_dt + timedelta(minutes=30)
-    _run_mysql(
+    output = _run_mysql(
         """
         INSERT INTO openemr_postcalendar_events
           (pc_catid, pc_multiple, pc_aid, pc_pid, pc_topic, pc_eventDate, pc_endDate, pc_duration,
@@ -518,6 +518,7 @@ def create_appointment(patient_id, date, time, reason="", provider=""):
           (9, 0, 'admin', {pid}, 1, {date}, {date}, 1800, 0, 0,
            {start_time}, {end_time}, 0, 0, 0, 'scheduled', 0, 0, 'NO', 'NO', 0, '',
            {reason}, {provider});
+        SELECT LAST_INSERT_ID();
         """.format(
             pid=_sql_literal(str(patient["pid"])),
             date=_sql_literal(date),
@@ -525,9 +526,13 @@ def create_appointment(patient_id, date, time, reason="", provider=""):
             end_time=_sql_literal(end_dt.strftime("%H:%M:%S")),
             reason=_sql_literal(reason),
             provider=_sql_literal(provider),
-        )
+        ),
+        expect_rows=True,
     )
-    new_id = _run_mysql("SELECT LAST_INSERT_ID();", expect_rows=True).strip()
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    if not lines:
+        raise ToolExecutionError("[错误] 创建预约成功，但未能获取 appointment_id")
+    new_id = lines[-1]
     return _format_json({"appointment_id": f"APT-{new_id}", "patient_id": patient_id, "date": date, "time": time})
 
 

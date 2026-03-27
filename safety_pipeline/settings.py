@@ -1,8 +1,21 @@
 import os
 
+
+GENERATED_ENV_FILES = (
+    ".env.gitea.generated",
+    ".env.discourse.generated",
+    ".env.erpnext.generated",
+    ".env.nocodb.generated",
+    ".env.openemr.generated",
+    ".env.owncloud.generated",
+    ".env.rocketchat.generated",
+    ".env.zammad.generated",
+)
+
 REPO_ROOT = os.path.dirname(os.path.dirname(__file__))
 
-def _load_env_file(path):
+def _load_env_file(path, skip_keys=None):
+    skip_keys = set(skip_keys or [])
     if not os.path.isfile(path):
         return
     with open(path) as env_file:
@@ -10,20 +23,17 @@ def _load_env_file(path):
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:
                 key, _, val = line.partition("=")
-                os.environ[key.strip()] = val.strip()
+                key = key.strip()
+                if key in skip_keys:
+                    continue
+                os.environ[key] = val.strip()
 
 
 # 自动加载项目根目录的环境文件
 def reload_runtime_env():
     _load_env_file(os.path.join(REPO_ROOT, ".env"))
-    _load_env_file(os.path.join(REPO_ROOT, ".env.gitea.generated"))
-    _load_env_file(os.path.join(REPO_ROOT, ".env.discourse.generated"))
-    _load_env_file(os.path.join(REPO_ROOT, ".env.erpnext.generated"))
-    _load_env_file(os.path.join(REPO_ROOT, ".env.nocodb.generated"))
-    _load_env_file(os.path.join(REPO_ROOT, ".env.openemr.generated"))
-    _load_env_file(os.path.join(REPO_ROOT, ".env.owncloud.generated"))
-    _load_env_file(os.path.join(REPO_ROOT, ".env.rocketchat.generated"))
-    _load_env_file(os.path.join(REPO_ROOT, ".env.zammad.generated"))
+    for file_name in GENERATED_ENV_FILES:
+        _load_env_file(os.path.join(REPO_ROOT, file_name), skip_keys={"PIPELINE_ENV"})
 
 
 reload_runtime_env()

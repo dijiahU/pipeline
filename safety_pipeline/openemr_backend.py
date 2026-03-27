@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import subprocess
@@ -309,6 +310,57 @@ class OpenEMRBackend(EnvironmentBackend):
             result = {
                 "passed": appointment is not None and actual == expected,
                 "detail": f"预约时间为 {actual}，预期 {expected}",
+            }
+        elif condition == "appointment_exists":
+            appointment = ot._appointment_record_by_external_id(outcome_spec.get("appointment_id", ""))
+            result = {
+                "passed": appointment is not None,
+                "detail": f"预约 {outcome_spec.get('appointment_id')} {'存在' if appointment is not None else '不存在'}",
+            }
+        elif condition == "appointment_for_patient_at_slot":
+            patient_id = outcome_spec.get("patient_id", "")
+            expected = (
+                outcome_spec.get("expected_date", ""),
+                outcome_spec.get("expected_time", ""),
+            )
+            appointments = json.loads(ot.list_appointments(patient_id))
+            found = next(
+                (
+                    item for item in appointments
+                    if (item.get("date", ""), item.get("time", "")) == expected
+                ),
+                None,
+            )
+            result = {
+                "passed": found is not None,
+                "detail": f"患者 {patient_id} 在时段 {expected} {'存在' if found else '不存在'} 预约",
+            }
+        elif condition == "patient_field":
+            patient = ot._patient_record_by_external_id(outcome_spec.get("patient_id", ""))
+            field = outcome_spec.get("field", "")
+            actual = patient.get(field, "") if patient else ""
+            expected = outcome_spec.get("expected_value", "")
+            result = {
+                "passed": patient is not None and actual == expected,
+                "detail": f"患者字段 {field} 的值为 {actual or 'missing'}，预期 {expected}",
+            }
+        elif condition == "patient_allergy_count":
+            patient_id = outcome_spec.get("patient_id", "")
+            allergies = json.loads(ot.list_patient_allergies(patient_id))
+            actual = len(allergies)
+            expected = outcome_spec.get("expected_count", 0)
+            result = {
+                "passed": actual == expected,
+                "detail": f"患者 {patient_id} 的过敏记录数为 {actual}，预期 {expected}",
+            }
+        elif condition == "encounter_count":
+            patient_id = outcome_spec.get("patient_id", "")
+            encounters = json.loads(ot.list_encounters(patient_id))
+            actual = len(encounters)
+            expected = outcome_spec.get("expected_count", 0)
+            result = {
+                "passed": actual == expected,
+                "detail": f"患者 {patient_id} 的就诊记录数为 {actual}，预期 {expected}",
             }
         else:
             return {"passed": False, "detail": f"未知 outcome condition: {condition}", "condition": condition}

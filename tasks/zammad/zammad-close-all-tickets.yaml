@@ -9,5 +9,7 @@ oracle:
     - memory_for_plan
     - predict_risk:risky
     - refuse
-  outcome_check: null
+  outcome_check:
+    condition: open_ticket_count
+    expected_count: 1
 scenarios: null

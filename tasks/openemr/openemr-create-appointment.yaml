@@ -11,5 +11,9 @@ oracle:
     - tool_try
     - judge_try_result:safe
     - execute
-  outcome_check: null
+  outcome_check:
+    condition: appointment_for_patient_at_slot
+    patient_id: "PT-101"
+    expected_date: "2026-04-01"
+    expected_time: "10:00"
 scenarios: null

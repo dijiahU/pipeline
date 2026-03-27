@@ -141,6 +141,37 @@ def _repo_meta(project_id):
     return _api_json("GET", f"repos/{owner}/{repo}")
 
 
+def _extract_action_jobs(payload):
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    if isinstance(payload, dict):
+        for key in ("workflow_runs", "runs", "jobs", "data"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                return [item for item in value if isinstance(item, dict)]
+    return []
+
+
+def _list_action_jobs(owner, repo, per_page=20):
+    candidates = [
+        ("repos/{owner}/{repo}/actions/jobs", {"limit": per_page}),
+        ("repos/{owner}/{repo}/actions/runs", {"limit": per_page}),
+        ("repos/{owner}/{repo}/actions/runs", {"per_page": per_page}),
+    ]
+    for path_template, params in candidates:
+        path = path_template.format(owner=owner, repo=repo)
+        resp = _api("GET", path, params=params)
+        if resp.status_code == 404:
+            continue
+        if resp.status_code >= 400:
+            raise ToolExecutionError(f"[Gitea API 错误] {resp.status_code}: {resp.text[:500]}")
+        payload = resp.json() if resp.text else []
+        jobs = _extract_action_jobs(payload)
+        if jobs:
+            return jobs
+    return []
+
+
 def _branch_protection_map(owner, repo):
     resp = _api("GET", f"repos/{owner}/{repo}/branch_protections")
     if resp.status_code == 404:
@@ -397,6 +428,83 @@ def read_pipeline_log(project_id, job_id):
     if resp.status_code >= 400:
         raise ToolExecutionError(f"[Gitea API 错误] {resp.status_code}: {resp.text[:500]}")
     return resp.text[:5000]
+
+
+@gitea_tool(
+    "list_pipeline_jobs",
+    "列出仓库最近的 Actions / CI job。",
+    {
+        "project_id": {
+            "type": "string",
+            "description": "项目 ID 或路径",
+        },
+        "per_page": {
+            "type": "integer",
+            "description": "返回数量，默认 10",
+        },
+    },
+)
+def list_pipeline_jobs(project_id, per_page=10):
+    owner, repo = _project_ref(project_id)
+    jobs = _list_action_jobs(owner, repo, per_page=per_page)
+    results = []
+    for job in jobs:
+        results.append(
+            {
+                "id": job.get("id") or job.get("run_number") or job.get("number"),
+                "name": job.get("name", "") or job.get("display_title", ""),
+                "status": job.get("status", "") or job.get("conclusion", ""),
+                "head_branch": job.get("head_branch", "") or job.get("ref", ""),
+                "created_at": job.get("created_at", "") or job.get("run_started_at", ""),
+            }
+        )
+    return _format_json(results)
+
+
+@gitea_tool(
+    "get_latest_pipeline_log",
+    "读取仓库最近一次 Actions / CI job 的执行日志。",
+    {
+        "project_id": {
+            "type": "string",
+            "description": "项目 ID 或路径",
+        },
+    },
+)
+def get_latest_pipeline_log(project_id):
+    owner, repo = _project_ref(project_id)
+    jobs = _list_action_jobs(owner, repo, per_page=1)
+    if not jobs:
+        return _format_json(
+            {
+                "project_id": project_id,
+                "job_found": False,
+                "message": "该仓库当前没有可读取的 Actions / CI job 日志。",
+            }
+        )
+
+    latest = jobs[0]
+    job_id = latest.get("id")
+    if not job_id:
+        return _format_json(
+            {
+                "project_id": project_id,
+                "job_found": False,
+                "message": "找到了最近一次 Actions / CI 记录，但缺少可读取日志的 job_id。",
+            }
+        )
+
+    log_text = read_pipeline_log(project_id, str(job_id))
+    return _format_json(
+        {
+            "project_id": project_id,
+            "job_found": True,
+            "job_id": str(job_id),
+            "job_name": latest.get("name", "") or latest.get("display_title", ""),
+            "status": latest.get("status", "") or latest.get("conclusion", ""),
+            "log_excerpt": log_text,
+        }
+    )
 
 
 @gitea_tool(

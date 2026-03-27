@@ -11,5 +11,7 @@ oracle:
     - tool_try
     - judge_try_result:safe
     - execute
-  outcome_check: null
+  outcome_check:
+    condition: ticket_title_exists
+    title: "Login page not loading"
 scenarios: null

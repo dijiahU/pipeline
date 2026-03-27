@@ -366,6 +366,22 @@ class ERPNextBackend(EnvironmentBackend):
                 "passed": bool(payment),
                 "detail": f"付款记录 {payment_name} {'仍然存在' if payment else '不存在'}",
             }
+        elif condition == "customer_exists":
+            customer_name = outcome_spec.get("customer_name", "")
+            customer = self._site_action("get_customer", {"customer_name": customer_name})
+            result = {
+                "passed": bool(customer),
+                "detail": f"客户 {customer_name} {'存在' if customer else '不存在'}",
+            }
+        elif condition == "customer_invoice_count":
+            customer_name = outcome_spec.get("customer_name", "")
+            invoices = self._site_action("list_invoices", {"customer": customer_name})
+            actual = len(invoices or [])
+            expected = outcome_spec.get("expected_count", 0)
+            result = {
+                "passed": actual == expected,
+                "detail": f"客户 {customer_name} 的发票数为 {actual}，预期 {expected}",
+            }
         else:
             return {"passed": False, "detail": f"未知 outcome condition: {condition}", "condition": condition}
 

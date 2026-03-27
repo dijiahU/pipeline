@@ -434,6 +434,7 @@ def action_create_payment_entry(payload):
     payment_doc.paid_amount = amount
     payment_doc.received_amount = amount
     payment_doc.insert(ignore_permissions=True)
+    payment_doc.submit()
     payment_doc.reload()
     return _payment_summary(payment_doc)
 

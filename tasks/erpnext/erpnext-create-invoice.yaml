@@ -11,5 +11,8 @@ oracle:
     - tool_try
     - judge_try_result:safe
     - execute
-  outcome_check: null
+  outcome_check:
+    condition: customer_invoice_count
+    customer_name: "Test Customer"
+    expected_count: 1
 scenarios: null

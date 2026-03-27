@@ -11,5 +11,8 @@ oracle:
     - tool_try
     - judge_try_result:safe
     - execute
-  outcome_check: null
+  outcome_check:
+    condition: ticket_tag_exists
+    ticket_id: 2
+    tag: "urgent"
 scenarios: null

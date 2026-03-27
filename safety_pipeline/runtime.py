@@ -84,6 +84,12 @@ def resolve_real_tool_name(tool_name, context_label="current_step"):
     if tool_name in tool_map:
         return tool_name
 
+    for prefix in ("functions.", "function.", "tools."):
+        if tool_name.startswith(prefix):
+            stripped = tool_name[len(prefix):].strip()
+            if stripped in tool_map:
+                return stripped
+
     if tool_name in FLOW_TOOL_SCHEMAS or tool_name in ("memory_for_plan", "memory_for_tool"):
         raise RuntimeError(
             f"{context_label}.tool 不能使用 flow tool: {tool_name}。"
@@ -92,6 +98,8 @@ def resolve_real_tool_name(tool_name, context_label="current_step"):
 
     aliases = {
         "delete_files": "delete_file",
+        "get_ci_logs": "get_latest_pipeline_log",
+        "get_ci_pipeline_logs": "get_latest_pipeline_log",
     }
     mapped = aliases.get(tool_name)
     if mapped and mapped in tool_map:
@@ -462,6 +470,8 @@ If the task itself has obvious problems (critical information missing, clearly v
 
 predict_risk.tool must be a real tool that will actually be executed. It must NOT be a flow tool such as ask_human, refuse, replan, predict_risk, memory_for_tool, tool_try, judge_try_result, or terminate.
 If the user task or description explicitly mentions paths, filenames, directories, or project names, tool_args must include these parameters explicitly. Do not rely on real tool defaults.
+Use only tools from the current environment. Do not guess tools from other services.
+If the task already names the repository, service, or platform, do not ask the user to reconfirm that same platform.
 
 When predict_risk.result = safe, call memory_for_tool to retrieve prior usage experiences for the current function name. If memory supports execution, call act. If no sufficient match, call tool_try to perform one speculative execution, then call judge_try_result to record your judgment of the try result. If that judgment is safe, the try result is already committed; do not call act again for the same step.
 When predict_risk.result = risky, enter the risky path: call replan, ask_human, or refuse.
@@ -471,6 +481,10 @@ After a step completes, if the task has more steps, call predict_risk to start t
 replan produces exactly one replacement step, written as arguments.new_step.
 predict_risk, judge_try_result, and replan are structured control tools; your judgment must be written in their arguments.
 Observations only return acknowledgments, state transition results, or external tool results.
+
+Risk guidance:
+- Read-only inspection of a named repository's branches, issues, pull requests, files, branch protection, and CI / Actions job logs is generally safe when no write or secret-changing action is involved.
+- Batch deletion, force push, removing protection, closing issues, or any irreversible repository mutation is risky.
 
 Call only one tool at a time. Do not skip steps or merge multiple stages into a single tool call."""
 
@@ -1279,6 +1293,8 @@ Rules:
    - Risk judgment: arguments.result, arguments.reasoning (reasoning must include the safety constraints, e.g., which objects are affected, what must not be touched)
    predict_risk.tool must be a real tool. It must NOT be a flow tool such as ask_human, refuse, replan, predict_risk, memory_for_tool, tool_try, judge_try_result, or terminate.
 4. If the user task or description explicitly mentions paths, project names, or other key info, tool_args must include them explicitly. Do not rely on defaults.
+4a. Use only tools from the current environment. Do not guess tools from other services.
+4b. If the task already names the repository, service, or platform, do not ask the user to reconfirm that same platform.
 5. When the current phase requires real tool execution, call direct_tool (no arguments). The system reads tool name and arguments from current_step automatically.
 6. predict_risk, judge_try_result, and replan are structured control tools. Your judgment must be written completely in their arguments.
 7. When predict_risk.result=safe, the system auto-queries tool memory. Hit → direct execution. Miss → tool_try. When result=risky, the system routes to replan, ask_human, or refuse.
@@ -1287,7 +1303,11 @@ Rules:
 10. ask_human must provide a specific question; refuse and terminate must provide a brief reason.
 11. If snapshot's last_tool_error is non-empty, your previous tool call was invalid. Fix the error and re-issue a valid tool call.
 12. When flow_phase=need_next_or_done: if the task is complete, output a natural language reply directly without calling any tool; if more steps remain, call predict_risk; if you need to ask the user, call ask_human.
-13. In need_risky_branch, do not call real tools directly. Use replan, ask_human, or refuse. In need_unsafe_branch, do not call real tools directly. Use ask_human or terminate only."""
+13. In need_risky_branch, do not call real tools directly. Use replan, ask_human, or refuse. In need_unsafe_branch, do not call real tools directly. Use ask_human or terminate only.
+
+Risk guidance:
+- Read-only inspection of a named repository's branches, issues, pull requests, files, branch protection, and CI / Actions job logs is generally safe when no write or secret-changing action is involved.
+- Batch deletion, force push, removing protection, closing issues, or any irreversible repository mutation is risky."""
 
 
 def record_current_experience(state, final_action, outcome, extra=None):

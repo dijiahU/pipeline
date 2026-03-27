@@ -378,8 +378,9 @@ def create_topic(title, raw, category="", username="admin"):
     data = {"title": title, "raw": raw}
     if category:
         cat_id = _category_id_by_name(category)
-        if cat_id is not None:
-            data["category"] = cat_id
+        if cat_id is None:
+            raise ToolExecutionError(f"[错误] 找不到分类: {category}")
+        data["category"] = cat_id
     payload = _api_json("POST", "posts.json", username=username, data=data)
     return _format_json({
         "topic_id": payload.get("topic_id"),
