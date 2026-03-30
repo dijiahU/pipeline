@@ -155,20 +155,98 @@ def create_channel(name, members=None, topic="", description="", private=False):
 
 
 def send_message(channel_name, text, alias=None):
-    """Send a message to a channel using chat.postMessage (admin, supports alias)."""
+    """Send a message to a room using chat.postMessage (admin, supports alias)."""
     payload = {"channel": f"#{channel_name}", "text": text}
     if alias:
         payload["alias"] = alias
 
     resp = _api("POST", "chat.postMessage", json_data=payload)
     if resp.status_code == 200 and resp.json().get("success"):
-        return
+        return resp.json().get("message", {}).get("_id", "")
     # Fallback for private groups
     payload["channel"] = channel_name
     resp = _api("POST", "chat.postMessage", json_data=payload)
     if resp.status_code == 200 and resp.json().get("success"):
-        return
+        return resp.json().get("message", {}).get("_id", "")
     print(f"[seed]   Message send to #{channel_name}: {resp.status_code} {resp.text[:200]}")
+    return ""
+
+
+def send_thread_reply(channel_name, root_message_id, text, show_in_room=False):
+    info_resp = _api("GET", f"channels.info?roomName={channel_name}")
+    if info_resp.status_code == 200 and info_resp.json().get("success"):
+        room_id = info_resp.json().get("channel", {}).get("_id", "")
+    else:
+        info_resp = _api("GET", f"groups.info?roomName={channel_name}")
+        room_id = info_resp.json().get("group", {}).get("_id", "") if info_resp.status_code == 200 else ""
+    if not room_id:
+        print(f"[seed]   Thread reply room lookup failed for #{channel_name}")
+        return ""
+    payload = {
+        "message": {
+            "rid": room_id,
+            "msg": text,
+            "tmid": root_message_id,
+            "tshow": bool(show_in_room),
+        }
+    }
+    resp = _api("POST", "chat.sendMessage", json_data=payload)
+    if resp.status_code == 200 and resp.json().get("success"):
+        return resp.json().get("message", {}).get("_id", "")
+    print(f"[seed]   Thread reply send to #{channel_name}: {resp.status_code} {resp.text[:200]}")
+    return ""
+
+
+def send_direct_message(username, text):
+    dm_resp = _api("POST", "dm.create", {"username": username})
+    if dm_resp.status_code != 200 or not dm_resp.json().get("success"):
+        print(f"[seed]   DM room creation for @{username}: {dm_resp.status_code} {dm_resp.text[:200]}")
+        return ""
+    room_id = dm_resp.json().get("room", {}).get("_id", "")
+    if not room_id:
+        return ""
+    resp = _api("POST", "chat.sendMessage", {
+        "message": {
+            "rid": room_id,
+            "msg": text,
+        }
+    })
+    if resp.status_code == 200 and resp.json().get("success"):
+        return resp.json().get("message", {}).get("_id", "")
+    print(f"[seed]   DM send to @{username}: {resp.status_code} {resp.text[:200]}")
+    return ""
+
+
+def create_integration(spec):
+    name = spec["name"]
+    list_resp = _api("GET", f"integrations.list?name={name}")
+    if list_resp.status_code == 200:
+        for integration in list_resp.json().get("integrations", []) or []:
+            if integration.get("name") == name:
+                print(f"[seed]   Integration exists: {name}")
+                return integration.get("_id", "")
+
+    payload = {
+        "type": spec["type"],
+        "name": name,
+        "enabled": spec.get("enabled", True),
+        "channel": spec["channel"],
+        "username": spec.get("username", "ops.webhook"),
+        "scriptEnabled": spec.get("script_enabled", False),
+    }
+    if spec["type"] == "webhook-outgoing":
+        payload["urls"] = spec.get("target_urls", [])
+        payload["event"] = spec.get("event", "sendMessage")
+        payload["triggerWords"] = spec.get("trigger_words", [])
+    if spec.get("script"):
+        payload["script"] = spec["script"]
+
+    resp = _api("POST", "integrations.create", payload)
+    if resp.status_code == 200 and resp.json().get("success"):
+        print(f"[seed]   Integration created: {name}")
+        return resp.json().get("integration", {}).get("_id", "")
+    print(f"[seed]   Integration create for {name}: {resp.status_code} {resp.text[:200]}")
+    return ""
 
 
 def login_as(username, password):
@@ -219,6 +297,25 @@ def seed_from_manifest(manifest_path):
             prefixed = f"[{sender}] {text}" if sender != ADMIN_USER else text
             send_message(channel, prefixed)
         print(f"[seed]   Sent {len(msg_spec['texts'])} messages to #{channel} as {sender}")
+
+    for dm_spec in manifest.get("direct_messages", []):
+        username = dm_spec["username"]
+        for text in dm_spec.get("texts", []):
+            send_direct_message(username, text)
+        print(f"[seed]   Sent {len(dm_spec.get('texts', []))} direct messages to @{username}")
+
+    for thread_spec in manifest.get("threaded_messages", []):
+        channel = thread_spec["channel"]
+        root_message_id = send_message(channel, thread_spec["root_text"])
+        reply_count = 0
+        if root_message_id:
+            for reply in thread_spec.get("replies", []):
+                send_thread_reply(channel, root_message_id, reply, show_in_room=False)
+                reply_count += 1
+        print(f"[seed]   Seeded thread in #{channel} with {reply_count} replies")
+
+    for integration_spec in manifest.get("integrations", []):
+        create_integration(integration_spec)
 
 
 def main():

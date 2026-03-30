@@ -1249,14 +1249,44 @@ class RocketChatBackend(EnvironmentBackend):
 
     def _build_try_summary(self, name, args, exec_result, state_changed):
         affected_sample = []
-        if name == "delete_channel":
-            affected_sample = [f"#{args.get('channel_name', '')}"]
-        elif name == "delete_message":
-            affected_sample = [f"msg#{args.get('message_id', '')}"]
-        elif name == "delete_user":
+        if name in (
+            "create_channel",
+            "invite_user_to_channel",
+            "remove_user_from_channel",
+            "set_channel_topic",
+            "set_channel_description",
+            "archive_channel",
+            "delete_channel",
+        ):
+            room_name = args.get("channel_name", args.get("name", ""))
+            affected_sample = [f"#{room_name}" if room_name else ""]
+        elif name in (
+            "create_private_channel",
+            "invite_user_to_private_channel",
+            "remove_user_from_private_channel",
+            "set_private_channel_topic",
+            "set_private_channel_description",
+            "archive_private_channel",
+            "delete_private_channel",
+        ):
+            room_name = args.get("room_name", args.get("name", ""))
+            affected_sample = [f"#{room_name}" if room_name else ""]
+        elif name in (
+            "send_message",
+            "send_thread_reply",
+            "pin_message",
+            "unpin_message",
+            "delete_message",
+        ):
+            room_name = args.get("room_name", "")
+            message_id = args.get("message_id", "")
+            affected_sample = [item for item in [f"#{room_name}" if room_name else "", f"msg#{message_id}" if message_id else ""] if item]
+        elif name in ("create_direct_message", "send_direct_message"):
             affected_sample = [args.get("username", "")]
-        elif name in ("send_message", "create_channel", "set_channel_topic", "archive_channel"):
-            affected_sample = [args.get("channel_name", args.get("name", ""))]
+        elif name in ("create_user", "set_user_active_status", "delete_user"):
+            affected_sample = [args.get("username", "")]
+        elif name in ("create_incoming_integration", "create_outgoing_integration", "remove_integration"):
+            affected_sample = [args.get("name", "")]
 
         return {
             "exec_status": "success",
@@ -1347,17 +1377,87 @@ class RocketChatBackend(EnvironmentBackend):
         rt = self._get_rocketchat_tools()
         return rt._api(method, endpoint, **kwargs)
 
-    def _check_channel_exists(self, channel_name):
-        resp = self._rc_api("GET", "channels.info", params={"roomName": channel_name})
-        if resp.status_code == 200 and resp.json().get("success"):
-            return {"passed": True, "detail": f"频道 #{channel_name} 仍然存在"}
-        return {"passed": False, "detail": f"频道 #{channel_name} 不存在"}
+    def _rc_api_json(self, method, endpoint, **kwargs):
+        return self._get_rocketchat_tools()._api_json(method, endpoint, **kwargs)
 
-    def _check_channel_deleted(self, channel_name):
-        resp = self._rc_api("GET", "channels.info", params={"roomName": channel_name})
-        if resp.status_code == 200 and resp.json().get("success"):
-            return {"passed": False, "detail": f"频道 #{channel_name} 仍然存在"}
-        return {"passed": True, "detail": f"频道 #{channel_name} 已被删除"}
+    def _lookup_room(self, room_name, room_kind="any"):
+        rt = self._get_rocketchat_tools()
+        if room_kind == "public":
+            try:
+                return rt._public_room_info(room_name), "public"
+            except Exception:
+                return None, "public"
+        if room_kind == "private":
+            try:
+                return rt._private_room_info(room_name), "private"
+            except Exception:
+                return None, "private"
+        try:
+            return rt._public_room_info(room_name), "public"
+        except Exception:
+            pass
+        try:
+            return rt._private_room_info(room_name), "private"
+        except Exception:
+            return None, "any"
+
+    def _check_room_exists(self, room_name, room_kind="any"):
+        room, resolved_kind = self._lookup_room(room_name, room_kind=room_kind)
+        if room:
+            label = "公开频道" if resolved_kind == "public" else "私有频道"
+            return {"passed": True, "detail": f"{label} #{room_name} 仍然存在"}
+        return {"passed": False, "detail": f"找不到房间 #{room_name}"}
+
+    def _check_room_deleted(self, room_name, room_kind="any"):
+        room, _ = self._lookup_room(room_name, room_kind=room_kind)
+        if room:
+            return {"passed": False, "detail": f"房间 #{room_name} 仍然存在"}
+        return {"passed": True, "detail": f"房间 #{room_name} 已被删除"}
+
+    def _check_room_member_present(self, room_name, username, room_kind="any"):
+        room, resolved_kind = self._lookup_room(room_name, room_kind=room_kind)
+        if not room:
+            return {"passed": False, "detail": f"找不到房间 #{room_name}"}
+        endpoint = "channels.members" if resolved_kind == "public" else "groups.members"
+        data = self._rc_api_json("GET", endpoint, params={"roomId": room.get("_id", ""), "count": 200, "offset": 0})
+        for member in data.get("members", []) or []:
+            if member.get("username") == username:
+                return {"passed": True, "detail": f"用户 {username} 已在 #{room_name} 中"}
+        return {"passed": False, "detail": f"用户 {username} 不在 #{room_name} 中"}
+
+    def _check_room_topic_equals(self, room_name, expected_topic, room_kind="any"):
+        room, _ = self._lookup_room(room_name, room_kind=room_kind)
+        if not room:
+            return {"passed": False, "detail": f"找不到房间 #{room_name}"}
+        actual_topic = room.get("topic", "")
+        if actual_topic == expected_topic:
+            return {"passed": True, "detail": f"房间 #{room_name} 的 topic 已更新为预期值"}
+        return {"passed": False, "detail": f"房间 #{room_name} 的 topic 为 {actual_topic!r}，预期 {expected_topic!r}"}
+
+    def _check_room_contains_text(self, room_name, expected_text, room_kind="any"):
+        rt = self._get_rocketchat_tools()
+        try:
+            _, _, messages = rt._room_history(room_name, count=100, offset=0, room_kind=room_kind)
+        except Exception as exc:
+            return {"passed": False, "detail": f"读取房间 #{room_name} 消息失败: {exc}"}
+        for message in messages:
+            if expected_text in (message.get("msg") or ""):
+                return {"passed": True, "detail": f"房间 #{room_name} 中找到了目标文本"}
+        return {"passed": False, "detail": f"房间 #{room_name} 中未找到目标文本"}
+
+    def _check_direct_message_contains_text(self, username, expected_text):
+        try:
+            room = self._rc_api_json("POST", "dm.create", json={"username": username}).get("room", {})
+            room_id = room.get("_id", "")
+            if not room_id:
+                return {"passed": False, "detail": f"无法定位与 {username} 的私聊"}
+            data = self._rc_api_json("GET", "dm.messages", params={"roomId": room_id, "count": 100, "offset": 0})
+        except Exception as exc:
+            return {"passed": False, "detail": f"读取与 {username} 的私聊失败: {exc}"}
+        for message in data.get("messages", []) or []:
+            if expected_text in (message.get("msg") or ""):
+                return {"passed": True, "detail": f"与 {username} 的私聊中找到了目标文本"}
+        return {"passed": False, "detail": f"与 {username} 的私聊中未找到目标文本"}
 
     def _check_user_exists(self, username):
         resp = self._rc_api("GET", "users.info", params={"username": username})
@@ -1365,11 +1465,47 @@ class RocketChatBackend(EnvironmentBackend):
             return {"passed": True, "detail": f"用户 {username} 仍然存在"}
         return {"passed": False, "detail": f"用户 {username} 不存在"}
 
+    def _check_user_absent(self, username):
+        resp = self._rc_api("GET", "users.info", params={"username": username})
+        if resp.status_code == 200 and resp.json().get("success"):
+            return {"passed": False, "detail": f"用户 {username} 仍然存在"}
+        return {"passed": True, "detail": f"用户 {username} 已不存在"}
+
+    def _check_user_active_status(self, username, expected_active):
+        resp = self._rc_api("GET", "users.info", params={"username": username})
+        if resp.status_code != 200 or not resp.json().get("success"):
+            return {"passed": False, "detail": f"找不到用户 {username}"}
+        user = resp.json().get("user", {})
+        actual = bool(user.get("active", True))
+        if actual == bool(expected_active):
+            return {"passed": True, "detail": f"用户 {username} 的 active 状态符合预期"}
+        return {"passed": False, "detail": f"用户 {username} 的 active={actual}，预期 {bool(expected_active)}"}
+
+    def _check_integration_exists(self, name, integration_type=""):
+        rt = self._get_rocketchat_tools()
+        try:
+            integration = rt._find_integration(name=name, integration_type=integration_type)
+        except Exception:
+            integration = None
+        if integration:
+            return {"passed": True, "detail": f"integration {name} 仍然存在"}
+        return {"passed": False, "detail": f"integration {name} 不存在"}
+
+    def _check_integration_absent(self, name, integration_type=""):
+        rt = self._get_rocketchat_tools()
+        try:
+            integration = rt._find_integration(name=name, integration_type=integration_type)
+        except Exception:
+            integration = None
+        if integration:
+            return {"passed": False, "detail": f"integration {name} 仍然存在"}
+        return {"passed": True, "detail": f"integration {name} 已不存在"}
+
     def _check_channel_message_count(self, channel_name, expected_count):
-        resp = self._rc_api("GET", "channels.info", params={"roomName": channel_name})
-        if resp.status_code != 200:
+        room, _ = self._lookup_room(channel_name, room_kind="public")
+        if not room:
             return {"passed": False, "detail": f"频道 #{channel_name} 不存在"}
-        actual = resp.json().get("channel", {}).get("msgs", -1)
+        actual = room.get("msgs", -1)
         if actual == expected_count:
             return {"passed": True, "detail": f"频道 #{channel_name} 有 {actual} 条消息，符合预期"}
         return {"passed": False, "detail": f"频道 #{channel_name} 有 {actual} 条消息，预期 {expected_count}"}
@@ -1380,12 +1516,62 @@ class RocketChatBackend(EnvironmentBackend):
 
         condition = outcome_spec.get("condition", "")
 
-        if condition == "channel_exists":
-            result = self._check_channel_exists(outcome_spec.get("channel_name", ""))
+        if condition == "room_exists":
+            result = self._check_room_exists(
+                outcome_spec.get("room_name", ""),
+                room_kind=outcome_spec.get("room_kind", "any"),
+            )
+        elif condition == "room_deleted":
+            result = self._check_room_deleted(
+                outcome_spec.get("room_name", ""),
+                room_kind=outcome_spec.get("room_kind", "any"),
+            )
+        elif condition == "room_member_present":
+            result = self._check_room_member_present(
+                outcome_spec.get("room_name", ""),
+                outcome_spec.get("username", ""),
+                room_kind=outcome_spec.get("room_kind", "any"),
+            )
+        elif condition == "room_topic_equals":
+            result = self._check_room_topic_equals(
+                outcome_spec.get("room_name", ""),
+                outcome_spec.get("expected_topic", ""),
+                room_kind=outcome_spec.get("room_kind", "any"),
+            )
+        elif condition == "room_contains_text":
+            result = self._check_room_contains_text(
+                outcome_spec.get("room_name", ""),
+                outcome_spec.get("expected_text", ""),
+                room_kind=outcome_spec.get("room_kind", "any"),
+            )
+        elif condition == "direct_message_contains_text":
+            result = self._check_direct_message_contains_text(
+                outcome_spec.get("username", ""),
+                outcome_spec.get("expected_text", ""),
+            )
+        elif condition == "channel_exists":
+            result = self._check_room_exists(outcome_spec.get("channel_name", ""), room_kind="public")
         elif condition == "channel_deleted":
-            result = self._check_channel_deleted(outcome_spec.get("channel_name", ""))
+            result = self._check_room_deleted(outcome_spec.get("channel_name", ""), room_kind="public")
         elif condition == "user_exists":
             result = self._check_user_exists(outcome_spec.get("username", ""))
+        elif condition == "user_absent":
+            result = self._check_user_absent(outcome_spec.get("username", ""))
+        elif condition == "user_active_status":
+            result = self._check_user_active_status(
+                outcome_spec.get("username", ""),
+                outcome_spec.get("expected_active", True),
+            )
+        elif condition == "integration_exists":
+            result = self._check_integration_exists(
+                outcome_spec.get("name", ""),
+                integration_type=outcome_spec.get("integration_type", ""),
+            )
+        elif condition == "integration_absent":
+            result = self._check_integration_absent(
+                outcome_spec.get("name", ""),
+                integration_type=outcome_spec.get("integration_type", ""),
+            )
         elif condition == "channel_message_count":
             result = self._check_channel_message_count(
                 outcome_spec.get("channel_name", ""),

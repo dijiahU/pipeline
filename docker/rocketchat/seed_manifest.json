@@ -26,6 +26,13 @@
       "password": "User123!",
       "name": "Carol Li",
       "roles": ["user"]
+    },
+    {
+      "username": "dave",
+      "email": "dave@example.com",
+      "password": "User123!",
+      "name": "Dave Xu",
+      "roles": ["user"]
     }
   ],
   "channels": [
@@ -59,6 +66,26 @@
       "topic": "Production incident tracking",
       "description": "Report and track production incidents here",
       "members": ["alice", "bob"]
+    },
+    {
+      "name": "random",
+      "topic": "Low-priority social chatter and informal announcements",
+      "description": "Temporary casual discussion channel",
+      "members": ["alice", "bob", "dave"]
+    },
+    {
+      "name": "leadership-private",
+      "topic": "Leadership planning and cross-functional staffing",
+      "description": "Private planning room for managers and HR",
+      "members": ["carol", "dave"],
+      "private": true
+    },
+    {
+      "name": "ops-oncall",
+      "topic": "Operational on-call coordination and escalation handoffs",
+      "description": "Private room for SRE and incident rotation planning",
+      "members": ["alice", "bob"],
+      "private": true
     }
   ],
   "messages": [
@@ -147,6 +174,67 @@
       "texts": [
         "INCIDENT-2026-002: API latency spike during peak hours. Investigating cache miss rates."
       ]
+    },
+    {
+      "channel": "random",
+      "sender": "dave",
+      "texts": [
+        "Lunch poll: should we order noodles or sandwiches for Friday?",
+        "Reminder: old memes channel was merged here last month."
+      ]
+    }
+  ],
+  "direct_messages": [
+    {
+      "username": "alice",
+      "texts": [
+        "Hi Alice, please send me the final Q1 launch checklist when you have a minute.",
+        "Also confirm whether the engineering review is still scheduled for Thursday."
+      ]
+    },
+    {
+      "username": "bob",
+      "texts": [
+        "Bob, can you summarize the latest incident follow-up items in one message?",
+        "Please include the cache timeout change and DB pool alert thresholds."
+      ]
+    }
+  ],
+  "threaded_messages": [
+    {
+      "channel": "engineering",
+      "root_text": "Thread kickoff: please summarize the API v2 rollout blockers here.",
+      "replies": [
+        "Primary blocker is the flaky CI suite on macOS runners.",
+        "Secondary blocker is missing cache invalidation metrics on the staging environment."
+      ]
+    },
+    {
+      "channel": "incidents",
+      "root_text": "Thread kickoff: capture postmortem follow-up items for INCIDENT-2026-001.",
+      "replies": [
+        "Action item 1: add DB pool saturation alert at 80 percent usage.",
+        "Action item 2: document the new timeout setting in the runbook."
+      ]
+    }
+  ],
+  "integrations": [
+    {
+      "name": "general-internal-incoming",
+      "type": "webhook-incoming",
+      "channel": "#general",
+      "username": "admin",
+      "enabled": true
+    },
+    {
+      "name": "incidents-internal-outgoing",
+      "type": "webhook-outgoing",
+      "channel": "#incidents",
+      "username": "admin",
+      "enabled": true,
+      "event": "sendMessage",
+      "target_urls": ["http://localhost:3100/api/info"],
+      "trigger_words": ["INCIDENT", "postmortem"]
     }
   ]
 }
