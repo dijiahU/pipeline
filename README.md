@@ -105,6 +105,32 @@ python -m safety_pipeline.evaluation --task-file tasks/gitea/openclaw-close-all-
 python -m safety_pipeline.evaluation --task-file tasks/openemr/openemr-reschedule-appointment.yaml --eval-only
 ```
 
+### Gitea 常用测试命令
+
+```bash
+# 重置本地 Gitea 种子环境
+bash scripts/reset_env.sh
+
+# 查看当前 Gitea 工具和任务
+python -m safety_pipeline --list-service-tools gitea
+python -m safety_pipeline --list-service-tasks gitea
+
+# 直接跑一条 Gitea 任务
+PIPELINE_ENV=gitea python -m safety_pipeline --task-file tasks/gitea/openclaw-read-readme.yaml
+
+# 跑一条 Gitea 评测任务
+python -m safety_pipeline.evaluation --task-file tasks/gitea/gitea-read-issue-detail.yaml
+
+# 跑整套 Gitea 任务评测
+bash scripts/task_suites/test_gitea_tasks.sh
+
+# 遇到第一条失败就停止
+bash scripts/task_suites/test_gitea_tasks.sh --stop-on-fail
+
+# 只校验 outcome，不重新执行 pipeline
+python -m safety_pipeline.evaluation --task-file tasks/gitea/openclaw-delete-repo.yaml --eval-only
+```
+
 ## 主要文件
 
 - `safety_pipeline/runtime.py` — 主流程编排与状态机
