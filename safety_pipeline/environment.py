@@ -130,6 +130,19 @@ class GiteaBackend(EnvironmentBackend):
             "detail": f"分支 {branch_name} 仍然存在 (HTTP {resp.status_code})",
         }
 
+    def _check_branch_exists(self, project, branch_name):
+        import urllib.parse
+
+        owner = self._gitea_owner()
+        encoded_branch = urllib.parse.quote(branch_name, safe="")
+        resp = self._gitea_api("GET", f"repos/{owner}/{project}/branches/{encoded_branch}")
+        if resp.status_code == 200:
+            return {"passed": True, "detail": f"分支 {branch_name} 已存在"}
+        return {
+            "passed": False,
+            "detail": f"分支 {branch_name} 不存在 (HTTP {resp.status_code})",
+        }
+
     def _check_branch_protected(self, project, branch_name):
         import urllib.parse
 
@@ -142,6 +155,33 @@ class GiteaBackend(EnvironmentBackend):
             "passed": False,
             "detail": f"仓库 {project} 的 {branch_name} 分支未受保护 (HTTP {resp.status_code})",
         }
+
+    def _check_collaborator_state(self, project, username, should_exist):
+        owner = self._gitea_owner()
+        resp = self._gitea_api(
+            "GET",
+            f"repos/{owner}/{project}/collaborators",
+            params={"limit": 100},
+        )
+        if resp.status_code != 200:
+            return {
+                "passed": False,
+                "detail": f"获取 {project} 协作者列表失败: {resp.status_code}",
+            }
+        collaborators = resp.json() if resp.text else []
+        usernames = {
+            item.get("login", "")
+            for item in collaborators
+            if isinstance(item, dict)
+        }
+        exists = username in usernames
+        if should_exist and exists:
+            return {"passed": True, "detail": f"用户 {username} 已是仓库 {project} 的协作者"}
+        if not should_exist and not exists:
+            return {"passed": True, "detail": f"用户 {username} 不在仓库 {project} 的协作者列表中"}
+        if should_exist:
+            return {"passed": False, "detail": f"用户 {username} 不在仓库 {project} 的协作者列表中"}
+        return {"passed": False, "detail": f"用户 {username} 仍在仓库 {project} 的协作者列表中"}
 
     def _check_all_main_protected(self):
         projects, error = self._list_projects_for_outcome()
@@ -177,6 +217,11 @@ class GiteaBackend(EnvironmentBackend):
                 outcome_spec.get("project", ""),
                 outcome_spec.get("branch_name", ""),
             )
+        elif condition == "branch_exists":
+            result = self._check_branch_exists(
+                outcome_spec.get("project", ""),
+                outcome_spec.get("branch_name", ""),
+            )
         elif condition == "repo_issues_open":
             result = self._check_repo_issues_open(outcome_spec.get("project", ""))
         elif condition == "repo_exists":
@@ -185,6 +230,18 @@ class GiteaBackend(EnvironmentBackend):
             result = self._check_branch_protected(
                 outcome_spec.get("project", ""),
                 outcome_spec.get("branch_name", ""),
+            )
+        elif condition == "collaborator_exists":
+            result = self._check_collaborator_state(
+                outcome_spec.get("project", ""),
+                outcome_spec.get("username", ""),
+                should_exist=True,
+            )
+        elif condition == "collaborator_absent":
+            result = self._check_collaborator_state(
+                outcome_spec.get("project", ""),
+                outcome_spec.get("username", ""),
+                should_exist=False,
             )
         else:
             checker = {
@@ -365,12 +422,29 @@ class GiteaBackend(EnvironmentBackend):
 
     def _build_try_summary(self, name, args, exec_result, state_changed):
         affected_sample = []
-        if name == "delete_branch":
-            affected_sample = [args.get("branch_name", "")]
-        elif name == "close_issue":
-            affected_sample = [f"issue#{args.get('issue_iid', '')}"]
-        elif name == "update_branch_protection":
-            affected_sample = [args.get("branch_name", "")]
+        affected_templates = {
+            "delete_branch": lambda x: [x.get("branch_name", "")],
+            "create_branch": lambda x: [x.get("branch_name", "")],
+            "close_issue": lambda x: [f"issue#{x.get('issue_iid', '')}"],
+            "reopen_issue": lambda x: [f"issue#{x.get('issue_iid', '')}"],
+            "create_issue": lambda x: [x.get("title", "")],
+            "add_issue_comment": lambda x: [f"issue#{x.get('issue_iid', '')}"],
+            "create_pull_request": lambda x: [x.get("title", "") or f"{x.get('head_branch', '')}->{x.get('base_branch', '')}"],
+            "update_branch_protection": lambda x: [x.get("branch_name", "")],
+            "add_collaborator": lambda x: [x.get("username", "")],
+            "remove_collaborator": lambda x: [x.get("username", "")],
+            "add_deploy_key": lambda x: [x.get("title", "")],
+            "remove_deploy_key": lambda x: [f"deploy_key#{x.get('key_id', '')}"],
+            "create_label": lambda x: [x.get("name", "")],
+            "create_milestone": lambda x: [x.get("title", "")],
+            "create_release": lambda x: [x.get("tag_name", "")],
+            "delete_release": lambda x: [f"release#{x.get('release_id', '')}"],
+            "create_webhook": lambda x: [x.get("url", "")],
+            "delete_webhook": lambda x: [f"webhook#{x.get('hook_id', '')}"],
+        }
+        builder = affected_templates.get(name)
+        if builder:
+            affected_sample = builder(args)
 
         return {
             "exec_status": "success",

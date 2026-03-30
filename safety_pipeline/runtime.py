@@ -33,6 +33,7 @@ from .settings import (
     set_pipeline_env,
 )
 from .task_catalog import build_service_task_index
+from .tool_retrieval import ToolIndex
 from .state import (
     append_assistant_message,
     apply_user_reply_to_state,
@@ -56,6 +57,11 @@ try:
     import yaml
 except ModuleNotFoundError:
     yaml = None
+
+
+_RUNTIME_TOOL_INDEX_CACHE = {"signature": None, "index": None}
+
+
 def get_environment_backend():
     """获取当前环境后端"""
     from .environment import get_backend
@@ -76,6 +82,29 @@ def get_real_tool_schema_map():
         func = schema["function"]
         tool_map[func["name"]] = func
     return tool_map
+
+
+def get_real_tool_schema_bundle_map(allow_empty=False):
+    tool_map = {}
+    for schema in get_tool_schemas(allow_empty=allow_empty):
+        func = schema.get("function") or {}
+        name = func.get("name", "")
+        if name:
+            tool_map[name] = schema
+    return tool_map
+
+
+def build_tool_schema_hint(tool_name):
+    if not tool_name:
+        return ""
+    tool_schema = get_real_tool_schema_map().get(tool_name)
+    if not tool_schema:
+        return ""
+    parameters = tool_schema.get("parameters", {})
+    return (
+        f"；{tool_name} 的正确参数 schema: "
+        f"{json.dumps(parameters, ensure_ascii=False)}"
+    )
 
 
 def resolve_real_tool_name(tool_name, context_label="current_step"):
@@ -140,10 +169,17 @@ def validate_real_tool_step(step, context_label="current_step"):
     arg_keys = set(args.keys())
     unknown_keys = arg_keys - set(properties.keys())
     missing_keys = required - arg_keys
+    schema_hint = build_tool_schema_hint(tool_name)
     if unknown_keys:
-        raise RuntimeError(f"{context_label} 的 args 包含未定义字段: {sorted(unknown_keys)}")
+        raise RuntimeError(
+            f"{context_label} 的 args 包含未定义字段: {sorted(unknown_keys)}"
+            f"{schema_hint}"
+        )
     if missing_keys:
-        raise RuntimeError(f"{context_label} 的 args 缺少必填字段: {sorted(missing_keys)}")
+        raise RuntimeError(
+            f"{context_label} 的 args 缺少必填字段: {sorted(missing_keys)}"
+            f"{schema_hint}"
+        )
 
     return {"tool": tool_name, "args": args, "description": description}
 
@@ -335,7 +371,7 @@ FLOW_TOOL_SCHEMAS = {
 
 
 def build_agent_state_snapshot(state):
-    return {
+    snapshot = {
         "user_task": state["initial_user_input"],
         "dialogue_history": state["dialogue_history"],
         "known_context": state["known_context"],
@@ -351,6 +387,19 @@ def build_agent_state_snapshot(state):
         "last_tool_error": state.get("last_tool_error", ""),
         "results": state["results"],
     }
+    tool_index = get_runtime_tool_index()
+    snapshot["tool_groups"] = tool_index.get_tool_groups_summary()
+    if state["flow_phase"] in ("need_risk", "need_step", "need_next_or_done"):
+        query = compose_tool_retrieval_query(state)
+        snapshot["candidate_tools"] = tool_index.retrieve(query, top_k=10)
+    if state["flow_phase"] in ("need_try", "need_real_tool"):
+        current_step = get_current_step(state)
+        if current_step:
+            tool_name = str(current_step.get("tool", "")).strip()
+            schema = get_real_tool_schema_bundle_map(allow_empty=True).get(tool_name)
+            if schema:
+                snapshot["current_tool_schema"] = schema.get("function") or {}
+    return snapshot
 
 
 def build_available_tool_schemas(state):
@@ -1287,7 +1336,12 @@ def build_step_context(state, step_index, step, plan_memory_result, risk_assessm
 
 TOOL_AGENT_SYSTEM_PROMPT = """You are a safety-aware agent operating in a fixed step-by-step flow. You must select exactly one tool call per turn, or output a natural language reply when the task is done.
 
-Historical plan experiences are provided in the snapshot's plan_memory field. When predict_risk.result=safe, the system has already queried tool memory (memory_for_tool); results are in snapshot's current_tool_memory field.
+Historical plan experiences are provided in the snapshot's current_plan_memory field. When predict_risk.result=safe, the system has already queried tool memory (memory_for_tool); results are in snapshot's current_tool_memory field.
+Tool selection hints:
+- snapshot.tool_groups lists all available tool groups and their purposes.
+- snapshot.candidate_tools lists the most relevant real tools for the current context, ranked by relevance.
+- When choosing predict_risk.tool, prefer a tool from snapshot.candidate_tools when one fits the task.
+- snapshot.current_tool_schema, when present, shows the full schema of the current real tool.
 
 Rules:
 1. Only call tools currently provided, one tool per turn.
@@ -1378,6 +1432,84 @@ def build_task_memory_query(state):
         state.get("known_context", []),
         state.get("authorization_state", []),
     )
+
+
+def get_runtime_tool_index():
+    backend = get_environment_backend()
+    tool_summary = backend.get_tool_summary()
+    signature = (
+        get_pipeline_env(),
+        tuple(
+            (
+                tool.get("name", ""),
+                bool(tool.get("is_write")),
+                tool.get("group", ""),
+                tool.get("short_description", ""),
+                tool.get("description", ""),
+            )
+            for tool in tool_summary
+        ),
+    )
+    if _RUNTIME_TOOL_INDEX_CACHE["signature"] != signature:
+        _RUNTIME_TOOL_INDEX_CACHE["signature"] = signature
+        _RUNTIME_TOOL_INDEX_CACHE["index"] = ToolIndex(
+            tool_summary,
+            get_tool_schemas(allow_empty=True),
+        )
+    return _RUNTIME_TOOL_INDEX_CACHE["index"]
+
+
+def compose_tool_retrieval_query(state):
+    parts = []
+    task = str(state.get("initial_user_input", "")).strip()
+    if task:
+        parts.append(f"task: {task}")
+
+    current_step = get_current_step(state)
+    if current_step:
+        description = str(current_step.get("description", "")).strip()
+        tool_name = str(current_step.get("tool", "")).strip()
+        args = current_step.get("args") or {}
+        if description:
+            parts.append(f"current_step: {description}")
+        if tool_name:
+            parts.append(f"current_tool: {tool_name}")
+        if args:
+            parts.append(
+                "current_args: "
+                + json.dumps(args, ensure_ascii=False, sort_keys=True)
+            )
+
+    known_context = [
+        summarize_result_for_memory(item, limit=100)
+        for item in (state.get("known_context") or [])
+        if str(item).strip()
+    ]
+    if known_context:
+        parts.append(f"known_context: {' | '.join(known_context[:6])}")
+
+    recent_results = []
+    for item in (state.get("results") or [])[-2:]:
+        tool_name = str(item.get("tool", "")).strip()
+        result_summary = summarize_result_for_memory(item.get("result"), limit=100)
+        if tool_name or result_summary:
+            recent_results.append(
+                f"{tool_name}: {result_summary}".strip(": ")
+            )
+    if recent_results:
+        parts.append(f"recent_results: {' | '.join(recent_results)}")
+
+    historical_tools = []
+    plan_mem = state.get("current_plan_memory") or {}
+    for traj in (plan_mem.get("trajectories") or [])[:3]:
+        for step in (traj.get("tool_chain") or [])[:4]:
+            tool_name = str(step.get("tool", "")).strip()
+            if tool_name:
+                historical_tools.append(tool_name)
+    if historical_tools:
+        parts.append(f"historical_tools: {' '.join(historical_tools)}")
+
+    return "\n".join(part for part in parts if part).strip()
 
 
 def flow_tool_memory_for_plan(state):

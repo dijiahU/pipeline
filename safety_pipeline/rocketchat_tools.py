@@ -32,13 +32,15 @@ _auth_cache = {"user_id": None, "token": None}
 _REGISTRY = ServiceToolRegistry(service_id="rocketchat")
 
 
-def rocketchat_tool(name, description, params, required=None, is_write=False):
+def rocketchat_tool(name, description, params, required=None, is_write=False, group="", short_description=""):
     return _REGISTRY.register(
         name=name,
         description=description,
         params=params,
         required=required,
         is_write=is_write,
+        group=group,
+        short_description=short_description,
     )
 
 

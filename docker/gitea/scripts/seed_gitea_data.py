@@ -38,6 +38,36 @@ def require_token():
         raise SeedError("GITEA_ACCESS_TOKEN is required for seeding.")
 
 
+def user_exists(username):
+    resp = api("GET", f"users/{username}")
+    if resp.status_code == 404:
+        return None
+    if resp.status_code >= 400:
+        raise SeedError(f"GET user {username} failed: {resp.status_code} {resp.text[:500]}")
+    return resp.json()
+
+
+def ensure_user(user):
+    username = user["username"]
+    current = user_exists(username)
+    if current:
+        print(f"[seed] user exists: {username}")
+        return current
+
+    payload = {
+        "username": username,
+        "email": user["email"],
+        "password": user["password"],
+        "must_change_password": False,
+        "send_notify": False,
+    }
+    if user.get("full_name"):
+        payload["full_name"] = user["full_name"]
+    created = api_json("POST", "admin/users", expected={201}, json=payload)
+    print(f"[seed] user created: {username}")
+    return created
+
+
 def api(method, path, expected=None, **kwargs):
     url = f"{BASE_URL}/api/v1/{path.lstrip('/')}"
     headers = kwargs.pop("headers", {})
@@ -225,6 +255,21 @@ def ensure_issue(repo_name, title):
     print(f"[seed] issue created: {repo_name}:{title}")
 
 
+def ensure_collaborator(repo_name, collaborator):
+    username = collaborator["username"]
+    permission = collaborator.get("permission", "read")
+    resp = api(
+        "PUT",
+        f"repos/{OWNER}/{repo_name}/collaborators/{username}",
+        json={"permission": permission},
+    )
+    if resp.status_code not in (201, 204):
+        raise SeedError(
+            f"ensure collaborator failed: {repo_name}:{username} -> {resp.status_code} {resp.text[:500]}"
+        )
+    print(f"[seed] collaborator ensured: {repo_name}:{username} ({permission})")
+
+
 def ensure_pull(repo_name, pull):
     pulls = api_json(
         "GET",
@@ -288,12 +333,17 @@ def main():
     with MANIFEST_PATH.open("r", encoding="utf-8") as fh:
         manifest = json.load(fh)
 
+    for user in manifest.get("users", []):
+        ensure_user(user)
+
     for repo in manifest["repositories"]:
         _, created = ensure_repo(repo)
         if created and repo.get("source_repo_url"):
             import_external_repo(repo)
         for extra_branch in repo.get("extra_branches", []):
             ensure_branch(repo["name"], extra_branch, repo["default_branch"])
+        for collaborator in repo.get("collaborators", []):
+            ensure_collaborator(repo["name"], collaborator)
         for issue_title in repo.get("issues", []):
             ensure_issue(repo["name"], issue_title)
         for pull in repo.get("pulls", []):

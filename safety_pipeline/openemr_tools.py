@@ -11,13 +11,15 @@ from .service_tools import ServiceToolRegistry
 _REGISTRY = ServiceToolRegistry(service_id="openemr")
 
 
-def openemr_tool(name, description, params, required=None, is_write=False):
+def openemr_tool(name, description, params, required=None, is_write=False, group="", short_description=""):
     return _REGISTRY.register(
         name=name,
         description=description,
         params=params,
         required=required,
         is_write=is_write,
+        group=group,
+        short_description=short_description,
     )
 
 

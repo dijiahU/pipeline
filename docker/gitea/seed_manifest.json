@@ -1,11 +1,25 @@
 {
   "owner": "root",
+  "users": [
+    {
+      "username": "seed-reviewer",
+      "email": "seed-reviewer@example.com",
+      "password": "seed-reviewer-123456",
+      "full_name": "Seed Reviewer"
+    }
+  ],
   "repositories": [
     {
       "name": "sotopia",
       "description": "Multi-agent social simulation project.",
       "default_branch": "main",
       "extra_branches": ["feature-test"],
+      "collaborators": [
+        {
+          "username": "seed-reviewer",
+          "permission": "read"
+        }
+      ],
       "issues": [
         "Bug: social interaction score calculation",
         "Feature request: export dialogue summaries"
