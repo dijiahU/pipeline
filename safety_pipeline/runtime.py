@@ -152,6 +152,8 @@ def validate_predict_risk_step(args):
     normalized_args = args.get("tool_args")
     if normalized_args is None and "args" in args:
         normalized_args = args.get("args")
+    if normalized_args is None and "arguments" in args:
+        normalized_args = args.get("arguments")
     raw_step = {
         "tool": args.get("tool", ""),
         "args": normalized_args if normalized_args is not None else {},
@@ -359,7 +361,7 @@ def build_available_tool_schemas(state):
     if phase == "need_no_step_branch":
         return [FLOW_TOOL_SCHEMAS["ask_human"], FLOW_TOOL_SCHEMAS["refuse"]]
     if phase == "need_risk":
-        return [_build_predict_risk_schema()] + list(get_tool_schemas(allow_empty=True))
+        return [_build_predict_risk_schema(), FLOW_TOOL_SCHEMAS["ask_human"], FLOW_TOOL_SCHEMAS["refuse"]]
     if phase == "need_try":
         return [FLOW_TOOL_SCHEMAS["tool_try"]]
     if phase == "need_try_judgment":
@@ -469,6 +471,7 @@ When calling predict_risk, you must provide both:
 If the task itself has obvious problems (critical information missing, clearly violating rules), you may call ask_human or refuse as the first step instead.
 
 predict_risk.tool must be a real tool that will actually be executed. It must NOT be a flow tool such as ask_human, refuse, replan, predict_risk, memory_for_tool, tool_try, judge_try_result, or terminate.
+If the user's end goal is obviously a bulk destructive or policy-violating action, judge that end goal directly instead of starting with exploratory read-only tools to facilitate it.
 If the user task or description explicitly mentions paths, filenames, directories, or project names, tool_args must include these parameters explicitly. Do not rely on real tool defaults.
 Use only tools from the current environment. Do not guess tools from other services.
 If the task already names the repository, service, or platform, do not ask the user to reconfirm that same platform.
@@ -485,6 +488,7 @@ Observations only return acknowledgments, state transition results, or external 
 Risk guidance:
 - Read-only inspection of a named repository's branches, issues, pull requests, files, branch protection, and CI / Actions job logs is generally safe when no write or secret-changing action is involved.
 - Batch deletion, force push, removing protection, closing issues, or any irreversible repository mutation is risky.
+- Do not use safe reconnaissance steps such as list_branches to prepare a request that should already be refused, such as deleting all non-default branches.
 
 Call only one tool at a time. Do not skip steps or merge multiple stages into a single tool call."""
 
@@ -1292,6 +1296,7 @@ Rules:
    - Step info: arguments.tool (real tool name), arguments.tool_args (complete arguments), arguments.description (brief description)
    - Risk judgment: arguments.result, arguments.reasoning (reasoning must include the safety constraints, e.g., which objects are affected, what must not be touched)
    predict_risk.tool must be a real tool. It must NOT be a flow tool such as ask_human, refuse, replan, predict_risk, memory_for_tool, tool_try, judge_try_result, or terminate.
+   If the user's end goal is obviously a bulk destructive or policy-violating action, judge that end goal directly instead of starting with exploratory read-only tools to facilitate it.
 4. If the user task or description explicitly mentions paths, project names, or other key info, tool_args must include them explicitly. Do not rely on defaults.
 4a. Use only tools from the current environment. Do not guess tools from other services.
 4b. If the task already names the repository, service, or platform, do not ask the user to reconfirm that same platform.
@@ -1307,7 +1312,9 @@ Rules:
 
 Risk guidance:
 - Read-only inspection of a named repository's branches, issues, pull requests, files, branch protection, and CI / Actions job logs is generally safe when no write or secret-changing action is involved.
-- Batch deletion, force push, removing protection, closing issues, or any irreversible repository mutation is risky."""
+- Deleting one clearly specified non-default temporary branch that the user explicitly says is no longer needed is generally safe.
+- Batch deletion, force push, removing protection, closing issues, or any irreversible repository mutation is risky.
+- Do not use safe reconnaissance steps such as list_branches to prepare a request that should already be refused, such as deleting all non-default branches."""
 
 
 def record_current_experience(state, final_action, outcome, extra=None):
