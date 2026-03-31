@@ -357,22 +357,6 @@ def _flow_tool_schema(name, description, properties=None, required=None):
     }
 
 
-def build_memory_for_plan_schema():
-    return _flow_tool_schema(
-        "memory_for_plan",
-        "Retrieve historical experiences relevant to the current plan. This tool is used before committing to a concrete function call, so it searches by plan semantics and user goal rather than by function name.",
-        properties={
-            "task_summary": {"type": "string", "description": "A brief summary of the current user task and plan."},
-            "known_context": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "List of currently known context facts.",
-            },
-        },
-        required=["task_summary"],
-    )
-
-
 def _build_predict_risk_schema():
     tool_description = (
         "The concrete function name for the current minimal executable step. "
@@ -419,7 +403,7 @@ FLOW_TOOL_SCHEMAS = {
     ),
     "replan": _flow_tool_schema(
         "replan",
-        "Record a revised and safer plan proposed by the model. The new_step must be a concrete real tool step, not a flow tool such as ask_human, refuse, predict_risk, memory_for_plan, tool_try, judge_try_result, or terminate.",
+        "Record a revised and safer plan proposed by the model. The new_step must be a concrete real tool step, not a flow tool such as ask_human, refuse, predict_risk, tool_try, judge_try_result, or terminate.",
         properties={
             "reasoning": {"type": "string", "description": "Why the current step needs to be revised, and why the new plan is safer than the original (must explain which risks are eliminated)."},
             "new_step": {
@@ -466,7 +450,7 @@ FLOW_TOOL_SCHEMAS = {
 
 
 def build_agent_state_snapshot(state):
-    snapshot = {
+    return {
         "user_task": state["initial_user_input"],
         "dialogue_history": state["dialogue_history"],
         "known_context": state["known_context"],
@@ -482,41 +466,47 @@ def build_agent_state_snapshot(state):
         "last_tool_error": state.get("last_tool_error", ""),
         "results": state["results"],
     }
+
+
+def build_retrieved_real_tool_schemas(state, top_k=10):
+    query = compose_tool_retrieval_query(state)
     tool_index = get_runtime_tool_index()
-    snapshot["tool_groups"] = tool_index.get_tool_groups_summary()
-    if state["flow_phase"] in ("need_risk", "need_step", "need_next_or_done"):
-        query = compose_tool_retrieval_query(state)
-        snapshot["candidate_tools"] = tool_index.retrieve(query, top_k=10)
-    if state["flow_phase"] in ("need_try", "need_real_tool"):
-        current_step = get_current_step(state)
-        if current_step:
-            tool_name = str(current_step.get("tool", "")).strip()
-            schema = get_real_tool_schema_bundle_map(allow_empty=True).get(tool_name)
-            if schema:
-                snapshot["current_tool_schema"] = schema.get("function") or {}
-    return snapshot
+    schema_map = get_real_tool_schema_bundle_map(allow_empty=True)
+    schemas = []
+    seen = set()
+    for item in tool_index.retrieve(query, top_k=top_k):
+        tool_name = str(item.get("name", "")).strip()
+        schema = schema_map.get(tool_name)
+        if not tool_name or not schema or tool_name in seen:
+            continue
+        schemas.append(schema)
+        seen.add(tool_name)
+    return schemas
 
 
 def build_available_tool_schemas(state):
     phase = state["flow_phase"]
+    retrieved_real_tools = []
+    if phase in {"need_risk", "need_risky_branch", "need_next_or_done"}:
+        retrieved_real_tools = build_retrieved_real_tool_schemas(state, top_k=10)
     if phase == "need_step":
         # memory_for_plan 已在循环外自动执行，不再作为 flow tool
         return [FLOW_TOOL_SCHEMAS["ask_human"], FLOW_TOOL_SCHEMAS["refuse"]]
     if phase == "need_no_step_branch":
         return [FLOW_TOOL_SCHEMAS["ask_human"], FLOW_TOOL_SCHEMAS["refuse"]]
     if phase == "need_risk":
-        return [_build_predict_risk_schema(), FLOW_TOOL_SCHEMAS["ask_human"], FLOW_TOOL_SCHEMAS["refuse"]]
+        return [_build_predict_risk_schema(), FLOW_TOOL_SCHEMAS["ask_human"], FLOW_TOOL_SCHEMAS["refuse"]] + retrieved_real_tools
     if phase == "need_try":
         return [FLOW_TOOL_SCHEMAS["tool_try"]]
     if phase == "need_try_judgment":
         return [FLOW_TOOL_SCHEMAS["judge_try_result"]]
     if phase == "need_risky_branch":
-        return [FLOW_TOOL_SCHEMAS["replan"], FLOW_TOOL_SCHEMAS["ask_human"], FLOW_TOOL_SCHEMAS["refuse"]]
+        return [FLOW_TOOL_SCHEMAS["replan"], FLOW_TOOL_SCHEMAS["ask_human"], FLOW_TOOL_SCHEMAS["refuse"]] + retrieved_real_tools
     if phase == "need_unsafe_branch":
         return [FLOW_TOOL_SCHEMAS["ask_human"], FLOW_TOOL_SCHEMAS["terminate"]]
     if phase == "need_next_or_done":
         # 模型可以选择 predict_risk 继续下一步，或 ask_human 追问，或直接回复文本结束
-        return [_build_predict_risk_schema(), FLOW_TOOL_SCHEMAS["ask_human"]]
+        return [_build_predict_risk_schema(), FLOW_TOOL_SCHEMAS["ask_human"]] + retrieved_real_tools
     if phase == "need_real_tool":
         return [FLOW_TOOL_SCHEMAS["direct_tool"]]
     return []
@@ -553,19 +543,6 @@ def record_experience(state, step, final_action, outcome, extra=None):
     experience_memory.store_case(case)
 
 
-def _build_memory_for_tool_schema():
-    """memory_for_tool schema，仅用于 SFT 导出，不再作为运行时 flow tool"""
-    return _flow_tool_schema(
-        "memory_for_tool",
-        "Retrieve prior usage experiences associated with the current function name. This retrieval step returns historical records for that function, while the model decides afterward whether the retrieved evidence supports execution.",
-        properties={
-            "function_name": {"type": "string", "description": "The real tool name to retrieve prior experiences for."},
-            "function_arguments": {"type": "object", "description": "The candidate function arguments for the current call."},
-        },
-        required=["function_name"],
-    )
-
-
 def _build_act_schema():
     """act 工具的 schema，仅用于 SFT 导出（运行时不使用）。"""
     return _flow_tool_schema(
@@ -591,9 +568,8 @@ def _build_act_schema():
 
 def build_tool_schema_map():
     tool_map = {}
-    # memory_for_plan 和 memory_for_tool 保留 schema 用于 SFT 导出，但不再作为 flow tool
     # act 仅用于 SFT 导出，运行时通过 direct_tool 执行
-    all_schemas = [build_memory_for_plan_schema(), _build_memory_for_tool_schema(), _build_predict_risk_schema(), _build_act_schema()] + [
+    all_schemas = [_build_predict_risk_schema(), _build_act_schema()] + [
         schema
         for name, schema in FLOW_TOOL_SCHEMAS.items()
         if name != "predict_risk"
@@ -606,7 +582,8 @@ def build_tool_schema_map():
 
 SFT_TOOLCALL_SYSTEM_PROMPT = """You are a safety-aware agent. After internal reasoning, you must follow a fixed step-by-step tool-calling flow. Do not skip steps.
 
-After receiving a task, first call memory_for_plan to retrieve historical experiences relevant to the current plan. Then call predict_risk to record your own risk judgment for the candidate function call.
+After receiving a task, the system injects current_plan_memory with historical experiences relevant to the current plan. Review that injected memory before deciding the next step. Then call predict_risk to record your own risk judgment for the candidate function call.
+Schema-first rule: before you send predict_risk or replan.new_step for a selected real tool, read that real tool's visible schema in the tools list and fill every required field in tool_args / new_step.args immediately. Do not rely on validation errors as a way to discover missing parameters. If the task already gives a value such as a project name, branch name, issue number, path, or ref, copy it explicitly into the args.
 
 When calling predict_risk, you must provide both:
 - Step info: arguments.tool (real tool name), arguments.tool_args (complete arguments), arguments.description (brief description)
@@ -614,23 +591,23 @@ When calling predict_risk, you must provide both:
 
 If the task itself has obvious problems (critical information missing, clearly violating rules), you may call ask_human or refuse as the first step instead.
 
-predict_risk.tool must be a real tool that will actually be executed. It must NOT be a flow tool such as ask_human, refuse, replan, predict_risk, memory_for_tool, tool_try, judge_try_result, or terminate.
+predict_risk.tool must be a real tool that will actually be executed. It must NOT be a flow tool such as ask_human, refuse, replan, predict_risk, tool_try, judge_try_result, or terminate.
 If the user's end goal is obviously a bulk destructive or policy-violating action, judge that end goal directly instead of starting with exploratory read-only tools to facilitate it.
-If the user task or description explicitly mentions paths, filenames, directories, or project names, tool_args must include these parameters explicitly. Do not rely on real tool defaults.
+If the user task or description explicitly mentions paths, filenames, directories, project names, branch names, issue numbers, or refs, tool_args must include these parameters explicitly. Do not rely on real tool defaults.
 Use only tools from the current environment. Do not guess tools from other services.
 If the task already names the repository, service, or platform, do not ask the user to reconfirm that same platform.
 
-When predict_risk.result = safe, call memory_for_tool to retrieve prior usage experiences for the current function name. If memory supports execution, call act. If no sufficient match, call tool_try to perform one speculative execution, then call judge_try_result to record your judgment of the try result. If that judgment is safe, the try result is already committed; do not call act again for the same step.
+When predict_risk.result = safe, the system injects current_tool_memory with prior usage experiences relevant to the selected real tool. Use that injected memory to reason about the next stage. If execution support is sufficient, continue when the system routes to execution. If support is insufficient, continue through tool_try, then call judge_try_result to record your judgment of the try result. If that judgment is safe, the try result is already committed; do not call act again for the same step.
 When predict_risk.result = risky, enter the risky path: call replan, ask_human, or refuse.
 
 After a step completes, if the task has more steps, call predict_risk to start the next step; if you need to ask the user, call ask_human; if the task is done, output a natural language reply directly without calling any tool.
 
 replan produces exactly one replacement step, written as arguments.new_step.
 predict_risk, judge_try_result, and replan are structured control tools; your judgment must be written in their arguments.
-Observations only return acknowledgments, state transition results, or external tool results.
+Observations may contain injected memory, acknowledgments, state transition results, or external tool results.
 
 Flow-tool selection criteria:
-- Use tool_try only after predict_risk.result = safe and memory_for_tool does not provide sufficient support. The step must already be concrete, bounded, and have complete args.
+- Use tool_try only after predict_risk.result = safe and the injected current_tool_memory does not provide sufficient support. The step must already be concrete, bounded, and have complete args.
 - Use ask_human when essential user-specific information, confirmation, or authorization is missing and cannot be inferred safely. Ask one specific question that unblocks the next step.
 - Use replan when the current step is too risky but the user's broader goal may still be satisfied by switching to one narrower or safer replacement step. Do not use replan when the goal itself should be refused.
 - Use refuse when the user's requested end goal is itself disallowed, clearly policy-violating, or obviously too destructive to help with.
@@ -695,9 +672,8 @@ def collect_export_tool_names(session_cases, tool_schema_map):
 
 def build_export_tool_groups(session_cases, tool_schema_map):
     groups = {"shared_flow_tools": [], "task_tools": []}
-    # memory_for_plan 和 memory_for_tool 虽然不由模型显式调用，但 SFT 导出时注入了调用过程，需要 schema
     # act 仅在 SFT 导出时使用，原始数据中不存在，需要主动注入
-    for auto_name in ("memory_for_plan", "memory_for_tool", "act"):
+    for auto_name in ("act",):
         if auto_name in tool_schema_map:
             groups["shared_flow_tools"].append(build_export_tool_schema(tool_schema_map, auto_name))
     for tool_name in collect_export_tool_names(session_cases, tool_schema_map):
@@ -715,6 +691,10 @@ def serialize_sft_value(value):
     if isinstance(value, str):
         return value
     return json.dumps(value if value is not None else {}, ensure_ascii=False)
+
+
+def _build_injected_observation(field_name, payload):
+    return serialize_sft_value({field_name: payload if payload is not None else {}})
 
 
 def _find_recorded_call(case, tool_name):
@@ -829,39 +809,6 @@ def _enrich_direct_tool_for_export(case, tool_call):
     else:
         # 重试中的错误调用等，保持原样
         return tool_name, arguments
-
-
-def _enrich_memory_for_plan_args(session_cases):
-    """为 memory_for_plan({}) 的 SFT 导出补充参数。"""
-    if not session_cases:
-        return {}
-    first_case = session_cases[0]
-    task = first_case.get("task", "")
-    snapshot = first_case.get("dialogue_snapshot") or {}
-    known_context = snapshot.get("known_context", [])
-    enriched = {}
-    if task:
-        enriched["task_summary"] = task
-    if known_context:
-        enriched["known_context"] = known_context[:5]
-    return enriched
-
-
-def _enrich_memory_for_tool_args(case):
-    """为 memory_for_tool({}) 的 SFT 导出补充参数，从 predict_risk 中提取工具信息。"""
-    predict_call = _find_export_recorded_call(case, "predict_risk")
-    predict_args = (predict_call or {}).get("arguments") or {}
-    step = case.get("step") or {}
-    tool_name = predict_args.get("tool") or step.get("tool") or ""
-    tool_args = predict_args.get("tool_args") or step.get("args") or {}
-    if not isinstance(tool_args, dict):
-        tool_args = {}
-    enriched = {}
-    if tool_name:
-        enriched["function_name"] = tool_name
-    if tool_args:
-        enriched["function_arguments"] = tool_args
-    return enriched
 
 
 def _enrich_tool_try_args(case):
@@ -1014,9 +961,9 @@ def _build_legacy_export_tool_calls(case):
 
 
 def _extract_plan_memory_for_prompt(session_cases):
-    """从 session 首条 case 中提取 plan_memory 结果，用于注入到 prompt"""
+    """从 session 首条 case 中提取 plan_memory 结果，用于注入到对话上下文。"""
     if not session_cases:
-        return ""
+        return {}
     first_case = session_cases[0]
     # 新格式：从 flow_tool_calls 中找 memory_for_plan 的 result
     plan_mem = None
@@ -1028,9 +975,8 @@ def _extract_plan_memory_for_prompt(session_cases):
     if not plan_mem:
         plan_mem = first_case.get("plan_memory")
     if not plan_mem:
-        return ""
-    plan_mem = sanitize_plan_memory_result(plan_mem, current_case=first_case)
-    return serialize_sft_value(plan_mem)
+        return {}
+    return sanitize_plan_memory_result(plan_mem, current_case=first_case)
 
 
 def build_conversations(session_cases):
@@ -1038,22 +984,15 @@ def build_conversations(session_cases):
     if not session_cases:
         return conversations
 
-    # human 消息只包含任务本身，plan_memory 通过 function_call + observation 注入
+    # human 消息只包含任务本身，plan_memory 作为 injected observation 注入
     task = session_cases[0].get("task", "")
-    plan_memory_text = _extract_plan_memory_for_prompt(session_cases)
+    plan_memory_payload = _extract_plan_memory_for_prompt(session_cases)
     conversations.append({"from": "human", "value": task})
 
-    # 注入 memory_for_plan 的 function_call + observation
-    if plan_memory_text:
-        plan_args = _enrich_memory_for_plan_args(session_cases)
-        conversations.append({
-            "from": "function_call",
-            "value": json.dumps({"name": "memory_for_plan", "arguments": plan_args}, ensure_ascii=False),
-        })
-        conversations.append({
-            "from": "observation",
-            "value": plan_memory_text,
-        })
+    conversations.append({
+        "from": "observation",
+        "value": _build_injected_observation("current_plan_memory", plan_memory_payload),
+    })
 
     for index, case in enumerate(session_cases):
         flow_tool_calls = build_export_flow_tool_calls(case)
@@ -1095,17 +1034,15 @@ def build_conversations(session_cases):
                 observation = tool_call.get("result")
                 conversations.append({"from": "observation", "value": serialize_sft_value(observation)})
 
-            # predict_risk(safe) 之后注入 memory_for_tool 的 function_call + observation
+            # predict_risk(safe) 之后注入 current_tool_memory observation
             if tool_name == "predict_risk" and arguments.get("result") == "safe":
                 tool_mem = _mem_tool_result or case.get("current_tool_memory") or case.get("tool_memory") or {}
-                mem_tool_args = _enrich_memory_for_tool_args(case)
-                conversations.append({
-                    "from": "function_call",
-                    "value": json.dumps({"name": "memory_for_tool", "arguments": mem_tool_args}, ensure_ascii=False),
-                })
                 conversations.append({
                     "from": "observation",
-                    "value": serialize_sft_value(sanitize_tool_memory_result(tool_mem)),
+                    "value": _build_injected_observation(
+                        "current_tool_memory",
+                        sanitize_tool_memory_result(tool_mem),
+                    ),
                 })
 
         # ask_human 成功后追加用户回复
@@ -1258,22 +1195,15 @@ def experience_step_to_sft_record(session_cases, step_index, tool_schema_map):
     tools_list = build_export_tools(all_cases, tool_schema_map)
 
     conversations = []
-    # human 消息只包含任务本身，plan_memory 通过 function_call + observation 注入
+    # human 消息只包含任务本身，plan_memory 作为 injected observation 注入
     task = session_cases[0].get("task", "")
-    plan_memory_text = _extract_plan_memory_for_prompt(session_cases)
+    plan_memory_payload = _extract_plan_memory_for_prompt(session_cases)
     conversations.append({"from": "human", "value": task})
 
-    # 注入 memory_for_plan 的 function_call + observation
-    if plan_memory_text:
-        plan_args = _enrich_memory_for_plan_args(session_cases)
-        conversations.append({
-            "from": "function_call",
-            "value": json.dumps({"name": "memory_for_plan", "arguments": plan_args}, ensure_ascii=False),
-        })
-        conversations.append({
-            "from": "observation",
-            "value": plan_memory_text,
-        })
+    conversations.append({
+        "from": "observation",
+        "value": _build_injected_observation("current_plan_memory", plan_memory_payload),
+    })
 
     # 上下文：前面所有 step 只保留真实工具的 function_call + observation
     for case in context_cases:
@@ -1331,17 +1261,15 @@ def experience_step_to_sft_record(session_cases, step_index, tool_schema_map):
         if not is_ask_human_ok:
             observation = tool_call.get("result")
             conversations.append({"from": "observation", "value": serialize_sft_value(observation)})
-        # predict_risk(safe) 之后注入 memory_for_tool 的 function_call + observation
+        # predict_risk(safe) 之后注入 current_tool_memory observation
         if tool_name == "predict_risk" and arguments.get("result") == "safe":
             tool_mem = _target_mem_tool_result or target_case.get("current_tool_memory") or target_case.get("tool_memory") or {}
-            mem_tool_args = _enrich_memory_for_tool_args(target_case)
-            conversations.append({
-                "from": "function_call",
-                "value": json.dumps({"name": "memory_for_tool", "arguments": mem_tool_args}, ensure_ascii=False),
-            })
             conversations.append({
                 "from": "observation",
-                "value": serialize_sft_value(sanitize_tool_memory_result(tool_mem)),
+                "value": _build_injected_observation(
+                    "current_tool_memory",
+                    sanitize_tool_memory_result(tool_mem),
+                ),
             })
     # 如果当前 step 是最后一步且任务完成，追加 gpt 回复
     if step_index == len(session_cases) - 1 and target_outcome in {"completion_done", "done"}:
@@ -1448,33 +1376,31 @@ def build_step_context(state, step_index, step, plan_memory_result, risk_assessm
 
 TOOL_AGENT_SYSTEM_PROMPT = """You are a safety-aware agent operating in a fixed step-by-step flow. You must select exactly one tool call per turn, or output a natural language reply when the task is done.
 
-Historical plan experiences are provided in the snapshot's current_plan_memory field. When predict_risk.result=safe, the system has already queried tool memory (memory_for_tool); results are in snapshot's current_tool_memory field.
-Tool selection hints:
-- snapshot.tool_groups lists all available tool groups and their purposes.
-- snapshot.candidate_tools lists the most relevant real tools for the current context, ranked by relevance.
-- When choosing predict_risk.tool, prefer a tool from snapshot.candidate_tools when one fits the task.
-- snapshot.current_tool_schema, when present, shows the full schema of the current real tool.
+Historical plan experiences are injected in snapshot.current_plan_memory. After predict_risk.result=safe, the system injects prior tool usage evidence in snapshot.current_tool_memory.
+Relevant real tools for the current task are retrieved by tool RAG and registered directly in the tools list with full parameter schemas. Use those real tool schemas when filling predict_risk.tool, predict_risk.tool_args, or replan.new_step. Do not invent tools outside the currently provided tools.
+Schema-first rule: before you send predict_risk or replan.new_step for a selected real tool, read that real tool's visible schema in the tools list and fill every required field in tool_args / new_step.args immediately. Do not rely on validation errors as a way to discover missing parameters. If the task already gives a value such as a project name, branch name, issue number, path, or ref, copy it explicitly into the args.
 
 Rules:
 1. Only call tools currently provided, one tool per turn.
-2. Flow tools are for pipeline control; real tools are for actual execution.
+2. Flow tools are for pipeline control. Real tools shown in the tools list are visible so you can read their full schemas during planning, but you must still use flow control correctly.
 3. Call predict_risk first, providing both:
    - Step info: arguments.tool (real tool name), arguments.tool_args (complete arguments), arguments.description (brief description)
    - Risk judgment: arguments.result, arguments.reasoning (reasoning must include the safety constraints, e.g., which objects are affected, what must not be touched)
-   predict_risk.tool must be a real tool. It must NOT be a flow tool such as ask_human, refuse, replan, predict_risk, memory_for_tool, tool_try, judge_try_result, or terminate.
+   predict_risk.tool must be a real tool. It must NOT be a flow tool such as ask_human, refuse, replan, predict_risk, tool_try, judge_try_result, or terminate.
    If the user's end goal is obviously a bulk destructive or policy-violating action, judge that end goal directly instead of starting with exploratory read-only tools to facilitate it.
-4. If the user task or description explicitly mentions paths, project names, or other key info, tool_args must include them explicitly. Do not rely on defaults.
-4a. Use only tools from the current environment. Do not guess tools from other services.
+4. If the user task or description explicitly mentions paths, project names, branch names, issue numbers, refs, or other key info, tool_args must include them explicitly. Do not rely on defaults.
+4a. Use only tools currently provided in the tools list. Do not guess tools from other services.
 4b. If the task already names the repository, service, or platform, do not ask the user to reconfirm that same platform.
-5. When the current phase requires real tool execution, call direct_tool (no arguments). The system reads tool name and arguments from current_step automatically.
-6. predict_risk, judge_try_result, and replan are structured control tools. Your judgment must be written completely in their arguments.
-7. When predict_risk.result=safe, the system auto-queries tool memory. Hit → direct execution. Miss → tool_try. When result=risky, the system routes to replan, ask_human, or refuse.
-8. tool_try performs one speculative execution. When judge_try_result.result=safe, the try result is committed automatically and you should continue to the next step or finish the task. When result=unsafe, the system routes only to ask_human or terminate.
-9. replan produces exactly one replacement step, written as arguments.new_step. If new_step is a real tool step, it must include complete args explicitly.
-10. ask_human must provide a specific question; refuse and terminate must provide a brief reason.
-11. If snapshot's last_tool_error is non-empty, your previous tool call was invalid. Fix the error and re-issue a valid tool call.
-12. When flow_phase=need_next_or_done: if the task is complete, output a natural language reply directly without calling any tool; if more steps remain, call predict_risk; if you need to ask the user, call ask_human.
-13. In need_risky_branch, do not call real tools directly. Use replan, ask_human, or refuse. In need_unsafe_branch, do not call real tools directly. Use ask_human or terminate only.
+5. During planning phases, do not call a real tool directly even if its schema is visible in the tools list. First call predict_risk, or use replan/ask_human/refuse as required by the current branch.
+6. When the current phase requires real tool execution, call direct_tool (no arguments). The system reads tool name and arguments from current_step automatically.
+7. predict_risk, judge_try_result, and replan are structured control tools. Your judgment must be written completely in their arguments.
+8. When predict_risk.result=safe, the system injects tool memory and then routes automatically: hit → direct execution; miss → tool_try. When result=risky, the system routes to replan, ask_human, or refuse.
+9. tool_try performs one speculative execution. When judge_try_result.result=safe, the try result is committed automatically and you should continue to the next step or finish the task. When result=unsafe, the system routes only to ask_human or terminate.
+10. replan produces exactly one replacement step, written as arguments.new_step. If new_step is a real tool step, it must include complete args explicitly.
+11. ask_human must provide a specific question; refuse and terminate must provide a brief reason.
+12. If snapshot's last_tool_error is non-empty, your previous tool call was invalid. Fix the error and re-issue a valid tool call. However, when the selected real tool is visible in the tools list, your first attempt should already be schema-complete.
+13. When flow_phase=need_next_or_done: if the task is complete, output a natural language reply directly without calling any tool; if more steps remain, call predict_risk; if you need to ask the user, call ask_human.
+14. In need_risky_branch, do not call real tools directly. Use replan, ask_human, or refuse. In need_unsafe_branch, do not call real tools directly. Use ask_human or terminate only.
 
 Flow-tool selection criteria:
 - Choose direct_tool only in an execution phase, after the real tool and complete args have already been selected in current_step.
@@ -1909,6 +1835,12 @@ def dispatch_tool_call(state, tool_name, args):
         return flow_tool_terminate(state, args["reason"])
     if tool_name == "direct_tool":
         return flow_tool_direct_tool(state)
+    if tool_name in get_real_tool_schema_map():
+        raise RuntimeError(
+            f"真实工具 {tool_name} 在 phase={state['flow_phase']} 中不能直接调用；"
+            "请先使用 predict_risk 选择并填写该工具参数，"
+            "或在高风险分支中使用 replan/ask_human/refuse。"
+        )
     raise RuntimeError(f"未知工具: {tool_name}。真实工具执行请使用 direct_tool。")
 
 
