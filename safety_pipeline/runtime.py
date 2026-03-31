@@ -2,6 +2,7 @@ import argparse
 import difflib
 import json
 import os
+import re
 
 from .console import print_json_block, print_stage_end, print_stage_start
 from .environment import get_supported_backend_names
@@ -149,7 +150,82 @@ def tool_args_match(expected_args, provided_args):
     return expected_args == provided_args
 
 
-def validate_real_tool_step(step, context_label="current_step"):
+def _parse_inline_arg_value(raw_text, schema):
+    text = str(raw_text or "").lstrip()
+    if not text:
+        return None, 0
+
+    decoder = json.JSONDecoder()
+    if text[0] in ('{', '[', '"'):
+        try:
+            value, end = decoder.raw_decode(text)
+            return value, end
+        except Exception:
+            return None, 0
+
+    if text[0] == "'":
+        end_idx = text.find("'", 1)
+        if end_idx == -1:
+            return None, 0
+        return text[1:end_idx], end_idx + 1
+
+    match = re.match(r"^[^，,；;。\)\]\}\s]+", text)
+    if not match:
+        return None, 0
+    raw_value = match.group(0)
+    value_type = (schema or {}).get("type", "")
+
+    if value_type == "integer":
+        try:
+            return int(raw_value), len(raw_value)
+        except ValueError:
+            return None, 0
+    if value_type == "number":
+        try:
+            return float(raw_value), len(raw_value)
+        except ValueError:
+            return None, 0
+    if value_type == "boolean":
+        lowered = raw_value.lower()
+        if lowered == "true":
+            return True, len(raw_value)
+        if lowered == "false":
+            return False, len(raw_value)
+        return None, 0
+    return raw_value, len(raw_value)
+
+
+def _extract_inline_tool_args(description, properties, existing_args=None):
+    description = str(description or "")
+    if not description:
+        return dict(existing_args or {})
+
+    merged = dict(existing_args or {})
+    for key, schema in (properties or {}).items():
+        if key in merged:
+            continue
+
+        pattern = rf"(?<![A-Za-z0-9_]){re.escape(key)}\s*=\s*"
+        match = re.search(pattern, description)
+        if match:
+            value, consumed = _parse_inline_arg_value(description[match.end():], schema or {})
+            if consumed > 0:
+                merged[key] = value
+                continue
+
+        if key in {"name", "table_name"} and (schema or {}).get("type") == "string":
+            named_match = re.search(
+                r"(?:named|名为)\s*[\"'“”]?([^\"'“”。，,；;\s]+)[\"'“”]?",
+                description,
+                flags=re.IGNORECASE,
+            )
+            if named_match:
+                merged[key] = named_match.group(1)
+
+    return merged
+
+
+def validate_real_tool_step(step, context_label="current_step", fallback_text=""):
     if not isinstance(step, dict):
         raise RuntimeError(f"{context_label} 必须是对象。")
 
@@ -166,6 +242,10 @@ def validate_real_tool_step(step, context_label="current_step"):
     parameters = tool_schema.get("parameters", {})
     properties = parameters.get("properties", {}) or {}
     required = set(parameters.get("required", []) or [])
+    parse_text = description
+    if fallback_text:
+        parse_text = f"{description}\n{fallback_text}".strip()
+    args = _extract_inline_tool_args(parse_text, properties, existing_args=args)
     arg_keys = set(args.keys())
     unknown_keys = arg_keys - set(properties.keys())
     missing_keys = required - arg_keys
@@ -184,7 +264,7 @@ def validate_real_tool_step(step, context_label="current_step"):
     return {"tool": tool_name, "args": args, "description": description}
 
 
-def validate_predict_risk_step(args):
+def validate_predict_risk_step(args, fallback_text=""):
     normalized_args = args.get("tool_args")
     if normalized_args is None and "args" in args:
         normalized_args = args.get("args")
@@ -195,10 +275,14 @@ def validate_predict_risk_step(args):
         "args": normalized_args if normalized_args is not None else {},
         "description": args.get("description", ""),
     }
-    return validate_real_tool_step(raw_step, context_label="predict_risk.step")
+    return validate_real_tool_step(
+        raw_step,
+        context_label="predict_risk.step",
+        fallback_text=fallback_text,
+    )
 
 
-def validate_predict_risk_args(args):
+def validate_predict_risk_args(args, fallback_text=""):
     result = str(args.get("result", "")).strip()
     reasoning = str(args.get("reasoning", "")).strip() or "模型未显式提供风险判断理由。"
 
@@ -206,7 +290,7 @@ def validate_predict_risk_args(args):
         raise RuntimeError("predict_risk.result 必须是 safe 或 risky。")
 
     try:
-        step = validate_predict_risk_step(args)
+        step = validate_predict_risk_step(args, fallback_text=fallback_text)
     except RuntimeError as exc:
         # 对 risky 分支放宽一步：如果模型已经明确判定为 risky，
         # 但漏填了真实工具必填参数，仍允许进入 ask_human/refuse/replan 分支。
@@ -1536,7 +1620,10 @@ def flow_tool_memory_for_plan(state):
 
 def flow_tool_predict_risk(state, args):
     print_stage_start("flow_tool: predict_risk")
-    result = validate_predict_risk_args(args)
+    result = validate_predict_risk_args(
+        args,
+        fallback_text=str(state.get("initial_user_input", "")).strip(),
+    )
     step = result.pop("step")
     update_latest_flow_tool_arguments(state, {
         "tool": step["tool"],

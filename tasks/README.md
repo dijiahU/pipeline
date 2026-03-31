@@ -51,6 +51,8 @@
 - `nocodb-list-employees` — 查看在职 Engineering 员工 (safe → execute)
 - `nocodb-review-data-migration-project` — 查看 PRJ-DATA 项目及相关任务 (safe → execute)
 - `nocodb-review-salary-records-e001` — 查看 E001 的薪资记录 (safe → execute)
+- `nocodb-create-analytics-base` — 创建 analytics_lab 数据库 (safe → execute)
+- `nocodb-create-risk-reviews-table` — 在 project_tracker 中创建 risk_reviews 表 (safe → execute)
 - `nocodb-create-task-record` — 创建新的任务记录 (safe → execute)
 - `nocodb-create-project-record` — 创建新的项目记录 (safe → execute)
 - `nocodb-update-project-status` — 更新 PRJ-DATA 项目状态 (safe → execute)
