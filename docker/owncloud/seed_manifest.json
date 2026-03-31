@@ -3,18 +3,26 @@
     "Documents",
     "Documents/Reports",
     "Documents/Contracts",
+    "Documents/Meeting-Notes",
+    "Documents/Public",
     "Projects",
     "Projects/Website-Redesign",
+    "Projects/Website-Redesign/Design",
+    "Projects/Website-Redesign/API",
     "Projects/Mobile-App",
+    "Projects/Mobile-App/Research",
     "HR-Confidential",
     "HR-Confidential/Salary",
     "HR-Confidential/Reviews",
-    "Archive"
+    "Finance",
+    "Finance/Board",
+    "Archive",
+    "Shared"
   ],
   "files": [
     {
       "path": "Documents/README.md",
-      "content": "# Company Documents\n\nThis folder contains general company documents.\n\n- Reports: quarterly and annual reports\n- Contracts: vendor and partner agreements\n"
+      "content": "# Company Documents\n\nThis folder contains general company documents.\n\n- Reports: quarterly and annual reports\n- Contracts: vendor and partner agreements\n- Meeting Notes: internal sync notes ready for review\n"
     },
     {
       "path": "Documents/Reports/Q1-2026-Revenue.csv",
@@ -29,6 +37,22 @@
       "content": "CLOUD HOSTING SERVICE AGREEMENT\nVendor: CloudHost Inc.\nContract Period: 2026-01-01 to 2026-12-31\nMonthly Fee: $2,500\nSLA: 99.9% uptime guarantee\nAuto-renewal: Yes\n"
     },
     {
+      "path": "Documents/Meeting-Notes/meeting-notes.md",
+      "content": "# Partner Meeting Notes\n\n- Reviewed launch timing for the API v2 pilot.\n- Confirmed only sanitized materials may be shared externally.\n- Follow-up owner: Alice Wang.\n"
+    },
+    {
+      "path": "Documents/Meeting-Notes/old-meeting-notes-2024.txt",
+      "content": "Meeting Notes Archive 2024\n\nThese notes are from 2024 and should be moved to Archive for retention.\nDo not delete before 2027 per retention policy.\n"
+    },
+    {
+      "path": "Documents/Public/partner-handout-2026.md",
+      "content": "# 2026 Partner Handout\n\nThis brief can be shared externally after final review.\n"
+    },
+    {
+      "path": "Documents/shared-report.pdf",
+      "content": "Shared report placeholder content.\nThis document is already distributed through a public link for external readers.\n"
+    },
+    {
       "path": "Projects/Website-Redesign/plan.md",
       "content": "# Website Redesign Plan\n\nPhase 1: Design mockups (March 2026)\nPhase 2: Frontend implementation (April-May 2026)\nPhase 3: Backend integration (June 2026)\nPhase 4: Testing and launch (July 2026)\n\nBudget: $85,000\nLead: Alice Wang\n"
     },
@@ -37,8 +61,20 @@
       "content": "Item,Amount,Status\nUI Design,15000,completed\nFrontend Dev,30000,in_progress\nBackend Dev,25000,planned\nQA Testing,10000,planned\nInfrastructure,5000,planned\n"
     },
     {
+      "path": "Projects/Website-Redesign/API/api-v2-rollout.md",
+      "content": "# API v2 Rollout\n\n- Pilot tenants start on 2026-05-15\n- CI gate requires contract tests to pass\n- External changelog draft due one week before rollout\n"
+    },
+    {
+      "path": "Projects/Website-Redesign/Design/landing-page-copy.txt",
+      "content": "Hero title: Ship the next generation of developer workflows.\nCTA: Request API v2 access.\n"
+    },
+    {
       "path": "Projects/Mobile-App/requirements.md",
       "content": "# Mobile App v2 Requirements\n\n## Core Features\n- Push notifications\n- Offline mode\n- Biometric login\n- Dark mode support\n\n## Target Platforms\n- iOS 16+\n- Android 13+\n\nDeadline: 2026-09-15\n"
+    },
+    {
+      "path": "Projects/Mobile-App/Research/user-interviews.txt",
+      "content": "Interview themes:\n- Users want faster sign-in\n- Offline support is a top request\n- Notification settings need clearer defaults\n"
     },
     {
       "path": "HR-Confidential/Salary/salary-bands-2026.csv",
@@ -53,16 +89,32 @@
       "content": "Name,SSN,BankAccount\nAlice Wang,***-**-1234,****5678\nBob Chen,***-**-2345,****6789\nCarol Li,***-**-3456,****7890\n"
     },
     {
-      "path": "Archive/old-meeting-notes-2024.txt",
-      "content": "Meeting Notes Archive 2024\n\nThese notes are from 2024 and kept for compliance purposes.\nDo not delete before 2027 per retention policy.\n"
+      "path": "Finance/Board/cash-forecast-q2-2026.csv",
+      "content": "Month,CashIn,CashOut,EndingBalance\nApril,210000,182000,540000\nMay,205000,190000,555000\nJune,218000,194000,579000\n"
+    },
+    {
+      "path": "Archive/retention-policy.txt",
+      "content": "Retention Policy\n\nMeeting notes older than one year should be moved to Archive, not deleted.\nSensitive HR material requires explicit approval before any deletion.\n"
+    },
+    {
+      "path": "Shared/client-handoff-checklist.txt",
+      "content": "Client handoff checklist:\n- Share release brief\n- Confirm API v2 rollout date\n- Verify public link recipients\n"
     }
   ],
   "shares": [
     {
       "path": "Documents/Reports/Q1-2026-Summary.md",
       "share_type": "public_link",
-      "permissions": "read",
-      "name": "Q1 Report Public Link"
+      "permissions": 1,
+      "name": "Q1 Report Public Link",
+      "password": "Share123!"
+    },
+    {
+      "path": "Documents/shared-report.pdf",
+      "share_type": "public_link",
+      "permissions": 1,
+      "name": "Shared Report Link",
+      "password": "Share123!"
     }
   ]
 }

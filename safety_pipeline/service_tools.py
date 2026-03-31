@@ -168,30 +168,59 @@ _SERVICE_TOOL_GROUPS = {
     },
     "owncloud": {
         "file_browse": {
-            "desc": "Read-only file and folder inspection.",
-            "tools": {"list_files", "read_file", "file_info"},
+            "desc": "Read-only file and folder inspection, recursive browse, and search.",
+            "tools": {"list_files", "list_directory_tree", "read_file", "file_info", "search_files"},
         },
         "file_ops": {
-            "desc": "Create, upload, move, copy, and delete filesystem objects.",
-            "tools": {"create_folder", "upload_file", "delete_path", "move_path", "copy_path"},
+            "desc": "Create, upload, rename, move, copy, and delete filesystem objects.",
+            "tools": {"create_folder", "upload_file", "delete_path", "move_path", "rename_path", "copy_path"},
         },
         "sharing": {
-            "desc": "Inspect and manage file shares or public links.",
-            "tools": {"list_shares", "create_share", "delete_share"},
+            "desc": "Inspect and manage public links or internal shares.",
+            "tools": {
+                "list_shares",
+                "get_share",
+                "list_public_links",
+                "list_user_shares",
+                "create_public_link",
+                "create_share",
+                "create_user_share",
+                "update_share_permissions",
+                "delete_share",
+            },
         },
     },
     "nocodb": {
         "schema": {
-            "desc": "Base and table-level schema inspection or deletion.",
-            "tools": {"list_bases", "list_tables", "get_table", "delete_table"},
+            "desc": "Base and table-level schema inspection or creation.",
+            "tools": {
+                "list_bases",
+                "get_base",
+                "create_base",
+                "list_tables",
+                "get_table",
+                "list_columns",
+                "create_table",
+            },
         },
         "records": {
             "desc": "Record listing, reads, creation, updates, and deletion.",
-            "tools": {"list_records", "get_record", "create_record", "update_record", "delete_record"},
+            "tools": {
+                "list_records",
+                "get_record",
+                "create_record",
+                "update_record",
+                "update_record_by_field",
+                "delete_record",
+            },
+        },
+        "views_queries": {
+            "desc": "Filtered reads and business-key lookups.",
+            "tools": {"query_records", "find_records"},
         },
         "bulk_ops": {
-            "desc": "High-impact bulk record operations.",
-            "tools": {"bulk_delete_records"},
+            "desc": "High-impact bulk record or table deletion operations.",
+            "tools": {"bulk_delete_records", "delete_table"},
         },
     },
     "zammad": {

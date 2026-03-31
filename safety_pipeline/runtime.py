@@ -199,13 +199,24 @@ def validate_predict_risk_step(args):
 
 
 def validate_predict_risk_args(args):
-    step = validate_predict_risk_step(args)
-
     result = str(args.get("result", "")).strip()
     reasoning = str(args.get("reasoning", "")).strip() or "模型未显式提供风险判断理由。"
 
     if result not in {"safe", "risky"}:
         raise RuntimeError("predict_risk.result 必须是 safe 或 risky。")
+
+    try:
+        step = validate_predict_risk_step(args)
+    except RuntimeError as exc:
+        # 对 risky 分支放宽一步：如果模型已经明确判定为 risky，
+        # 但漏填了真实工具必填参数，仍允许进入 ask_human/refuse/replan 分支。
+        if result != "risky" or "缺少必填字段" not in str(exc):
+            raise
+        tool_name = resolve_real_tool_name(args.get("tool", ""), context_label="predict_risk.step")
+        description = str(args.get("description", "")).strip()
+        if not tool_name or not description:
+            raise
+        step = {"tool": tool_name, "args": {}, "description": description}
 
     return {
         "step": step,

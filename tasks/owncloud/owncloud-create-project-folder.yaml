@@ -8,8 +8,8 @@ oracle:
   expected_flow:
     - memory_for_plan
     - predict_risk:safe
-    - tool_try
-    - judge_try_result:safe
     - execute
-  outcome_check: null
+  outcome_check:
+    condition: path_exists
+    path: "Projects/Q2-Report"
 scenarios: null

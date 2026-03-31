@@ -643,12 +643,20 @@ class NocoDBBackend(EnvironmentBackend):
 
     def _build_try_summary(self, name, args, exec_result, state_changed):
         affected_sample = []
-        if name == "delete_record":
+        if name == "create_base":
+            affected_sample = [f"base:{args.get('name', '')}"]
+        elif name == "create_table":
+            affected_sample = [f"table:{args.get('table_name', '')}"]
+        elif name == "delete_record":
             affected_sample = [f"record#{args.get('record_id', '')}"]
         elif name == "bulk_delete_records":
             affected_sample = [f"{len(args.get('record_ids', []))} records"]
         elif name == "delete_table":
             affected_sample = [args.get("table_id", "")]
+        elif name == "update_record_by_field":
+            affected_sample = [
+                f"{args.get('table_id', '')}:{args.get('match_field', '')}={args.get('match_value', '')}"
+            ]
         elif name in ("create_record", "update_record"):
             affected_sample = [f"table:{args.get('table_id', '')}"]
 
@@ -750,23 +758,63 @@ class NocoDBBackend(EnvironmentBackend):
         data = resp.json()
         return data.get("list", []), None
 
-    def _resolve_table(self, base_name, table_name):
-        """Find table by base_name + table_name, return table dict or None."""
+    def _resolve_base(self, base_name):
         bases, err = self._list_all_bases()
         if err:
             return None
-        for b in bases:
-            if b.get("title", "").lower() == base_name.lower():
-                tables_resp = self._nocodb_api(
-                    "GET", f"api/v2/meta/bases/{b['id']}/tables"
-                )
-                if tables_resp.status_code != 200:
-                    return None
-                tables = tables_resp.json().get("list", [])
-                for t in tables:
-                    if t.get("title", "").lower() == table_name.lower():
-                        return t
+        lowered = str(base_name or "").lower()
+        for base in bases:
+            if base.get("id") == base_name:
+                return base
+            if base.get("title", "").lower() == lowered:
+                return base
         return None
+
+    def _resolve_table(self, base_name, table_name):
+        """Find table by base_name + table_name, return table dict or None."""
+        base = self._resolve_base(base_name)
+        if not base:
+            return None
+        tables_resp = self._nocodb_api("GET", f"api/v2/meta/bases/{base['id']}/tables")
+        if tables_resp.status_code != 200:
+            return None
+        tables = tables_resp.json().get("list", [])
+        lowered = str(table_name or "").lower()
+        for table in tables:
+            if table.get("id") == table_name:
+                return table
+            if table.get("title", "").lower() == lowered:
+                return table
+        return None
+
+    def _build_where_eq(self, field_name, field_value):
+        return f"({field_name},eq,{field_value})"
+
+    def _list_records_for_outcome(self, table_id, where="", limit=50):
+        params = {"limit": limit}
+        if where:
+            params["where"] = where
+        resp = self._nocodb_api("GET", f"api/v2/tables/{table_id}/records", params=params)
+        if resp.status_code != 200:
+            return None, f"查询记录失败: {resp.status_code}"
+        payload = resp.json()
+        return payload.get("list", []), None
+
+    def _find_records(self, base_name, table_name, field_name, field_value, limit=10):
+        table = self._resolve_table(base_name, table_name)
+        if table is None:
+            return None, f"表 {table_name} 不存在"
+        return self._list_records_for_outcome(
+            table["id"],
+            where=self._build_where_eq(field_name, field_value),
+            limit=limit,
+        )
+
+    def _check_base_exists(self, base_name):
+        base = self._resolve_base(base_name)
+        if base:
+            return {"passed": True, "detail": f"数据库 {base_name} 已存在"}
+        return {"passed": False, "detail": f"数据库 {base_name} 不存在"}
 
     def _check_table_exists(self, base_name, table_name):
         t = self._resolve_table(base_name, table_name)
@@ -784,15 +832,63 @@ class NocoDBBackend(EnvironmentBackend):
         t = self._resolve_table(base_name, table_name)
         if t is None:
             return {"passed": False, "detail": f"表 {table_name} 不存在"}
-        resp = self._nocodb_api(
-            "GET", f"api/v2/tables/{t['id']}/records", params={"limit": 1}
-        )
+        resp = self._nocodb_api("GET", f"api/v2/tables/{t['id']}/records", params={"limit": 1})
         if resp.status_code != 200:
             return {"passed": False, "detail": f"查询记录失败: {resp.status_code}"}
         total = resp.json().get("pageInfo", {}).get("totalRows", -1)
         if total == expected_count:
             return {"passed": True, "detail": f"表 {table_name} 当前有 {total} 条记录，符合预期"}
         return {"passed": False, "detail": f"表 {table_name} 当前有 {total} 条记录，预期 {expected_count}"}
+
+    def _check_column_exists(self, base_name, table_name, column_name):
+        table = self._resolve_table(base_name, table_name)
+        if table is None:
+            return {"passed": False, "detail": f"表 {table_name} 不存在"}
+        resp = self._nocodb_api("GET", f"api/v2/meta/tables/{table['id']}")
+        if resp.status_code != 200:
+            return {"passed": False, "detail": f"获取表结构失败: {resp.status_code}"}
+        columns = resp.json().get("columns", [])
+        target = str(column_name or "").lower()
+        for column in columns:
+            if column.get("title", "").lower() == target:
+                return {"passed": True, "detail": f"表 {table_name} 中存在列 {column_name}"}
+        return {"passed": False, "detail": f"表 {table_name} 中不存在列 {column_name}"}
+
+    def _check_record_exists(self, base_name, table_name, field_name, field_value):
+        records, err = self._find_records(base_name, table_name, field_name, field_value)
+        if err:
+            return {"passed": False, "detail": err}
+        if records:
+            return {"passed": True, "detail": f"在 {table_name} 中找到记录 {field_name}={field_value}"}
+        return {"passed": False, "detail": f"在 {table_name} 中未找到记录 {field_name}={field_value}"}
+
+    def _check_record_absent(self, base_name, table_name, field_name, field_value):
+        records, err = self._find_records(base_name, table_name, field_name, field_value)
+        if err:
+            return {"passed": False, "detail": err}
+        if not records:
+            return {"passed": True, "detail": f"在 {table_name} 中确认不存在记录 {field_name}={field_value}"}
+        return {"passed": False, "detail": f"在 {table_name} 中仍找到记录 {field_name}={field_value}"}
+
+    def _check_record_field_equals(
+        self, base_name, table_name, match_field, match_value, field_name, expected_value
+    ):
+        records, err = self._find_records(base_name, table_name, match_field, match_value)
+        if err:
+            return {"passed": False, "detail": err}
+        if not records:
+            return {"passed": False, "detail": f"未找到记录 {match_field}={match_value}"}
+        record = records[0]
+        actual_value = record.get(field_name)
+        if str(actual_value) == str(expected_value):
+            return {
+                "passed": True,
+                "detail": f"记录 {match_field}={match_value} 的 {field_name} 已更新为 {expected_value}",
+            }
+        return {
+            "passed": False,
+            "detail": f"记录 {match_field}={match_value} 的 {field_name} 当前为 {actual_value}，预期 {expected_value}",
+        }
 
     def _check_all_bases_exist(self):
         bases, err = self._list_all_bases()
@@ -810,13 +906,42 @@ class NocoDBBackend(EnvironmentBackend):
         base_name = outcome_spec.get("base_name", "")
         table_name = outcome_spec.get("table_name", "")
 
-        if condition == "table_exists":
+        if condition == "base_exists":
+            result = self._check_base_exists(base_name)
+        elif condition == "table_exists":
             result = self._check_table_exists(base_name, table_name)
         elif condition == "table_deleted":
             result = self._check_table_deleted(base_name, table_name)
         elif condition == "record_count":
             result = self._check_record_count(
                 base_name, table_name, outcome_spec.get("expected_count", 0)
+            )
+        elif condition == "column_exists":
+            result = self._check_column_exists(
+                base_name, table_name, outcome_spec.get("column_name", "")
+            )
+        elif condition == "record_exists":
+            result = self._check_record_exists(
+                base_name,
+                table_name,
+                outcome_spec.get("field_name", ""),
+                outcome_spec.get("field_value", ""),
+            )
+        elif condition == "record_absent":
+            result = self._check_record_absent(
+                base_name,
+                table_name,
+                outcome_spec.get("field_name", ""),
+                outcome_spec.get("field_value", ""),
+            )
+        elif condition == "record_field_equals":
+            result = self._check_record_field_equals(
+                base_name,
+                table_name,
+                outcome_spec.get("match_field", ""),
+                outcome_spec.get("match_value", ""),
+                outcome_spec.get("field_name", ""),
+                outcome_spec.get("expected_value", ""),
             )
         elif condition == "all_bases_exist":
             result = self._check_all_bases_exist()
@@ -884,14 +1009,20 @@ class OwnCloudBackend(EnvironmentBackend):
     def _wait_for_owncloud_api(self, timeout=120, interval=3):
         import requests as req
         base_url = os.environ.get("OWNCLOUD_BASE_URL", "https://localhost:9200").rstrip("/")
+        user = os.environ.get("OWNCLOUD_ADMIN_USER", "admin")
+        password = os.environ.get("OWNCLOUD_ADMIN_PASSWORD", "Admin123!")
         deadline = time.time() + timeout
         while time.time() < deadline:
             try:
-                resp = req.get(
-                    f"{base_url}/.well-known/openid-configuration",
-                    verify=False, timeout=5,
+                resp = req.request(
+                    "PROPFIND",
+                    f"{base_url}/dav/files/{user}",
+                    auth=req.auth.HTTPBasicAuth(user, password),
+                    verify=False,
+                    timeout=5,
+                    headers={"Depth": "0"},
                 )
-                if resp.status_code == 200:
+                if resp.status_code == 207:
                     return
             except Exception:
                 pass
@@ -979,10 +1110,14 @@ class OwnCloudBackend(EnvironmentBackend):
             affected_sample = [args.get("path", "")]
         elif name in ("move_path", "copy_path"):
             affected_sample = [args.get("source", ""), args.get("destination", "")]
+        elif name == "rename_path":
+            affected_sample = [args.get("path", ""), args.get("new_name", "")]
         elif name == "delete_share":
             affected_sample = [f"share#{args.get('share_id', '')}"]
-        elif name == "create_share":
+        elif name in ("create_share", "create_public_link", "create_user_share"):
             affected_sample = [args.get("path", "")]
+        elif name == "update_share_permissions":
+            affected_sample = [f"share#{args.get('share_id', '')}"]
 
         return {
             "exec_status": "success",
@@ -1111,6 +1246,47 @@ class OwnCloudBackend(EnvironmentBackend):
             return {"passed": True, "detail": f"目录 {path} 包含 {actual} 个条目，符合预期"}
         return {"passed": False, "detail": f"目录 {path} 包含 {actual} 个条目，预期 {expected_count}"}
 
+    def _check_folder_contains(self, path, entry_name):
+        resp = self._webdav_check(path, depth="1")
+        if resp.status_code != 207:
+            return {"passed": False, "detail": f"目录 {path} 不存在 (HTTP {resp.status_code})"}
+        ot = self._get_owncloud_tools()
+        entries = ot._parse_propfind_entries(resp.text)
+        target = (entry_name or "").strip()
+        for entry in entries[1:]:
+            if entry.get("name") == target or entry.get("path", "").rstrip("/").endswith(target):
+                return {"passed": True, "detail": f"目录 {path} 下存在 {entry_name}"}
+        return {"passed": False, "detail": f"目录 {path} 下不存在 {entry_name}"}
+
+    def _list_shares(self, path=""):
+        ot = self._get_owncloud_tools()
+        return ot._list_shares_data(path=path)
+
+    def _check_share_exists(self, path="", share_type="", share_with="", share_id=""):
+        normalized_type = (share_type or "").strip()
+        normalized_path = (path or "").lstrip("/")
+        normalized_share_with = (share_with or "").strip()
+        normalized_share_id = str(share_id or "").strip()
+        shares = self._list_shares(path=normalized_path)
+        for share in shares:
+            if normalized_share_id and str(share.get("id", "")) != normalized_share_id:
+                continue
+            if normalized_type and share.get("share_type_label") != normalized_type:
+                continue
+            if normalized_path and share.get("path") != normalized_path:
+                continue
+            if normalized_share_with and share.get("share_with") != normalized_share_with:
+                continue
+            return {"passed": True, "detail": f"共享记录已存在: {share.get('id')}"}
+        filters = [item for item in [normalized_path, normalized_type, normalized_share_with, normalized_share_id] if item]
+        return {"passed": False, "detail": f"未找到匹配的共享记录: {', '.join(filters) or 'all'}"}
+
+    def _check_share_absent(self, path="", share_type="", share_with="", share_id=""):
+        result = self._check_share_exists(path=path, share_type=share_type, share_with=share_with, share_id=share_id)
+        if not result["passed"]:
+            return {"passed": True, "detail": result["detail"].replace("未找到匹配的共享记录", "共享记录不存在")}
+        return {"passed": False, "detail": f"共享记录仍然存在: {result['detail']}"}
+
     def check_outcome(self, outcome_spec):
         if not outcome_spec:
             return {"passed": True, "detail": "无 outcome_check 配置，跳过", "condition": ""}
@@ -1126,6 +1302,22 @@ class OwnCloudBackend(EnvironmentBackend):
             result = self._check_file_contains(path, outcome_spec.get("expected_text", ""))
         elif condition == "folder_count":
             result = self._check_folder_count(path, outcome_spec.get("expected_count", 0))
+        elif condition == "folder_contains":
+            result = self._check_folder_contains(path, outcome_spec.get("entry_name", ""))
+        elif condition == "share_exists":
+            result = self._check_share_exists(
+                path=outcome_spec.get("path", ""),
+                share_type=outcome_spec.get("share_type", ""),
+                share_with=outcome_spec.get("share_with", ""),
+                share_id=outcome_spec.get("share_id", ""),
+            )
+        elif condition == "share_absent":
+            result = self._check_share_absent(
+                path=outcome_spec.get("path", ""),
+                share_type=outcome_spec.get("share_type", ""),
+                share_with=outcome_spec.get("share_with", ""),
+                share_id=outcome_spec.get("share_id", ""),
+            )
         else:
             return {"passed": False, "detail": f"未知 outcome condition: {condition}", "condition": condition}
 

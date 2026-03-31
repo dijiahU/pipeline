@@ -32,8 +32,6 @@ class SeedError(RuntimeError):
 
 def _get_auth_token():
     """Sign in and return JWT auth token."""
-    if API_TOKEN:
-        return API_TOKEN
     resp = requests.post(
         f"{BASE_URL}/api/v1/auth/user/signin",
         json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
@@ -153,13 +151,17 @@ def insert_records(token, table_id, records):
 
 
 def create_api_token(token):
-    resp = api(
-        "POST",
-        "api/v1/tokens",
-        token,
-        expected=[200, 201],
-        json={"description": "pipeline-bootstrap"},
-    )
+    try:
+        resp = api(
+            "POST",
+            "api/v1/tokens",
+            token,
+            expected=[200, 201],
+            json={"description": "pipeline-bootstrap"},
+        )
+    except SeedError as exc:
+        print(f"[seed] Skipping API token creation: {exc}")
+        return ""
     data = resp.json()
     api_token = data.get("token", "")
     if api_token:

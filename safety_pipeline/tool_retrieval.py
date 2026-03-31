@@ -9,7 +9,15 @@ def _normalize_text(text):
 
 
 def _tokenize(text):
-    return re.findall(r"[a-z0-9]+|[\u4e00-\u9fff]+", _normalize_text(text).lower())
+    raw_tokens = re.findall(r"[a-z0-9]+|[\u4e00-\u9fff]+", _normalize_text(text).lower())
+    tokens = []
+    for token in raw_tokens:
+        if re.fullmatch(r"[\u4e00-\u9fff]+", token):
+            tokens.append(token)
+            tokens.extend(list(token))
+        else:
+            tokens.append(token)
+    return tokens
 
 
 class ToolIndex:

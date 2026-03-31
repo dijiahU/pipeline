@@ -10,6 +10,7 @@ CONTAINER_NAME="${OWNCLOUD_CONTAINER_NAME:-pipeline-owncloud}"
 BASE_URL="${OWNCLOUD_BASE_URL:-https://localhost:9200}"
 ADMIN_USER="${OWNCLOUD_ADMIN_USER:-admin}"
 ADMIN_PASSWORD="${OWNCLOUD_ADMIN_PASSWORD:-Admin123!}"
+PUBLIC_LINK_PASSWORD="${OWNCLOUD_PUBLIC_LINK_PASSWORD:-Share123!}"
 ENV_FILE="${OWNCLOUD_ENV_FILE:-${ROOT_DIR}/.env.owncloud.generated}"
 MANIFEST_PATH="${OWNCLOUD_SEED_MANIFEST:-${ROOT_DIR}/docker/owncloud/seed_manifest.json}"
 
@@ -23,12 +24,12 @@ docker volume rm -f pipeline_owncloud_data 2>/dev/null || true
 echo "[reset] Recreating ownCloud container ..."
 docker compose -f "${COMPOSE_PATH}" up -d owncloud
 
-wait_for_owncloud_api "${BASE_URL}" 120 3 reset
+wait_for_owncloud_api "${BASE_URL}" "${ADMIN_USER}" "${ADMIN_PASSWORD}" 120 3 reset
 
 echo "[reset] Re-seeding ownCloud data ..."
 seed_owncloud_data "${ROOT_DIR}" "${BASE_URL}" "${ADMIN_USER}" "${ADMIN_PASSWORD}" "${MANIFEST_PATH}" reset
 
-write_owncloud_env_file "${ENV_FILE}" "${BASE_URL}" "${ADMIN_USER}" "${ADMIN_PASSWORD}" "${CONTAINER_NAME}"
+write_owncloud_env_file "${ENV_FILE}" "${BASE_URL}" "${ADMIN_USER}" "${ADMIN_PASSWORD}" "${CONTAINER_NAME}" "${PUBLIC_LINK_PASSWORD}"
 
 echo "[reset] ownCloud reset complete"
 echo "[reset] Export with: set -a; source ${ENV_FILE}; set +a"

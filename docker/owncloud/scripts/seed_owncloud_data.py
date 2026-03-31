@@ -17,6 +17,7 @@ from requests.auth import HTTPBasicAuth
 BASE_URL = os.environ.get("OWNCLOUD_BASE_URL", "https://localhost:9200").rstrip("/")
 ADMIN_USER = os.environ.get("OWNCLOUD_ADMIN_USER", "admin")
 ADMIN_PASSWORD = os.environ.get("OWNCLOUD_ADMIN_PASSWORD", "Admin123!")
+PUBLIC_LINK_PASSWORD = os.environ.get("OWNCLOUD_PUBLIC_LINK_PASSWORD", "Share123!")
 MANIFEST_PATH = Path(
     os.environ.get(
         "OWNCLOUD_SEED_MANIFEST",
@@ -43,16 +44,24 @@ def _webdav_url(path=""):
     return f"{BASE_URL}/dav/files/{ADMIN_USER}/{path.lstrip('/')}"
 
 
+def _ocs_url(path=""):
+    return f"{BASE_URL}/{path.lstrip('/')}"
+
+
 def wait_for_owncloud(max_wait=120, interval=3):
     deadline = time.time() + max_wait
     while time.time() < deadline:
         try:
-            resp = requests.get(
-                f"{BASE_URL}/.well-known/openid-configuration",
-                verify=VERIFY_SSL, timeout=5,
+            resp = requests.request(
+                "PROPFIND",
+                _webdav_url(),
+                auth=_auth(),
+                verify=VERIFY_SSL,
+                timeout=5,
+                headers={"Depth": "0"},
             )
-            if resp.status_code == 200:
-                print("[seed] ownCloud oCIS API is ready")
+            if resp.status_code == 207:
+                print("[seed] ownCloud WebDAV is ready")
                 return
         except Exception:
             pass
@@ -93,27 +102,83 @@ def file_exists(path):
     return resp.status_code == 207
 
 
-def create_public_share(path, name=""):
-    """Create a public link share via OCS API."""
-    url = f"{BASE_URL}/ocs/v2.php/apps/files_sharing/api/v1/shares"
+def list_existing_shares():
+    url = _ocs_url("ocs/v2.php/apps/files_sharing/api/v1/shares")
+    resp = requests.get(
+        url,
+        auth=_auth(),
+        verify=VERIFY_SSL,
+        timeout=15,
+        headers={"OCS-APIREQUEST": "true", "Accept": "application/json"},
+        params={"format": "json"},
+    )
+    if resp.status_code != 200:
+        raise SeedError(f"GET shares -> {resp.status_code}: {resp.text[:300]}")
+    try:
+        return resp.json().get("ocs", {}).get("data", []) or []
+    except Exception as exc:
+        raise SeedError(f"解析共享列表失败: {exc}") from exc
+
+
+def _share_exists(existing_shares, path, share_type, share_with=""):
+    normalized_path = f"/{path.lstrip('/')}"
+    for share in existing_shares:
+        if str(share.get("path", "")) != normalized_path:
+            continue
+        if str(share.get("share_type", "")) != str(share_type):
+            continue
+        if share_with and str(share.get("share_with", "")) != str(share_with):
+            continue
+        return True
+    return False
+
+
+def create_public_share(path, name="", permissions=1, password="", expire_date=""):
+    url = _ocs_url("ocs/v2.php/apps/files_sharing/api/v1/shares")
+    effective_password = password or PUBLIC_LINK_PASSWORD
+    payload = {
+        "path": f"/{path.lstrip('/')}",
+        "shareType": "3",
+        "permissions": str(permissions),
+        "name": name or path.split("/")[-1],
+    }
+    if effective_password:
+        payload["password"] = effective_password
+    if expire_date:
+        payload["expireDate"] = expire_date
     resp = requests.post(
         url,
         auth=_auth(),
         verify=VERIFY_SSL,
         timeout=15,
-        headers={"OCS-APIREQUEST": "true", "Content-Type": "application/json"},
-        json={
-            "path": f"/{path.lstrip('/')}",
-            "shareType": 3,  # 3 = public link
-            "permissions": 1,  # 1 = read
-            "name": name or path.split("/")[-1],
-        },
+        headers={"OCS-APIREQUEST": "true", "Accept": "application/json"},
+        data=payload,
     )
     if resp.status_code in (200, 201):
         print(f"[seed]   Created public share for: {path}")
         return
-    # OCS may return errors in XML/JSON body even with 200
-    print(f"[seed]   Share creation for {path}: HTTP {resp.status_code} (may need Graph API)")
+    raise SeedError(f"POST public share {path} -> {resp.status_code}: {resp.text[:300]}")
+
+
+def create_user_share(path, share_with, permissions=1):
+    url = _ocs_url("ocs/v2.php/apps/files_sharing/api/v1/shares")
+    resp = requests.post(
+        url,
+        auth=_auth(),
+        verify=VERIFY_SSL,
+        timeout=15,
+        headers={"OCS-APIREQUEST": "true", "Accept": "application/json"},
+        data={
+            "path": f"/{path.lstrip('/')}",
+            "shareType": "0",
+            "shareWith": share_with,
+            "permissions": str(permissions),
+        },
+    )
+    if resp.status_code in (200, 201):
+        print(f"[seed]   Created user share for: {path} -> {share_with}")
+        return
+    raise SeedError(f"POST user share {path} -> {resp.status_code}: {resp.text[:300]}")
 
 
 def seed_from_manifest(manifest_path):
@@ -135,11 +200,32 @@ def seed_from_manifest(manifest_path):
         print(f"[seed]   Uploaded: {path}")
 
     # Create shares
+    existing_shares = list_existing_shares()
     for share_spec in manifest.get("shares", []):
-        create_public_share(
-            share_spec["path"],
-            share_spec.get("name", ""),
-        )
+        share_type = share_spec.get("share_type", "public_link")
+        share_type_code = 3 if share_type == "public_link" else 0
+        path = share_spec["path"]
+        share_with = share_spec.get("share_with", "")
+        if _share_exists(existing_shares, path, share_type_code, share_with=share_with):
+            print(f"[seed]   Share exists, skipping: {path} ({share_type})")
+            continue
+        if share_type == "public_link":
+            create_public_share(
+                path,
+                share_spec.get("name", ""),
+                permissions=share_spec.get("permissions", 1),
+                password=share_spec.get("password", ""),
+                expire_date=share_spec.get("expire_date", ""),
+            )
+        elif share_type == "user":
+            create_user_share(
+                path,
+                share_with=share_with,
+                permissions=share_spec.get("permissions", 1),
+            )
+        else:
+            raise SeedError(f"不支持的 share_type: {share_type}")
+        existing_shares = list_existing_shares()
 
 
 def main():

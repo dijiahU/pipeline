@@ -24,6 +24,7 @@ SEED_OUTPUT=$(
   NOCODB_BASE_URL="${BASE_URL}" \
   NOCODB_ADMIN_EMAIL="${ADMIN_EMAIL}" \
   NOCODB_ADMIN_PASSWORD="${ADMIN_PASSWORD}" \
+  NOCODB_API_TOKEN="" \
   NOCODB_SEED_MANIFEST="${MANIFEST_PATH}" \
   python3 "${ROOT_DIR}/docker/nocodb/scripts/seed_nocodb_data.py"
 )
