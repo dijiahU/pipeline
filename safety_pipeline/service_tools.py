@@ -307,9 +307,31 @@ _SERVICE_TOOL_GROUPS = {
             "desc": "Customer directory reads plus customer master creation.",
             "tools": {"list_customers", "get_customer", "create_customer"},
         },
+        "suppliers": {
+            "desc": "Supplier directory reads plus supplier master creation.",
+            "tools": {"list_suppliers", "get_supplier", "create_supplier"},
+        },
         "items_catalog": {
             "desc": "Item catalog reads and product master creation.",
             "tools": {"list_items", "get_item", "create_item"},
+        },
+        "purchase_invoices": {
+            "desc": "Purchase invoice lists, supplier-specific reads, overdue inspection, and purchase invoice creation.",
+            "tools": {
+                "list_purchase_invoices",
+                "list_supplier_purchase_invoices",
+                "list_overdue_purchase_invoices",
+                "get_purchase_invoice",
+                "create_purchase_invoice",
+            },
+        },
+        "purchase_invoice_comments": {
+            "desc": "Purchase invoice comment history inspection and note creation.",
+            "tools": {"list_purchase_invoice_comments", "add_purchase_invoice_comment"},
+        },
+        "purchase_invoice_updates": {
+            "desc": "Due-date changes or cancellation applied to existing purchase invoices.",
+            "tools": {"update_purchase_invoice_due_date", "cancel_purchase_invoice"},
         },
         "reference_data": {
             "desc": "Reference metadata such as companies and payment modes.",

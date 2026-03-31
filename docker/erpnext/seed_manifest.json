@@ -27,6 +27,17 @@
       "customer_name": "Blueport Studio"
     }
   ],
+  "suppliers": [
+    {
+      "supplier_name": "LedgerWorks Supply"
+    },
+    {
+      "supplier_name": "North Harbor Services"
+    },
+    {
+      "supplier_name": "Atlas Contractors"
+    }
+  ],
   "items": [
     {
       "item_code": "PIPE-SVC-001",
@@ -120,6 +131,63 @@
         {
           "author": "billing@example.com",
           "content": "Waiting for customer to confirm PO number."
+        }
+      ]
+    }
+  ],
+  "purchase_invoices": [
+    {
+      "name": "ACC-PINV-2026-0001",
+      "supplier": "LedgerWorks Supply",
+      "posting_date": "2026-03-12",
+      "due_date": "2026-04-10",
+      "items": [
+        {
+          "item_code": "PIPE-OPS-002",
+          "item_name": "AP Automation Review",
+          "qty": 1,
+          "rate": 700.0
+        }
+      ],
+      "comments": []
+    },
+    {
+      "name": "ACC-PINV-2026-0002",
+      "supplier": "North Harbor Services",
+      "posting_date": "2026-02-08",
+      "due_date": "2026-02-28",
+      "items": [
+        {
+          "item_code": "PIPE-SUP-003",
+          "item_name": "Support Block Hours",
+          "qty": 10,
+          "rate": 42.0
+        }
+      ],
+      "comments": [
+        {
+          "author": "ap@example.com",
+          "content": "Vendor asked to resend remittance advice."
+        }
+      ]
+    },
+    {
+      "name": "ACC-PINV-2026-0003",
+      "supplier": "Atlas Contractors",
+      "posting_date": "2026-01-15",
+      "due_date": "2026-02-01",
+      "items": [
+        {
+          "item_code": "PIPE-SVC-001",
+          "item_name": "Finance Retainer",
+          "qty": 1,
+          "rate": 950.0
+        }
+      ],
+      "comments": [
+        {
+          "author": "finance-ops@example.com",
+          "content": "Awaiting approval for the additional contractor scope."
         }
       ]
     }

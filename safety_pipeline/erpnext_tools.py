@@ -430,6 +430,62 @@ def create_customer(customer_name, customer_type="Company", customer_group="All 
 
 
 @erpnext_tool(
+    "list_suppliers",
+    "列出供应商，可按名称筛选。",
+    {
+        "name_query": {"type": "string", "description": "供应商名称关键词"},
+    },
+    group="suppliers",
+    short_description="List supplier master records with optional name filtering.",
+)
+def list_suppliers(name_query=""):
+    return _format_json(_run_site_action("list_suppliers", {"name_query": name_query}))
+
+
+@erpnext_tool(
+    "get_supplier",
+    "获取单个供应商详情，包括其关联采购发票。",
+    {
+        "supplier_name": {"type": "string", "description": "供应商名称"},
+    },
+    required=["supplier_name"],
+    group="suppliers",
+    short_description="Read one supplier profile with linked purchase invoices.",
+)
+def get_supplier(supplier_name):
+    payload = _run_site_action("get_supplier", {"supplier_name": supplier_name})
+    if not payload:
+        raise ToolExecutionError(f"[错误] 找不到供应商: {supplier_name}")
+    return _format_json(payload)
+
+
+@erpnext_tool(
+    "create_supplier",
+    "创建供应商主数据。",
+    {
+        "supplier_name": {"type": "string", "description": "供应商名称"},
+        "supplier_type": {"type": "string", "description": "供应商类型，如 Company、Individual"},
+        "supplier_group": {"type": "string", "description": "供应商组，默认 All Supplier Groups"},
+    },
+    required=["supplier_name"],
+    is_write=True,
+    group="suppliers",
+    short_description="Create a new supplier master record.",
+)
+def create_supplier(supplier_name, supplier_type="Company", supplier_group="All Supplier Groups"):
+    return _format_json(
+        _run_site_action(
+            "create_supplier",
+            {
+                "supplier_name": supplier_name,
+                "supplier_type": supplier_type,
+                "supplier_group": supplier_group,
+            },
+        )
+    )
+
+
+@erpnext_tool(
     "list_items",
     "列出 Item 目录，可按 item code 或 item name 关键词筛选。",
     {
@@ -484,6 +540,186 @@ def create_item(item_code, item_name, item_group="All Item Groups", stock_uom="N
                 "item_group": item_group,
                 "stock_uom": stock_uom,
                 "is_stock_item": is_stock_item,
+            },
+        )
+    )
+
+
+@erpnext_tool(
+    "list_purchase_invoices",
+    "列出采购发票，可按状态或供应商筛选。",
+    {
+        "status": {"type": "string", "description": "状态，如 Unpaid、Paid、Overdue"},
+        "supplier": {"type": "string", "description": "供应商名称"},
+    },
+    group="purchase_invoices",
+    short_description="List purchase invoices with optional status or supplier filters.",
+)
+def list_purchase_invoices(status="", supplier=""):
+    return _format_json(
+        _run_site_action("list_purchase_invoices", {"status": status, "supplier": supplier})
+    )
+
+
+@erpnext_tool(
+    "list_supplier_purchase_invoices",
+    "列出某个供应商的采购发票，可按状态筛选。",
+    {
+        "supplier_name": {"type": "string", "description": "供应商名称"},
+        "status": {"type": "string", "description": "状态，如 Unpaid、Paid、Overdue"},
+    },
+    required=["supplier_name"],
+    group="purchase_invoices",
+    short_description="List purchase invoices for one supplier with optional status filtering.",
+)
+def list_supplier_purchase_invoices(supplier_name, status=""):
+    return _format_json(
+        _run_site_action(
+            "list_supplier_purchase_invoices",
+            {"supplier_name": supplier_name, "status": status},
+        )
+    )
+
+
+@erpnext_tool(
+    "list_overdue_purchase_invoices",
+    "列出当前已逾期且仍有未结清金额的采购发票。",
+    {},
+    group="purchase_invoices",
+    short_description="List overdue purchase invoices that still have outstanding balance.",
+)
+def list_overdue_purchase_invoices():
+    return _format_json(_run_site_action("list_overdue_purchase_invoices"))
+
+
+@erpnext_tool(
+    "get_purchase_invoice",
+    "获取单个采购发票详情，包括明细行和备注。",
+    {
+        "purchase_invoice_name": {"type": "string", "description": "采购发票编号"},
+    },
+    required=["purchase_invoice_name"],
+    group="purchase_invoices",
+    short_description="Read one purchase invoice with items and comments.",
+)
+def get_purchase_invoice(purchase_invoice_name):
+    payload = _run_site_action("get_purchase_invoice", {"purchase_invoice_name": purchase_invoice_name})
+    if not payload:
+        raise ToolExecutionError(f"[错误] 找不到采购发票: {purchase_invoice_name}")
+    return _format_json(payload)
+
+
+@erpnext_tool(
+    "list_purchase_invoice_comments",
+    "列出某张采购发票的备注历史。",
+    {
+        "purchase_invoice_name": {"type": "string", "description": "采购发票编号"},
+    },
+    required=["purchase_invoice_name"],
+    group="purchase_invoice_comments",
+    short_description="List comment history attached to one purchase invoice.",
+)
+def list_purchase_invoice_comments(purchase_invoice_name):
+    return _format_json(
+        _run_site_action(
+            "list_purchase_invoice_comments",
+            {"purchase_invoice_name": purchase_invoice_name},
+        )
+    )
+
+
+@erpnext_tool(
+    "add_purchase_invoice_comment",
+    "为采购发票追加一条备注。",
+    {
+        "purchase_invoice_name": {"type": "string", "description": "采购发票编号"},
+        "comment": {"type": "string", "description": "备注内容"},
+        "author": {"type": "string", "description": "备注作者"},
+    },
+    required=["purchase_invoice_name", "comment"],
+    is_write=True,
+    group="purchase_invoice_comments",
+    short_description="Append an AP note to an existing purchase invoice.",
+)
+def add_purchase_invoice_comment(purchase_invoice_name, comment, author="ap-bot"):
+    return _format_json(
+        _run_site_action(
+            "add_purchase_invoice_comment",
+            {
+                "purchase_invoice_name": purchase_invoice_name,
+                "comment": comment,
+                "author": author,
+            },
+        )
+    )
+
+
+@erpnext_tool(
+    "update_purchase_invoice_due_date",
+    "更新采购发票的到期日。",
+    {
+        "purchase_invoice_name": {"type": "string", "description": "采购发票编号"},
+        "due_date": {"type": "string", "description": "新的到期日，如 2026-04-30"},
+    },
+    required=["purchase_invoice_name", "due_date"],
+    is_write=True,
+    group="purchase_invoice_updates",
+    short_description="Change the due date of one existing purchase invoice.",
+)
+def update_purchase_invoice_due_date(purchase_invoice_name, due_date):
+    return _format_json(
+        _run_site_action(
+            "update_purchase_invoice_due_date",
+            {"purchase_invoice_name": purchase_invoice_name, "due_date": due_date},
+        )
+    )
+
+
+@erpnext_tool(
+    "cancel_purchase_invoice",
+    "取消采购发票。已提交的采购发票才能取消。",
+    {
+        "purchase_invoice_name": {"type": "string", "description": "采购发票编号"},
+    },
+    required=["purchase_invoice_name"],
+    is_write=True,
+    group="purchase_invoice_updates",
+    short_description="Cancel a submitted purchase invoice.",
+)
+def cancel_purchase_invoice(purchase_invoice_name):
+    return _format_json(
+        _run_site_action(
+            "cancel_purchase_invoice",
+            {"purchase_invoice_name": purchase_invoice_name},
+        )
+    )
+
+
+@erpnext_tool(
+    "create_purchase_invoice",
+    "创建采购发票。",
+    {
+        "supplier": {"type": "string", "description": "供应商名称"},
+        "items": {
+            "type": "array",
+            "items": {"type": "object"},
+            "description": "采购发票行项目列表，每项包含 item_code、qty、rate，可选 item_name",
+        },
+        "due_date": {"type": "string", "description": "到期日期，如 2026-04-15"},
+    },
+    required=["supplier", "items"],
+    is_write=True,
+    group="purchase_invoices",
+    short_description="Create a submitted purchase invoice for a supplier.",
+)
+def create_purchase_invoice(supplier, items, due_date=""):
+    return _format_json(
+        _run_site_action(
+            "create_purchase_invoice",
+            {
+                "supplier": supplier,
+                "items": items,
+                "due_date": due_date,
             },
         )
     )

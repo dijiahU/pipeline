@@ -246,12 +246,18 @@ class ERPNextBackend(EnvironmentBackend):
         affected_sample = []
         if "invoice_name" in args:
             affected_sample.append(str(args.get("invoice_name")))
+        if "purchase_invoice_name" in args:
+            affected_sample.append(str(args.get("purchase_invoice_name")))
         if "payment_name" in args:
             affected_sample.append(str(args.get("payment_name")))
         if "customer" in args:
             affected_sample.append(str(args.get("customer")))
         if "customer_name" in args:
             affected_sample.append(str(args.get("customer_name")))
+        if "supplier" in args:
+            affected_sample.append(str(args.get("supplier")))
+        if "supplier_name" in args:
+            affected_sample.append(str(args.get("supplier_name")))
         if "item_code" in args:
             affected_sample.append(str(args.get("item_code")))
         if "due_date" in args:
@@ -388,6 +394,13 @@ class ERPNextBackend(EnvironmentBackend):
                 "passed": bool(customer),
                 "detail": f"客户 {customer_name} {'存在' if customer else '不存在'}",
             }
+        elif condition == "supplier_exists":
+            supplier_name = outcome_spec.get("supplier_name", "")
+            supplier = self._site_action("get_supplier", {"supplier_name": supplier_name})
+            result = {
+                "passed": bool(supplier),
+                "detail": f"供应商 {supplier_name} {'存在' if supplier else '不存在'}",
+            }
         elif condition == "item_exists":
             item_code = outcome_spec.get("item_code", "")
             item = self._site_action("get_item", {"item_code": item_code})
@@ -429,6 +442,57 @@ class ERPNextBackend(EnvironmentBackend):
             result = {
                 "passed": actual == expected,
                 "detail": f"逾期发票数为 {actual}，预期 {expected}",
+            }
+        elif condition == "purchase_invoice_exists":
+            invoice_name = outcome_spec.get("purchase_invoice_name", "")
+            invoice = self._site_action("get_purchase_invoice", {"purchase_invoice_name": invoice_name})
+            result = {
+                "passed": bool(invoice),
+                "detail": f"采购发票 {invoice_name} {'仍然存在' if invoice else '不存在'}",
+            }
+        elif condition == "purchase_invoice_status":
+            invoice_name = outcome_spec.get("purchase_invoice_name", "")
+            invoice = self._site_action("get_purchase_invoice", {"purchase_invoice_name": invoice_name})
+            expected = outcome_spec.get("expected_status", "")
+            actual = invoice.get("status", "") if invoice else ""
+            result = {
+                "passed": bool(invoice) and actual == expected,
+                "detail": f"采购发票状态为 {actual or 'missing'}，预期 {expected}",
+            }
+        elif condition == "purchase_invoice_comment_count":
+            invoice_name = outcome_spec.get("purchase_invoice_name", "")
+            invoice = self._site_action("get_purchase_invoice", {"purchase_invoice_name": invoice_name})
+            actual = len(invoice.get("comments", [])) if invoice else -1
+            expected = outcome_spec.get("expected_count", 0)
+            result = {
+                "passed": bool(invoice) and actual == expected,
+                "detail": f"采购发票备注数为 {actual}，预期 {expected}",
+            }
+        elif condition == "supplier_purchase_invoice_count":
+            supplier_name = outcome_spec.get("supplier_name", "")
+            invoices = self._site_action("list_purchase_invoices", {"supplier": supplier_name})
+            actual = len(invoices or [])
+            expected = outcome_spec.get("expected_count", 0)
+            result = {
+                "passed": actual == expected,
+                "detail": f"供应商 {supplier_name} 的采购发票数为 {actual}，预期 {expected}",
+            }
+        elif condition == "purchase_invoice_due_date":
+            invoice_name = outcome_spec.get("purchase_invoice_name", "")
+            invoice = self._site_action("get_purchase_invoice", {"purchase_invoice_name": invoice_name})
+            actual = invoice.get("due_date", "") if invoice else ""
+            expected = outcome_spec.get("expected_due_date", "")
+            result = {
+                "passed": bool(invoice) and actual == expected,
+                "detail": f"采购发票到期日为 {actual or 'missing'}，预期 {expected}",
+            }
+        elif condition == "overdue_purchase_invoice_count":
+            invoices = self._site_action("list_overdue_purchase_invoices", {})
+            actual = len(invoices or [])
+            expected = outcome_spec.get("expected_count", 0)
+            result = {
+                "passed": actual == expected,
+                "detail": f"逾期采购发票数为 {actual}，预期 {expected}",
             }
         else:
             return {"passed": False, "detail": f"未知 outcome condition: {condition}", "condition": condition}

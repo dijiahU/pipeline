@@ -59,6 +59,16 @@ def _invoice_payment_count(invoice_name):
     return len(_invoice_payment_names(invoice_name))
 
 
+def _purchase_invoice_comment_count(invoice_name):
+    return frappe.db.count(
+        "Comment",
+        {
+            "reference_doctype": "Purchase Invoice",
+            "reference_name": invoice_name,
+        },
+    )
+
+
 def _payment_references(doc):
     references = []
     for ref in getattr(doc, "references", []) or []:
@@ -102,6 +112,20 @@ def _payment_summary(doc):
     }
 
 
+def _purchase_invoice_summary(doc):
+    return {
+        "name": doc.name,
+        "supplier": doc.supplier,
+        "status": doc.status,
+        "posting_date": str(doc.posting_date or ""),
+        "due_date": str(doc.due_date or ""),
+        "currency": doc.currency or "",
+        "outstanding_amount": float(doc.outstanding_amount or 0),
+        "grand_total": float(doc.grand_total or 0),
+        "comment_count": _purchase_invoice_comment_count(doc.name),
+    }
+
+
 def _customer_summary(doc, include_invoices=False):
     invoices = frappe.get_all(
         "Sales Invoice",
@@ -120,6 +144,34 @@ def _customer_summary(doc, include_invoices=False):
     }
     if include_invoices:
         payload["invoices"] = [
+            {
+                "name": inv["name"],
+                "status": inv.get("status", ""),
+                "grand_total": float(inv.get("grand_total") or 0),
+                "outstanding_amount": float(inv.get("outstanding_amount") or 0),
+            }
+            for inv in invoices
+        ]
+    return payload
+
+
+def _supplier_summary(doc, include_purchase_invoices=False):
+    invoices = frappe.get_all(
+        "Purchase Invoice",
+        filters={"supplier": doc.name},
+        fields=["name", "status", "grand_total", "outstanding_amount"],
+        order_by="name asc",
+    )
+    payload = {
+        "name": doc.name,
+        "supplier_name": doc.supplier_name,
+        "supplier_type": doc.supplier_type or "",
+        "supplier_group": doc.supplier_group or "",
+        "purchase_invoice_count": len(invoices),
+        "outstanding_total": float(sum(float(inv.get("outstanding_amount") or 0) for inv in invoices)),
+    }
+    if include_purchase_invoices:
+        payload["purchase_invoices"] = [
             {
                 "name": inv["name"],
                 "status": inv.get("status", ""),
@@ -215,6 +267,37 @@ def _ensure_customer(customer_entry):
     return doc
 
 
+def _normalize_supplier_entry(supplier_entry):
+    if isinstance(supplier_entry, str):
+        return {
+            "supplier_name": supplier_entry,
+            "supplier_type": "Company",
+            "supplier_group": "All Supplier Groups",
+        }
+    return {
+        "supplier_name": supplier_entry["supplier_name"],
+        "supplier_type": supplier_entry.get("supplier_type", "Company"),
+        "supplier_group": supplier_entry.get("supplier_group", "All Supplier Groups"),
+    }
+
+
+def _ensure_supplier(supplier_entry):
+    payload = _normalize_supplier_entry(supplier_entry)
+    supplier_name = payload["supplier_name"]
+    if frappe.db.exists("Supplier", supplier_name):
+        return frappe.get_doc("Supplier", supplier_name)
+    doc = frappe.get_doc(
+        {
+            "doctype": "Supplier",
+            "supplier_name": supplier_name,
+            "supplier_type": payload["supplier_type"],
+            "supplier_group": payload["supplier_group"],
+        }
+    )
+    doc.insert(ignore_permissions=True)
+    return doc
+
+
 def _normalize_item_entry(item_entry):
     return {
         "item_code": item_entry["item_code"],
@@ -288,6 +371,47 @@ def _ensure_sales_invoice(entry, company_name):
     return doc
 
 
+def _ensure_purchase_invoice(entry, company_name):
+    if frappe.db.exists("Purchase Invoice", entry["name"]):
+        doc = frappe.get_doc("Purchase Invoice", entry["name"])
+        if doc.docstatus == 0:
+            doc.submit()
+        return doc
+
+    invoice_items = entry.get("items") or [
+        {
+            "item_code": entry["item_code"],
+            "item_name": entry.get("item_name", entry["item_code"]),
+            "qty": entry.get("qty", 1),
+            "rate": float(entry["amount"]),
+        }
+    ]
+
+    doc = frappe.get_doc(
+        {
+            "doctype": "Purchase Invoice",
+            "naming_series": "ACC-PINV-.YYYY.-.####",
+            "supplier": entry["supplier"],
+            "company": company_name,
+            "posting_date": entry["posting_date"],
+            "due_date": entry["due_date"],
+            "set_posting_time": 1,
+            "items": [
+                {
+                    "item_code": item["item_code"],
+                    "qty": item.get("qty", 1),
+                    "rate": float(item.get("rate", 0)),
+                }
+                for item in invoice_items
+            ],
+        }
+    )
+    doc.insert(ignore_permissions=True)
+    doc.submit()
+    doc.reload()
+    return doc
+
+
 def _ensure_invoice_comment(invoice_name, comment, author):
     existing = frappe.get_all(
         "Comment",
@@ -302,6 +426,31 @@ def _ensure_invoice_comment(invoice_name, comment, author):
     if existing:
         return existing[0]
     doc = frappe.get_doc("Sales Invoice", invoice_name)
+    comment_doc = doc.add_comment("Comment", comment)
+    if author:
+        comment_doc.comment_email = author
+        comment_doc.save(ignore_permissions=True)
+    return {
+        "name": comment_doc.name,
+        "comment_email": comment_doc.comment_email,
+        "content": comment_doc.content,
+    }
+
+
+def _ensure_purchase_invoice_comment(invoice_name, comment, author):
+    existing = frappe.get_all(
+        "Comment",
+        filters={
+            "reference_doctype": "Purchase Invoice",
+            "reference_name": invoice_name,
+            "content": comment,
+        },
+        fields=["name", "comment_email", "owner", "content"],
+        limit=1,
+    )
+    if existing:
+        return existing[0]
+    doc = frappe.get_doc("Purchase Invoice", invoice_name)
     comment_doc = doc.add_comment("Comment", comment)
     if author:
         comment_doc.comment_email = author
@@ -343,6 +492,10 @@ def action_seed(payload):
     for customer_entry in payload.get("customers", []):
         customers.append(_customer_summary(_ensure_customer(customer_entry)))
 
+    suppliers = []
+    for supplier_entry in payload.get("suppliers", []):
+        suppliers.append(_supplier_summary(_ensure_supplier(supplier_entry)))
+
     items = []
     for item in payload.get("items", []):
         items.append(_item_summary(_ensure_item(item)))
@@ -353,16 +506,33 @@ def action_seed(payload):
         for item in invoice_entry.get("items") or [{"item_code": invoice_entry["item_code"], "item_name": invoice_entry.get("item_name", "")}]:
             _ensure_item(item)
         invoice_doc = _ensure_sales_invoice(invoice_entry, company_name)
-        invoices.append(_invoice_summary(invoice_doc))
         for comment_entry in invoice_entry.get("comments", []):
             _ensure_invoice_comment(invoice_doc.name, comment_entry["content"], comment_entry.get("author", ""))
+        invoices.append(_invoice_summary(frappe.get_doc("Sales Invoice", invoice_doc.name)))
+
+    purchase_invoices = []
+    for invoice_entry in payload.get("purchase_invoices", []):
+        _ensure_supplier(invoice_entry["supplier"])
+        for item in invoice_entry.get("items") or [{"item_code": invoice_entry["item_code"], "item_name": invoice_entry.get("item_name", "")}]:
+            _ensure_item(item)
+        invoice_doc = _ensure_purchase_invoice(invoice_entry, company_name)
+        for comment_entry in invoice_entry.get("comments", []):
+            _ensure_purchase_invoice_comment(invoice_doc.name, comment_entry["content"], comment_entry.get("author", ""))
+        purchase_invoices.append(_purchase_invoice_summary(frappe.get_doc("Purchase Invoice", invoice_doc.name)))
 
     payments = []
     for payment_entry in payload.get("payments", []):
         payment_doc = _ensure_payment_entry(payment_entry)
         payments.append(_payment_summary(payment_doc))
 
-    return {"customers": customers, "items": items, "invoices": invoices, "payments": payments}
+    return {
+        "customers": customers,
+        "suppliers": suppliers,
+        "items": items,
+        "invoices": invoices,
+        "purchase_invoices": purchase_invoices,
+        "payments": payments,
+    }
 
 
 def action_list_invoices(payload):
@@ -567,6 +737,44 @@ def action_create_customer(payload):
     return _customer_summary(doc, include_invoices=True)
 
 
+def action_list_suppliers(payload):
+    name_query = payload.get("name_query", "")
+    filters = None
+    or_filters = None
+    if name_query:
+        or_filters = {
+            "name": ["like", f"%{name_query}%"],
+            "supplier_name": ["like", f"%{name_query}%"],
+        }
+    docs = frappe.get_all(
+        "Supplier",
+        filters=filters,
+        or_filters=or_filters,
+        fields=["name"],
+        order_by="name asc",
+    )
+    return [_supplier_summary(frappe.get_doc("Supplier", d["name"])) for d in docs]
+
+
+def action_get_supplier(payload):
+    supplier_name = payload["supplier_name"]
+    if not frappe.db.exists("Supplier", supplier_name):
+        return None
+    doc = frappe.get_doc("Supplier", supplier_name)
+    return _supplier_summary(doc, include_purchase_invoices=True)
+
+
+def action_create_supplier(payload):
+    doc = _ensure_supplier(
+        {
+            "supplier_name": payload["supplier_name"],
+            "supplier_type": payload.get("supplier_type", "Company"),
+            "supplier_group": payload.get("supplier_group", "All Supplier Groups"),
+        }
+    )
+    return _supplier_summary(doc, include_purchase_invoices=True)
+
+
 def action_list_customer_invoices(payload):
     return action_list_invoices({"customer": payload["customer_name"], "status": payload.get("status", "")})
 
@@ -587,6 +795,113 @@ def action_list_overdue_invoices(payload):
             continue
         results.append(_invoice_summary(doc))
     return results
+
+
+def action_list_purchase_invoices(payload):
+    filters = {}
+    if payload.get("status"):
+        filters["status"] = payload["status"]
+    if payload.get("supplier"):
+        filters["supplier"] = payload["supplier"]
+    docs = frappe.get_all(
+        "Purchase Invoice",
+        filters=filters,
+        fields=["name"],
+        order_by="name asc",
+    )
+    return [_purchase_invoice_summary(frappe.get_doc("Purchase Invoice", row["name"])) for row in docs]
+
+
+def action_list_supplier_purchase_invoices(payload):
+    return action_list_purchase_invoices(
+        {"supplier": payload["supplier_name"], "status": payload.get("status", "")}
+    )
+
+
+def action_list_overdue_purchase_invoices(payload):
+    docs = frappe.get_all(
+        "Purchase Invoice",
+        filters={"docstatus": 1, "due_date": ["<", frappe.utils.nowdate()]},
+        fields=["name"],
+        order_by="due_date asc, name asc",
+    )
+    results = []
+    for row in docs:
+        doc = frappe.get_doc("Purchase Invoice", row["name"])
+        if float(doc.outstanding_amount or 0) <= 0:
+            continue
+        if doc.status in {"Paid", "Cancelled"}:
+            continue
+        results.append(_purchase_invoice_summary(doc))
+    return results
+
+
+def action_get_purchase_invoice(payload):
+    name = payload["purchase_invoice_name"]
+    if not frappe.db.exists("Purchase Invoice", name):
+        return None
+    doc = frappe.get_doc("Purchase Invoice", name)
+    comments = frappe.get_all(
+        "Comment",
+        filters={
+            "reference_doctype": "Purchase Invoice",
+            "reference_name": name,
+        },
+        fields=["name", "comment_email", "content", "creation"],
+        order_by="creation asc",
+    )
+    data = _purchase_invoice_summary(doc)
+    data["items"] = [
+        {
+            "item_code": item.item_code,
+            "item_name": item.item_name,
+            "qty": float(item.qty or 0),
+            "rate": float(item.rate or 0),
+            "amount": float(item.amount or 0),
+        }
+        for item in getattr(doc, "items", []) or []
+    ]
+    data["comments"] = [
+        {
+            "id": item["name"],
+            "author": item.get("comment_email") or "",
+            "comment": item.get("content") or "",
+            "creation": str(item.get("creation") or ""),
+        }
+        for item in comments
+    ]
+    return data
+
+
+def action_list_purchase_invoice_comments(payload):
+    invoice_name = payload["purchase_invoice_name"]
+    if not frappe.db.exists("Purchase Invoice", invoice_name):
+        raise frappe.DoesNotExistError(f"Purchase Invoice {invoice_name} does not exist")
+    invoice = action_get_purchase_invoice({"purchase_invoice_name": invoice_name}) or {}
+    return invoice.get("comments", [])
+
+
+def action_add_purchase_invoice_comment(payload):
+    invoice_name = payload["purchase_invoice_name"]
+    if not frappe.db.exists("Purchase Invoice", invoice_name):
+        raise frappe.DoesNotExistError(f"Purchase Invoice {invoice_name} does not exist")
+    comment_doc = _ensure_purchase_invoice_comment(invoice_name, payload["comment"], payload.get("author", ""))
+    return {
+        "purchase_invoice_name": invoice_name,
+        "comment_id": comment_doc["name"],
+        "author": comment_doc.get("comment_email") or payload.get("author", ""),
+        "comment": comment_doc["content"],
+    }
+
+
+def action_update_purchase_invoice_due_date(payload):
+    invoice_name = payload["purchase_invoice_name"]
+    due_date = payload["due_date"]
+    if not frappe.db.exists("Purchase Invoice", invoice_name):
+        raise frappe.DoesNotExistError(f"Purchase Invoice {invoice_name} does not exist")
+    frappe.db.set_value("Purchase Invoice", invoice_name, "due_date", due_date, update_modified=False)
+    doc = frappe.get_doc("Purchase Invoice", invoice_name)
+    return {"purchase_invoice_name": invoice_name, "due_date": str(doc.due_date or "")}
 
 
 def action_list_items(payload):
@@ -675,6 +990,40 @@ def action_create_invoice(payload):
     return _invoice_summary(doc)
 
 
+def action_create_purchase_invoice(payload):
+    supplier = payload["supplier"]
+    items = payload.get("items", [])
+    due_date = payload.get("due_date") or frappe.utils.add_days(frappe.utils.nowdate(), 30)
+    _ensure_supplier(supplier)
+    company = frappe.db.get_single_value("Global Defaults", "default_company")
+    invoice_items = []
+    for item in items:
+        _ensure_item(item["item_code"], item.get("item_name", item["item_code"]))
+        invoice_items.append(
+            {
+                "item_code": item["item_code"],
+                "qty": item.get("qty", 1),
+                "rate": float(item.get("rate", 0)),
+            }
+        )
+    doc = frappe.get_doc(
+        {
+            "doctype": "Purchase Invoice",
+            "naming_series": "ACC-PINV-.YYYY.-.####",
+            "supplier": supplier,
+            "company": company,
+            "posting_date": frappe.utils.nowdate(),
+            "due_date": due_date,
+            "set_posting_time": 1,
+            "items": invoice_items,
+        }
+    )
+    doc.insert(ignore_permissions=True)
+    doc.submit()
+    doc.reload()
+    return _purchase_invoice_summary(doc)
+
+
 def action_create_payment_entry(payload):
     invoice_name = payload["invoice_name"]
     amount = float(payload["amount"])
@@ -710,6 +1059,18 @@ def action_cancel_invoice(payload):
     return {"invoice_name": invoice_name, "status": doc.status, "docstatus": doc.docstatus}
 
 
+def action_cancel_purchase_invoice(payload):
+    invoice_name = payload["purchase_invoice_name"]
+    if not frappe.db.exists("Purchase Invoice", invoice_name):
+        raise frappe.DoesNotExistError(f"Purchase Invoice {invoice_name} does not exist")
+    doc = frappe.get_doc("Purchase Invoice", invoice_name)
+    if doc.docstatus != 1:
+        raise ValueError(f"采购发票 {invoice_name} 尚未提交（docstatus={doc.docstatus}），无法取消")
+    doc.cancel()
+    doc.reload()
+    return {"purchase_invoice_name": invoice_name, "status": doc.status, "docstatus": doc.docstatus}
+
+
 ACTIONS = {
     "bootstrap": action_bootstrap,
     "seed": action_seed,
@@ -728,14 +1089,26 @@ ACTIONS = {
     "list_customers": action_list_customers,
     "get_customer": action_get_customer,
     "create_customer": action_create_customer,
+    "list_suppliers": action_list_suppliers,
+    "get_supplier": action_get_supplier,
+    "create_supplier": action_create_supplier,
     "list_items": action_list_items,
     "get_item": action_get_item,
     "create_item": action_create_item,
     "list_companies": action_list_companies,
     "list_payment_modes": action_list_payment_modes,
+    "list_purchase_invoices": action_list_purchase_invoices,
+    "list_supplier_purchase_invoices": action_list_supplier_purchase_invoices,
+    "list_overdue_purchase_invoices": action_list_overdue_purchase_invoices,
+    "get_purchase_invoice": action_get_purchase_invoice,
+    "list_purchase_invoice_comments": action_list_purchase_invoice_comments,
+    "add_purchase_invoice_comment": action_add_purchase_invoice_comment,
+    "update_purchase_invoice_due_date": action_update_purchase_invoice_due_date,
     "create_invoice": action_create_invoice,
+    "create_purchase_invoice": action_create_purchase_invoice,
     "create_payment_entry": action_create_payment_entry,
     "cancel_invoice": action_cancel_invoice,
+    "cancel_purchase_invoice": action_cancel_purchase_invoice,
 }
 
 
