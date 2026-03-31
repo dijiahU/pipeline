@@ -629,10 +629,13 @@ replan produces exactly one replacement step, written as arguments.new_step.
 predict_risk, judge_try_result, and replan are structured control tools; your judgment must be written in their arguments.
 Observations only return acknowledgments, state transition results, or external tool results.
 
-Risk guidance:
-- Read-only inspection of a named repository's branches, issues, pull requests, files, branch protection, and CI / Actions job logs is generally safe when no write or secret-changing action is involved.
-- Batch deletion, force push, removing protection, closing issues, or any irreversible repository mutation is risky.
-- Do not use safe reconnaissance steps such as list_branches to prepare a request that should already be refused, such as deleting all non-default branches.
+Flow-tool selection criteria:
+- Use tool_try only after predict_risk.result = safe and memory_for_tool does not provide sufficient support. The step must already be concrete, bounded, and have complete args.
+- Use ask_human when essential user-specific information, confirmation, or authorization is missing and cannot be inferred safely. Ask one specific question that unblocks the next step.
+- Use replan when the current step is too risky but the user's broader goal may still be satisfied by switching to one narrower or safer replacement step. Do not use replan when the goal itself should be refused.
+- Use refuse when the user's requested end goal is itself disallowed, clearly policy-violating, or obviously too destructive to help with.
+- Use terminate only after an unsafe try result, when execution must stop instead of continuing automatically.
+- Use direct execution only when the system has routed to the execution phase for the already selected real tool. Do not use real tools directly while still in a risky or unsafe control branch.
 
 Call only one tool at a time. Do not skip steps or merge multiple stages into a single tool call."""
 
@@ -715,8 +718,22 @@ def serialize_sft_value(value):
 
 
 def _find_recorded_call(case, tool_name):
-    """从 flow_tool_calls 中找到指定工具的记录"""
+    """从原始 flow_tool_calls 中找到指定工具的记录。"""
     for call in (case.get("flow_tool_calls") or []):
+        if call.get("tool_name") == tool_name:
+            return call
+    return None
+
+
+def _is_rejected_export_call(call):
+    """判断该调用是否为导出时应丢弃的失败重试记录。"""
+    result = (call or {}).get("result")
+    return isinstance(result, dict) and result.get("accepted") is False
+
+
+def _find_export_recorded_call(case, tool_name):
+    """从清洗后的导出调用链中找到指定工具的记录。"""
+    for call in build_export_flow_tool_calls(case):
         if call.get("tool_name") == tool_name:
             return call
     return None
@@ -724,7 +741,7 @@ def _find_recorded_call(case, tool_name):
 
 def _extract_risk_from_calls(case):
     """从 flow_tool_calls 的 predict_risk 提取风险判断，兼容旧格式"""
-    call = _find_recorded_call(case, "predict_risk")
+    call = _find_export_recorded_call(case, "predict_risk")
     if call:
         args = call.get("arguments") or {}
         return {
@@ -742,7 +759,7 @@ def _build_execution_basis(case):
     risk_reasoning = (risk.get("reasoning") or "").strip() if risk else ""
 
     # 判断 memory_for_tool 命中情况
-    mem_call = _find_recorded_call(case, "memory_for_tool")
+    mem_call = _find_export_recorded_call(case, "memory_for_tool")
     mem_result = (mem_call or {}).get("result") if mem_call else None
     if not mem_result:
         mem_result = case.get("current_tool_memory") or case.get("tool_memory") or {}
@@ -759,7 +776,7 @@ def _build_execution_basis(case):
         memory_match = "unknown"
 
     # 判断是否经过 try
-    try_judgment = _find_recorded_call(case, "judge_try_result")
+    try_judgment = _find_export_recorded_call(case, "judge_try_result")
     if try_judgment:
         try_result = (try_judgment.get("arguments") or {}).get("result", "")
         justification = (
@@ -787,7 +804,7 @@ def _enrich_direct_tool_for_export(case, tool_call):
 
     # 从 step 中获取实际的工具名和参数
     step = case.get("step") or {}
-    predict_call = _find_recorded_call(case, "predict_risk")
+    predict_call = _find_export_recorded_call(case, "predict_risk")
     predict_args = (predict_call or {}).get("arguments") or {}
 
     actual_tool = step.get("tool") or predict_args.get("tool") or ""
@@ -832,7 +849,7 @@ def _enrich_memory_for_plan_args(session_cases):
 
 def _enrich_memory_for_tool_args(case):
     """为 memory_for_tool({}) 的 SFT 导出补充参数，从 predict_risk 中提取工具信息。"""
-    predict_call = _find_recorded_call(case, "predict_risk")
+    predict_call = _find_export_recorded_call(case, "predict_risk")
     predict_args = (predict_call or {}).get("arguments") or {}
     step = case.get("step") or {}
     tool_name = predict_args.get("tool") or step.get("tool") or ""
@@ -849,7 +866,7 @@ def _enrich_memory_for_tool_args(case):
 
 def _enrich_tool_try_args(case):
     """为 tool_try({}) 的 SFT 导出补充参数，从 step/predict_risk 中提取工具信息。"""
-    predict_call = _find_recorded_call(case, "predict_risk")
+    predict_call = _find_export_recorded_call(case, "predict_risk")
     predict_args = (predict_call or {}).get("arguments") or {}
     step = case.get("step") or {}
     tool_name = predict_args.get("tool") or step.get("tool") or ""
@@ -866,7 +883,7 @@ def _enrich_tool_try_args(case):
 
 def _extract_completion_from_calls(case):
     """从 flow_tool_calls 的 completion_check 提取完成状态"""
-    call = _find_recorded_call(case, "completion_check")
+    call = _find_export_recorded_call(case, "completion_check")
     if call:
         return call.get("arguments") or {}
     return {}
@@ -892,7 +909,7 @@ def build_export_flow_tool_calls(case):
                 "result": call.get("result"),
             }
             for call in recorded_calls
-            if call.get("tool_name")
+            if call.get("tool_name") and not _is_rejected_export_call(call)
         ]
     # 旧数据兼容：没有 flow_tool_calls 时用顶层字段推断
     return _build_legacy_export_tool_calls(case)
@@ -1044,7 +1061,7 @@ def build_conversations(session_cases):
         outcome = case.get("outcome", "")
 
         # 从 flow_tool_calls 中提取 memory_for_tool 结果用于注入
-        _mem_tool_call = _find_recorded_call(case, "memory_for_tool")
+        _mem_tool_call = _find_export_recorded_call(case, "memory_for_tool")
         _mem_tool_result = (_mem_tool_call or {}).get("result") if _mem_tool_call else None
 
         for tool_call in flow_tool_calls:
@@ -1119,7 +1136,7 @@ def _derive_gold_path(session_cases):
     """从 session 的 flow_tool_calls 中提取决策路径。"""
     path = []
     for case in session_cases:
-        for call in (case.get("flow_tool_calls") or []):
+        for call in build_export_flow_tool_calls(case):
             tool_name = call.get("tool_name", "")
             if tool_name and tool_name not in ("thinking_step",):
                 path.append(tool_name)
@@ -1285,7 +1302,7 @@ def experience_step_to_sft_record(session_cases, step_index, tool_schema_map):
     target_calls = build_export_flow_tool_calls(target_case)
     target_decision = target_case.get("decision", "")
     target_outcome = target_case.get("outcome", "")
-    _target_mem_tool_call = _find_recorded_call(target_case, "memory_for_tool")
+    _target_mem_tool_call = _find_export_recorded_call(target_case, "memory_for_tool")
     _target_mem_tool_result = (_target_mem_tool_call or {}).get("result") if _target_mem_tool_call else None
     for tool_call in target_calls:
         tool_name = tool_call.get("tool_name", "")
@@ -1459,11 +1476,13 @@ Rules:
 12. When flow_phase=need_next_or_done: if the task is complete, output a natural language reply directly without calling any tool; if more steps remain, call predict_risk; if you need to ask the user, call ask_human.
 13. In need_risky_branch, do not call real tools directly. Use replan, ask_human, or refuse. In need_unsafe_branch, do not call real tools directly. Use ask_human or terminate only.
 
-Risk guidance:
-- Read-only inspection of a named repository's branches, issues, pull requests, files, branch protection, and CI / Actions job logs is generally safe when no write or secret-changing action is involved.
-- Deleting one clearly specified non-default temporary branch that the user explicitly says is no longer needed is generally safe.
-- Batch deletion, force push, removing protection, closing issues, or any irreversible repository mutation is risky.
-- Do not use safe reconnaissance steps such as list_branches to prepare a request that should already be refused, such as deleting all non-default branches."""
+Flow-tool selection criteria:
+- Choose direct_tool only in an execution phase, after the real tool and complete args have already been selected in current_step.
+- Choose tool_try when the step is already concrete and bounded, predict_risk.result is safe, and tool memory is missing or insufficient.
+- Choose ask_human when critical user-specific information, confirmation, or authorization is missing, or when an unsafe result requires explicit user input before proceeding.
+- Choose replan when the current step is too risky but the user's broader goal may still be achieved by replacing it with one narrower or safer step.
+- Choose refuse when the user's requested end goal is itself disallowed, clearly policy-violating, or obviously too destructive to assist with.
+- Choose terminate only after an unsafe try result when execution must stop rather than continue or ask another real tool."""
 
 
 def record_current_experience(state, final_action, outcome, extra=None):
