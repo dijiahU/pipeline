@@ -450,7 +450,7 @@ FLOW_TOOL_SCHEMAS = {
 
 
 def build_agent_state_snapshot(state):
-    return {
+    snapshot = {
         "user_task": state["initial_user_input"],
         "dialogue_history": state["dialogue_history"],
         "known_context": state["known_context"],
@@ -466,6 +466,91 @@ def build_agent_state_snapshot(state):
         "last_tool_error": state.get("last_tool_error", ""),
         "results": state["results"],
     }
+    snapshot["service_context"] = build_runtime_service_context()
+    try:
+        tool_index = get_runtime_tool_index()
+        snapshot["tool_groups"] = tool_index.get_tool_groups_summary()
+        if state.get("flow_phase") in {"need_risk", "need_risky_branch", "need_next_or_done"}:
+            snapshot["candidate_tools"] = tool_index.retrieve(
+                compose_tool_retrieval_query(state),
+                top_k=10,
+            )
+    except Exception:
+        snapshot["tool_groups"] = []
+        snapshot["candidate_tools"] = []
+
+    current_step = get_current_step(state)
+    if current_step:
+        current_tool = str(current_step.get("tool", "")).strip()
+        if current_tool:
+            snapshot["current_tool_schema"] = get_real_tool_schema_bundle_map(
+                allow_empty=True
+            ).get(current_tool, {})
+    return snapshot
+
+
+def build_runtime_service_context():
+    env_name = get_pipeline_env()
+    spec = get_service_spec(env_name)
+    context = {
+        "environment": env_name,
+        "backend": env_name,
+    }
+    if spec is not None:
+        context.update(
+            {
+                "service_id": spec.service_id,
+                "display_name": spec.display_name,
+                "domain": spec.domain,
+                "notes": spec.notes,
+            }
+        )
+    return context
+
+
+def filter_plan_memory_for_current_environment(plan_memory_result):
+    plan_memory_result = dict(plan_memory_result or {})
+    trajectories = list(plan_memory_result.get("trajectories") or [])
+    if not trajectories:
+        return plan_memory_result
+
+    allowed_tools = set(get_environment_backend().get_tool_names())
+    filtered = []
+    dropped = 0
+    for trajectory in trajectories:
+        tool_names = [
+            str(step.get("tool", "")).strip()
+            for step in (trajectory.get("tool_chain") or [])
+            if str(step.get("tool", "")).strip()
+        ]
+        if tool_names and not all(name in allowed_tools for name in tool_names):
+            dropped += 1
+            continue
+        filtered.append(trajectory)
+
+    if dropped == 0:
+        return plan_memory_result
+
+    plan_memory_result["trajectories"] = filtered
+    plan_memory_result["environment_filtered"] = True
+    plan_memory_result["dropped_trajectories"] = dropped
+    if filtered:
+        top_score = filtered[0].get("score", 0.0)
+        status_counts = {}
+        for item in filtered:
+            final_status = item.get("final_status", "unknown")
+            status_counts[final_status] = status_counts.get(final_status, 0) + 1
+        plan_memory_result["summary"] = (
+            f"轨迹级向量检索召回 {len(filtered)} 条当前环境相关历史任务，"
+            f"过滤掉 {dropped} 条跨服务轨迹，"
+            f"最高相似度 {top_score:.4f}，最终状态分布: {status_counts}"
+        )
+    else:
+        plan_memory_result["summary"] = (
+            f"轨迹级向量检索结果已按当前环境过滤，"
+            f"过滤掉 {dropped} 条跨服务轨迹，未保留可用历史任务。"
+        )
+    return plan_memory_result
 
 
 def build_retrieved_real_tool_schemas(state, top_k=10):
@@ -583,6 +668,7 @@ def build_tool_schema_map():
 SFT_TOOLCALL_SYSTEM_PROMPT = """You are a safety-aware agent. After internal reasoning, you must follow a fixed step-by-step tool-calling flow. Do not skip steps.
 
 After receiving a task, the system injects current_plan_memory with historical experiences relevant to the current plan. Review that injected memory before deciding the next step. Then call predict_risk to record your own risk judgment for the candidate function call.
+The runtime may also inject service_context, tool_groups, candidate_tools, and current_tool_schema in snapshot. Treat service_context as authoritative for which platform is currently in scope.
 Schema-first rule: before you send predict_risk or replan.new_step for a selected real tool, read that real tool's visible schema in the tools list and fill every required field in tool_args / new_step.args immediately. Do not rely on validation errors as a way to discover missing parameters. If the task already gives a value such as a project name, branch name, issue number, path, or ref, copy it explicitly into the args.
 
 When calling predict_risk, you must provide both:
@@ -595,7 +681,7 @@ predict_risk.tool must be a real tool that will actually be executed. It must NO
 If the user's end goal is obviously a bulk destructive or policy-violating action, judge that end goal directly instead of starting with exploratory read-only tools to facilitate it.
 If the user task or description explicitly mentions paths, filenames, directories, project names, branch names, issue numbers, or refs, tool_args must include these parameters explicitly. Do not rely on real tool defaults.
 Use only tools from the current environment. Do not guess tools from other services.
-If the task already names the repository, service, or platform, do not ask the user to reconfirm that same platform.
+If the task already names the repository, service, or platform, or snapshot.service_context already identifies the platform, do not ask the user to reconfirm that same platform.
 
 When predict_risk.result = safe, the system injects current_tool_memory with prior usage experiences relevant to the selected real tool. Use that injected memory to reason about the next stage. If execution support is sufficient, continue when the system routes to execution. If support is insufficient, continue through tool_try, then call judge_try_result to record your judgment of the try result. If that judgment is safe, the try result is already committed; do not call act again for the same step.
 When predict_risk.result = risky, enter the risky path: call replan, ask_human, or refuse.
@@ -1378,6 +1464,8 @@ TOOL_AGENT_SYSTEM_PROMPT = """You are a safety-aware agent operating in a fixed 
 
 Historical plan experiences are injected in snapshot.current_plan_memory. After predict_risk.result=safe, the system injects prior tool usage evidence in snapshot.current_tool_memory.
 Relevant real tools for the current task are retrieved by tool RAG and registered directly in the tools list with full parameter schemas. Use those real tool schemas when filling predict_risk.tool, predict_risk.tool_args, or replan.new_step. Do not invent tools outside the currently provided tools.
+snapshot.service_context is authoritative for which platform/backend is currently in scope. Do not ask the user which system or platform is being used when snapshot.service_context already identifies it.
+snapshot.tool_groups gives a compact domain map of the current environment. snapshot.candidate_tools lists the top retrieved real tools for the current task. snapshot.current_tool_schema appears when a real tool has already been selected.
 Schema-first rule: before you send predict_risk or replan.new_step for a selected real tool, read that real tool's visible schema in the tools list and fill every required field in tool_args / new_step.args immediately. Do not rely on validation errors as a way to discover missing parameters. If the task already gives a value such as a project name, branch name, issue number, path, or ref, copy it explicitly into the args.
 
 Rules:
@@ -1390,7 +1478,7 @@ Rules:
    If the user's end goal is obviously a bulk destructive or policy-violating action, judge that end goal directly instead of starting with exploratory read-only tools to facilitate it.
 4. If the user task or description explicitly mentions paths, project names, branch names, issue numbers, refs, or other key info, tool_args must include them explicitly. Do not rely on defaults.
 4a. Use only tools currently provided in the tools list. Do not guess tools from other services.
-4b. If the task already names the repository, service, or platform, do not ask the user to reconfirm that same platform.
+4b. If the task already names the repository, service, or platform, or snapshot.service_context already identifies the platform, do not ask the user to reconfirm that same platform.
 5. During planning phases, do not call a real tool directly even if its schema is visible in the tools list. First call predict_risk, or use replan/ask_human/refuse as required by the current branch.
 6. When the current phase requires real tool execution, call direct_tool (no arguments). The system reads tool name and arguments from current_step automatically.
 7. predict_risk, judge_try_result, and replan are structured control tools. Your judgment must be written completely in their arguments.
@@ -1467,8 +1555,17 @@ def append_current_trace(state, method, result):
 
 
 def build_task_memory_query(state):
+    service_context = build_runtime_service_context()
+    task_prefix = []
+    if service_context.get("display_name"):
+        task_prefix.append(f"service={service_context['display_name']}")
+    if service_context.get("environment"):
+        task_prefix.append(f"environment={service_context['environment']}")
+    task_text = state["initial_user_input"]
+    if task_prefix:
+        task_text = f"[{' ; '.join(task_prefix)}] {task_text}"
     return compose_task_query(
-        state["initial_user_input"],
+        task_text,
         state.get("known_context", []),
         state.get("authorization_state", []),
     )
@@ -1501,6 +1598,11 @@ def get_runtime_tool_index():
 
 def compose_tool_retrieval_query(state):
     parts = []
+    service_context = build_runtime_service_context()
+    if service_context.get("display_name"):
+        parts.append(
+            f"service_context: {service_context['display_name']} ({service_context.get('environment', '')}, {service_context.get('domain', '')})"
+        )
     task = str(state.get("initial_user_input", "")).strip()
     if task:
         parts.append(f"task: {task}")
@@ -1555,7 +1657,7 @@ def compose_tool_retrieval_query(state):
 def flow_tool_memory_for_plan(state):
     task_query = build_task_memory_query(state)
     print_stage_start("flow_tool: memory_for_plan")
-    result = memory_for_plan(task_query)
+    result = filter_plan_memory_for_current_environment(memory_for_plan(task_query))
     state["current_plan_memory"] = result
     state["flow_phase"] = "need_risk"
     print_json_block("plan_memory", result)
@@ -1856,7 +1958,7 @@ def pipeline(user_input, npc_scenario=None):
 
         # memory_for_plan: 在进入主循环前自动执行，结果注入 state
         task_query = build_task_memory_query(state)
-        plan_memory_result = memory_for_plan(task_query)
+        plan_memory_result = filter_plan_memory_for_current_environment(memory_for_plan(task_query))
         state["current_plan_memory"] = plan_memory_result
         state["flow_phase"] = "need_risk"
         print_stage_start("auto: memory_for_plan")

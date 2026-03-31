@@ -61,10 +61,46 @@ def load_manifest():
         return json.load(fh)
 
 
-def ensure_group(name):
+def find_user_by_email(email):
+    target = str(email or "").strip().lower()
+    if not target:
+        return None
+    for user in api("GET", "users") or []:
+        if not isinstance(user, dict):
+            continue
+        if str(user.get("email", "")).strip().lower() == target:
+            return user
+    return None
+
+
+def find_group(name):
+    target = str(name or "").strip().lower()
+    if not target:
+        return None
     for group in api("GET", "groups") or []:
-        if group.get("name") == name:
+        if not isinstance(group, dict):
+            continue
+        if str(group.get("name", "")).strip().lower() == target:
             return group
+    return None
+
+
+def find_ticket_by_title(title):
+    target = str(title or "").strip()
+    if not target:
+        return None
+    for ticket in api("GET", "tickets") or []:
+        if not isinstance(ticket, dict):
+            continue
+        if str(ticket.get("title", "")).strip() == target:
+            return ticket
+    return None
+
+
+def ensure_group(name):
+    existing = find_group(name)
+    if existing:
+        return existing
     return api(
         "POST",
         "groups",
@@ -78,51 +114,36 @@ def ensure_group(name):
     )
 
 
-def ensure_customer(customer):
-    for user in api("GET", "users") or []:
-        if user.get("email") == customer["email"]:
-            return user
+def ensure_user(user_spec, roles):
+    existing = find_user_by_email(user_spec["email"])
+    if existing:
+        return existing
     payload = {
-        "firstname": customer["firstname"],
-        "lastname": customer["lastname"],
-        "email": customer["email"],
-        "login": customer.get("login", customer["email"]),
-        "roles": ["Customer"],
+        "firstname": user_spec["firstname"],
+        "lastname": user_spec["lastname"],
+        "email": user_spec["email"],
+        "login": user_spec.get("login", user_spec["email"]),
+        "roles": roles,
     }
+    if user_spec.get("note"):
+        payload["note"] = user_spec["note"]
     return api("POST", "users", json=payload)
 
 
-def ensure_ticket(ticket):
-    for existing in api("GET", "tickets") or []:
-        if existing.get("title") == ticket["title"]:
-            return existing
-    created = api(
-        "POST",
-        "tickets",
-        json={
-            "title": ticket["title"],
-            "group": ticket["group"],
-            "customer": ticket["customer_email"],
-            "priority": ticket.get("priority", "2 normal"),
-            "article": {
-                "subject": ticket.get("subject", ticket["title"]),
-                "body": ticket["body"],
-                "type": "note",
-                "internal": False,
-            },
-        },
-    )
-    desired_state = ticket.get("state", "open")
-    if desired_state:
-        api("PUT", f"tickets/{created['id']}", json={"state": desired_state})
-    return api("GET", f"tickets/{created['id']}")
+def ensure_customer(customer):
+    return ensure_user(customer, ["Customer"])
 
 
-def grant_admin_group_access(group_names):
-    ruby_group_map = ", ".join([f"\"{name}\" => [\"full\"]" for name in group_names])
+def ensure_agent(agent):
+    return ensure_user(agent, agent.get("roles", ["Agent"]))
+
+
+def grant_group_access(email, group_names):
+    access_entries = ", ".join([f"\"{name}\" => [\"full\"]" for name in group_names])
     ruby = (
-        f'user = User.find_by!(email: "{ADMIN_USER}"); '
-        f'user.group_names_access_map = {{{ruby_group_map}}}; '
+        f'user = User.find_by!(email: "{email}"); '
+        f'user.group_names_access_map = {{{access_entries}}}; '
+        "user.active = true; "
         "user.save!; "
         "puts user.group_names_access_map.inspect"
     )
@@ -140,7 +161,111 @@ def grant_admin_group_access(group_names):
     )
     if result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip() or "unknown error"
-        raise RuntimeError(f"grant_admin_group_access failed: {detail}")
+        raise RuntimeError(f"grant_group_access failed for {email}: {detail}")
+
+
+def ensure_ticket_articles(ticket_id, articles):
+    if not articles:
+        return
+    existing_articles = api("GET", f"ticket_articles/by_ticket/{ticket_id}") or []
+    existing_keys = {
+        (
+            str(article.get("subject", "")).strip(),
+            str(article.get("body", "")).strip(),
+            bool(article.get("internal", False)),
+        )
+        for article in existing_articles
+        if isinstance(article, dict)
+    }
+    for article in articles:
+        key = (
+            str(article.get("subject", "")).strip(),
+            str(article.get("body", "")).strip(),
+            bool(article.get("internal", False)),
+        )
+        if key in existing_keys:
+            continue
+        api(
+            "POST",
+            "ticket_articles",
+            json={
+                "ticket_id": ticket_id,
+                "subject": article.get("subject", "Follow-up"),
+                "body": article.get("body", ""),
+                "content_type": "text/plain",
+                "type": article.get("type", "note"),
+                "internal": bool(article.get("internal", False)),
+                "sender": article.get("sender", "Agent"),
+            },
+        )
+        existing_keys.add(key)
+
+
+def ensure_ticket_tags(ticket_id, desired_tags):
+    if not desired_tags:
+        return
+    payload = api("GET", f"tags?object=Ticket&o_id={ticket_id}") or {}
+    current_tags = {
+        str(tag).strip().lower()
+        for tag in ((payload.get("tags") if isinstance(payload, dict) else payload) or [])
+        if str(tag).strip()
+    }
+    for tag in desired_tags:
+        normalized = str(tag).strip().lower()
+        if not normalized or normalized in current_tags:
+            continue
+        api(
+            "POST",
+            "tags/add",
+            json={
+                "object": "Ticket",
+                "o_id": ticket_id,
+                "item": tag,
+            },
+        )
+        current_tags.add(normalized)
+
+
+def ensure_ticket(ticket):
+    existing = find_ticket_by_title(ticket["title"])
+    if not existing:
+        created = api(
+            "POST",
+            "tickets",
+            json={
+                "title": ticket["title"],
+                "group": ticket["group"],
+                "customer": ticket["customer_email"],
+                "priority": ticket.get("priority", "2 normal"),
+                "article": {
+                    "subject": ticket.get("subject", ticket["title"]),
+                    "body": ticket["body"],
+                    "type": "note",
+                    "internal": False,
+                },
+            },
+        )
+        ticket_id = created["id"]
+    else:
+        ticket_id = existing["id"]
+
+    update_payload = {
+        "group": ticket["group"],
+        "priority": ticket.get("priority", "2 normal"),
+        "state": ticket.get("state", "open"),
+        "title": ticket["title"],
+    }
+    owner_email = ticket.get("owner_email", "")
+    if owner_email:
+        owner = find_user_by_email(owner_email)
+        if not owner:
+            raise RuntimeError(f"找不到工单负责人: {owner_email}")
+        update_payload["owner_id"] = owner["id"]
+    api("PUT", f"tickets/{ticket_id}", json=update_payload)
+
+    ensure_ticket_articles(ticket_id, ticket.get("articles", []))
+    ensure_ticket_tags(ticket_id, ticket.get("tags", []))
+    return api("GET", f"tickets/{ticket_id}")
 
 
 def main():
@@ -149,16 +274,25 @@ def main():
 
     expected_titles = {ticket["title"] for ticket in manifest.get("tickets", [])}
     for ticket in api("GET", "tickets") or []:
+        if not isinstance(ticket, dict):
+            continue
         if ticket.get("title") not in expected_titles:
             api("DELETE", f"tickets/{ticket['id']}")
 
     for group_name in manifest.get("groups", []):
         ensure_group(group_name)
-    grant_admin_group_access(["Users"] + manifest.get("groups", []))
 
-    created_customers = {}
+    grant_group_access(ADMIN_USER, ["Users"] + manifest.get("groups", []))
+
+    seeded_agents = []
+    for agent in manifest.get("agents", []):
+        created = ensure_agent(agent)
+        grant_group_access(agent["email"], agent.get("groups", manifest.get("groups", [])))
+        seeded_agents.append(created)
+
+    seeded_customers = []
     for customer in manifest.get("customers", []):
-        created_customers[customer["email"]] = ensure_customer(customer)
+        seeded_customers.append(ensure_customer(customer))
 
     seeded_tickets = []
     for ticket in manifest.get("tickets", []):
@@ -166,12 +300,14 @@ def main():
 
     result = {
         "seeded_groups": manifest.get("groups", []),
+        "seeded_agents": [agent["email"] for agent in manifest.get("agents", [])],
         "seeded_customers": [customer["email"] for customer in manifest.get("customers", [])],
         "seeded_tickets": [
             {
                 "id": ticket.get("id"),
                 "title": ticket.get("title"),
                 "state_id": ticket.get("state_id"),
+                "owner_id": ticket.get("owner_id"),
             }
             for ticket in seeded_tickets
         ],

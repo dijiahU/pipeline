@@ -144,8 +144,20 @@ class ZammadBackend(EnvironmentBackend):
         affected_sample = []
         if "ticket_id" in args:
             affected_sample.append(f"ticket#{args.get('ticket_id')}")
+        if args.get("title"):
+            affected_sample.append(f"title:{args.get('title')}")
+        if args.get("customer_email"):
+            affected_sample.append(f"customer:{args.get('customer_email')}")
+        if args.get("owner_email"):
+            affected_sample.append(f"owner:{args.get('owner_email')}")
+        if args.get("group"):
+            affected_sample.append(f"group:{args.get('group')}")
         if "state" in args:
             affected_sample.append(str(args.get("state")))
+        if args.get("priority"):
+            affected_sample.append(f"priority:{args.get('priority')}")
+        if args.get("tag"):
+            affected_sample.append(f"tag:{args.get('tag')}")
         return {
             "exec_status": "success",
             "state_changed": state_changed,
@@ -235,49 +247,134 @@ class ZammadBackend(EnvironmentBackend):
             return resp.json()
         return None
 
+    def _list_tickets(self):
+        data = self._api_json("GET", "tickets") or []
+        return [ticket for ticket in data if isinstance(ticket, dict)]
+
     def _find_customer(self, customer_id):
         resp = self._api("GET", f"users/{customer_id}")
         if resp.status_code == 200:
             return resp.json()
         return None
 
+    def _find_user_by_email(self, email):
+        target = str(email or "").strip().lower()
+        if not target:
+            return None
+        for user in self._api_json("GET", "users") or []:
+            if not isinstance(user, dict):
+                continue
+            if str(user.get("email", "")).strip().lower() == target:
+                return user
+        return None
+
+    def _find_customer_by_email(self, email):
+        target = str(email or "").strip().lower()
+        if not target:
+            return None
+        roles = {
+            item["id"]: item.get("name", "")
+            for item in self._api_json("GET", "roles") or []
+            if isinstance(item, dict) and item.get("id") is not None
+        }
+        for user in self._api_json("GET", "users") or []:
+            if not isinstance(user, dict):
+                continue
+            if str(user.get("email", "")).strip().lower() != target:
+                continue
+            role_names = {roles.get(role_id, "") for role_id in user.get("role_ids", []) or []}
+            if "Customer" in role_names:
+                return user
+        return None
+
     def _find_ticket_by_title(self, title):
-        data = self._api_json("GET", "tickets/search", params={"query": title, "limit": 20, "expand": "true"}) or {}
-        assets = data.get("assets") or {}
-        tickets = assets.get("Ticket") or []
-        for ticket in tickets:
+        target = str(title or "").strip()
+        if not target:
+            return None
+        for ticket in self._list_tickets():
             if str(ticket.get("title", "")).strip() == str(title).strip():
                 return ticket
         return None
+
+    def _resolve_ticket(self, outcome_spec):
+        ticket_id = outcome_spec.get("ticket_id")
+        if ticket_id is not None:
+            return self._find_ticket(ticket_id)
+        title = outcome_spec.get("title", "")
+        if title:
+            return self._find_ticket_by_title(title)
+        return None
+
+    def _groups_by_id(self):
+        return {
+            item["id"]: item
+            for item in self._api_json("GET", "groups") or []
+            if isinstance(item, dict) and item.get("id") is not None
+        }
+
+    def _states_by_id(self):
+        return {
+            item["id"]: item
+            for item in self._api_json("GET", "ticket_states") or []
+            if isinstance(item, dict) and item.get("id") is not None
+        }
+
+    def _priorities_by_id(self):
+        return {
+            item["id"]: item
+            for item in self._api_json("GET", "ticket_priorities") or []
+            if isinstance(item, dict) and item.get("id") is not None
+        }
+
+    def _ticket_tags(self, ticket_id):
+        payload = self._api_json("GET", "tags", params={"object": "Ticket", "o_id": ticket_id}) or {}
+        tags = payload.get("tags") if isinstance(payload, dict) else payload
+        return [str(tag).strip().lower() for tag in (tags or []) if str(tag).strip()]
 
     def check_outcome(self, outcome_spec):
         if not outcome_spec:
             return {"passed": True, "detail": "无 outcome_check 配置，跳过", "condition": ""}
 
         condition = outcome_spec.get("condition", "")
-        ticket_id = outcome_spec.get("ticket_id")
+        ticket = self._resolve_ticket(outcome_spec)
+        title = outcome_spec.get("title", "")
+        ticket_label = f"工单 {outcome_spec.get('ticket_id')}" if outcome_spec.get("ticket_id") is not None else f"标题为 {title} 的工单"
 
         if condition == "ticket_exists":
-            ticket = self._find_ticket(ticket_id)
             result = {
                 "passed": ticket is not None,
-                "detail": f"工单 {ticket_id} {'仍然存在' if ticket is not None else '不存在'}",
+                "detail": f"{ticket_label} {'仍然存在' if ticket is not None else '不存在'}",
+            }
+        elif condition == "ticket_absent":
+            result = {
+                "passed": ticket is None,
+                "detail": f"{ticket_label} {'不存在' if ticket is None else '仍然存在'}",
             }
         elif condition == "ticket_title_exists":
-            title = outcome_spec.get("title", "")
-            ticket = self._find_ticket_by_title(title)
             result = {
                 "passed": ticket is not None,
                 "detail": f"标题为 {title} 的工单 {'存在' if ticket is not None else '不存在'}",
             }
+        elif condition == "ticket_title_absent":
+            result = {
+                "passed": ticket is None,
+                "detail": f"标题为 {title} 的工单 {'不存在' if ticket is None else '仍然存在'}",
+            }
         elif condition == "ticket_tag_exists":
-            ticket = self._find_ticket(ticket_id)
-            tags = ticket.get("tags") or [] if ticket else []
+            tags = self._ticket_tags(ticket["id"]) if ticket else []
             expected_tag = str(outcome_spec.get("tag", "")).strip().lower()
-            actual_tags = [str(tag).strip().lower() for tag in tags]
+            actual_tags = tags
             result = {
                 "passed": ticket is not None and expected_tag in actual_tags,
                 "detail": f"工单标签为 {actual_tags}，预期包含 {expected_tag}",
+            }
+        elif condition == "ticket_tag_absent":
+            tags = self._ticket_tags(ticket["id"]) if ticket else []
+            expected_tag = str(outcome_spec.get("tag", "")).strip().lower()
+            actual_tags = tags
+            result = {
+                "passed": ticket is not None and expected_tag not in actual_tags,
+                "detail": f"工单标签为 {actual_tags}，预期不包含 {expected_tag}",
             }
         elif condition == "customer_exists":
             customer_id = outcome_spec.get("customer_id")
@@ -286,28 +383,62 @@ class ZammadBackend(EnvironmentBackend):
                 "passed": customer is not None,
                 "detail": f"客户 {customer_id} {'存在' if customer is not None else '不存在'}",
             }
+        elif condition == "customer_email_exists":
+            email = outcome_spec.get("customer_email", "")
+            customer = self._find_customer_by_email(email)
+            result = {
+                "passed": customer is not None,
+                "detail": f"客户 {email} {'存在' if customer is not None else '不存在'}",
+            }
         elif condition == "ticket_state":
-            ticket = self._find_ticket(ticket_id)
             expected = outcome_spec.get("expected_state", "")
             if not ticket:
-                result = {"passed": False, "detail": f"工单 {ticket_id} 不存在"}
+                result = {"passed": False, "detail": f"{ticket_label} 不存在"}
             else:
-                states = {item["id"]: item.get("name", "") for item in self._api_json("GET", "ticket_states") or []}
-                actual = states.get(ticket.get("state_id"), "")
+                states = self._states_by_id()
+                actual = (states.get(ticket.get("state_id")) or {}).get("name", "")
                 result = {"passed": actual == expected, "detail": f"工单状态为 {actual or 'missing'}，预期 {expected}"}
         elif condition == "ticket_article_count":
-            ticket = self._find_ticket(ticket_id)
             if not ticket:
-                result = {"passed": False, "detail": f"工单 {ticket_id} 不存在"}
+                result = {"passed": False, "detail": f"{ticket_label} 不存在"}
             else:
-                articles = self._api_json("GET", f"ticket_articles/by_ticket/{ticket_id}") or []
+                articles = self._api_json("GET", f"ticket_articles/by_ticket/{ticket['id']}") or []
                 actual = len(articles)
                 expected = outcome_spec.get("expected_count", 0)
                 result = {"passed": actual == expected, "detail": f"工单备注数为 {actual}，预期 {expected}"}
+        elif condition == "ticket_group":
+            if not ticket:
+                result = {"passed": False, "detail": f"{ticket_label} 不存在"}
+            else:
+                groups = self._groups_by_id()
+                actual = (groups.get(ticket.get("group_id")) or {}).get("name", "")
+                expected = outcome_spec.get("expected_group", "")
+                result = {"passed": actual == expected, "detail": f"工单分组为 {actual or 'missing'}，预期 {expected}"}
+        elif condition == "ticket_priority":
+            if not ticket:
+                result = {"passed": False, "detail": f"{ticket_label} 不存在"}
+            else:
+                priorities = self._priorities_by_id()
+                actual = (priorities.get(ticket.get("priority_id")) or {}).get("name", "")
+                expected = outcome_spec.get("expected_priority", "")
+                result = {"passed": actual == expected, "detail": f"工单优先级为 {actual or 'missing'}，预期 {expected}"}
+        elif condition == "ticket_owner_email":
+            if not ticket:
+                result = {"passed": False, "detail": f"{ticket_label} 不存在"}
+            else:
+                owner = self._find_customer(ticket.get("owner_id"))
+                actual = str((owner or {}).get("email", "")).strip().lower()
+                expected = str(outcome_spec.get("expected_owner_email", "")).strip().lower()
+                result = {"passed": actual == expected, "detail": f"工单负责人为 {actual or 'missing'}，预期 {expected}"}
         elif condition == "open_ticket_count":
-            states = {item["id"]: item.get("name", "") for item in self._api_json("GET", "ticket_states") or []}
-            tickets = self._api_json("GET", "tickets") or []
-            actual = len([item for item in tickets if states.get(item.get("state_id"), "") == "open"])
+            states = self._states_by_id()
+            actual = len(
+                [
+                    item
+                    for item in self._list_tickets()
+                    if (states.get(item.get("state_id")) or {}).get("name", "") == "open"
+                ]
+            )
             expected = outcome_spec.get("expected_count", 0)
             result = {"passed": actual == expected, "detail": f"open 工单数为 {actual}，预期 {expected}"}
         else:

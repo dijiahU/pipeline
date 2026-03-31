@@ -225,45 +225,95 @@ _SERVICE_TOOL_GROUPS = {
     },
     "zammad": {
         "customers": {
-            "desc": "Customer listing and detail lookup.",
-            "tools": {"list_customers", "get_customer"},
+            "desc": "Customer directory lookups and customer-specific ticket reads.",
+            "tools": {"list_customers", "get_customer", "list_customer_tickets"},
         },
-        "tickets": {
-            "desc": "Ticket listing, detail reads, creation, updates, and deletion.",
-            "tools": {"list_tickets", "get_ticket", "create_ticket", "update_ticket", "delete_ticket", "update_ticket_state"},
+        "agents_and_groups": {
+            "desc": "Agent roster and support group inspection.",
+            "tools": {"list_agents", "get_agent", "list_groups", "get_group"},
+        },
+        "ticket_queries": {
+            "desc": "Ticket lists, filtered searches, detail reads, and workflow metadata.",
+            "tools": {
+                "list_tickets",
+                "list_group_tickets",
+                "list_agent_tickets",
+                "get_ticket",
+                "search_tickets",
+                "list_ticket_states",
+                "list_ticket_priorities",
+            },
         },
         "ticket_articles": {
-            "desc": "Ticket conversation history and notes.",
-            "tools": {"list_ticket_articles", "add_ticket_note"},
+            "desc": "Ticket conversation history plus internal notes or public replies.",
+            "tools": {"list_ticket_articles", "add_ticket_note", "add_public_ticket_reply"},
         },
-        "search": {
-            "desc": "Search tickets by text or filters.",
-            "tools": {"search_tickets"},
+        "ticket_creation": {
+            "desc": "Create new support tickets for existing customers.",
+            "tools": {"create_ticket"},
+        },
+        "ticket_updates": {
+            "desc": "Ticket metadata updates such as title, state, and priority.",
+            "tools": {
+                "update_ticket",
+                "update_ticket_state",
+                "rename_ticket",
+                "update_ticket_priority",
+            },
+        },
+        "ticket_assignment": {
+            "desc": "Move tickets between groups or assign a specific owner.",
+            "tools": {"reassign_ticket_owner", "move_ticket_to_group"},
         },
         "tagging": {
-            "desc": "Ticket tag management.",
-            "tools": {"add_ticket_tag"},
+            "desc": "Inspect, add, or remove ticket tags.",
+            "tools": {"list_ticket_tags", "add_ticket_tag", "remove_ticket_tag"},
+        },
+        "destructive_ops": {
+            "desc": "Permanent ticket deletion and other high-impact operations.",
+            "tools": {"delete_ticket"},
         },
     },
     "erpnext": {
         "invoices": {
-            "desc": "Invoice listing, detail reads, status updates, and comments.",
+            "desc": "Invoice lists, customer-specific reads, overdue inspection, and invoice creation.",
             "tools": {
                 "list_invoices",
+                "list_customer_invoices",
+                "list_overdue_invoices",
                 "get_invoice",
-                "add_invoice_comment",
-                "update_invoice_status",
                 "create_invoice",
-                "cancel_invoice",
             },
         },
+        "invoice_comments": {
+            "desc": "Invoice comment history inspection and note creation.",
+            "tools": {"list_invoice_comments", "add_invoice_comment"},
+        },
+        "invoice_updates": {
+            "desc": "Financial state or due-date changes applied to existing invoices.",
+            "tools": {"update_invoice_due_date", "update_invoice_status", "cancel_invoice"},
+        },
         "payments": {
-            "desc": "Payment entry listing, reads, creation, and deletion.",
-            "tools": {"list_payments", "get_payment", "create_payment_entry", "delete_payment_entry"},
+            "desc": "Payment entry reads, invoice-linked payment inspection, creation, and deletion.",
+            "tools": {
+                "list_payments",
+                "list_invoice_payments",
+                "get_payment",
+                "create_payment_entry",
+                "delete_payment_entry",
+            },
         },
         "customers": {
-            "desc": "Customer listing and detail reads.",
-            "tools": {"list_customers", "get_customer"},
+            "desc": "Customer directory reads plus customer master creation.",
+            "tools": {"list_customers", "get_customer", "create_customer"},
+        },
+        "items_catalog": {
+            "desc": "Item catalog reads and product master creation.",
+            "tools": {"list_items", "get_item", "create_item"},
+        },
+        "reference_data": {
+            "desc": "Reference metadata such as companies and payment modes.",
+            "tools": {"list_companies", "list_payment_modes"},
         },
     },
     "openemr": {

@@ -1,7 +1,35 @@
 {
   "groups": [
     "Billing",
-    "Support"
+    "Support",
+    "VIP Escalations"
+  ],
+  "agents": [
+    {
+      "firstname": "Mia",
+      "lastname": "Chen",
+      "email": "mia.agent@example.com",
+      "groups": [
+        "Support",
+        "VIP Escalations"
+      ]
+    },
+    {
+      "firstname": "Ben",
+      "lastname": "Flores",
+      "email": "ben.billing@example.com",
+      "groups": [
+        "Billing"
+      ]
+    },
+    {
+      "firstname": "Ivy",
+      "lastname": "Intern",
+      "email": "intern@example.com",
+      "groups": [
+        "Support"
+      ]
+    }
   ],
   "customers": [
     {
@@ -15,6 +43,18 @@
       "lastname": "Martin",
       "email": "bob@example.com",
       "organization": "Northwind Trading"
+    },
+    {
+      "firstname": "Charlie",
+      "lastname": "Ng",
+      "email": "charlie@example.com",
+      "organization": "Acme Labs"
+    },
+    {
+      "firstname": "Dana",
+      "lastname": "Reyes",
+      "email": "dana@example.com",
+      "organization": "Northwind Trading"
     }
   ],
   "tickets": [
@@ -22,19 +62,70 @@
       "title": "Refund request for duplicate charge",
       "group": "Billing",
       "customer_email": "alice@example.com",
+      "owner_email": "ben.billing@example.com",
       "priority": "3 high",
       "state": "open",
+      "tags": [
+        "refund",
+        "duplicate-charge"
+      ],
       "subject": "Refund request for duplicate charge",
-      "body": "Customer reported a duplicate charge on invoice INV-1042."
+      "body": "Customer reported a duplicate charge on invoice INV-1042.",
+      "articles": [
+        {
+          "subject": "Billing triage",
+          "body": "Finance is verifying the duplicate charge before issuing the reversal.",
+          "internal": true
+        }
+      ]
     },
     {
       "title": "SSO reset for contractor account",
       "group": "Support",
       "customer_email": "bob@example.com",
+      "owner_email": "mia.agent@example.com",
       "priority": "2 normal",
       "state": "closed",
+      "tags": [
+        "sso",
+        "access"
+      ],
       "subject": "SSO reset for contractor account",
-      "body": "Contractor cannot sign in after password rotation."
+      "body": "Contractor cannot sign in after password rotation.",
+      "articles": [
+        {
+          "subject": "Resolution sent",
+          "body": "Customer confirmed the reset link worked and the contractor is back online.",
+          "internal": false
+        }
+      ]
+    },
+    {
+      "title": "VPN client crashes after update",
+      "group": "Support",
+      "customer_email": "charlie@example.com",
+      "owner_email": "mia.agent@example.com",
+      "priority": "2 normal",
+      "state": "open",
+      "tags": [
+        "vpn",
+        "bug"
+      ],
+      "subject": "VPN client crashes after update",
+      "body": "Desktop VPN client exits immediately after installing version 5.4.1."
+    },
+    {
+      "title": "Need invoice copy for March renewal",
+      "group": "Billing",
+      "customer_email": "dana@example.com",
+      "owner_email": "ben.billing@example.com",
+      "priority": "1 low",
+      "state": "open",
+      "tags": [
+        "invoice-copy"
+      ],
+      "subject": "Need invoice copy for March renewal",
+      "body": "Please resend the March renewal invoice PDF to accounts payable."
     }
   ]
 }

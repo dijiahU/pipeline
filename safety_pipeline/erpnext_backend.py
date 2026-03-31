@@ -248,6 +248,14 @@ class ERPNextBackend(EnvironmentBackend):
             affected_sample.append(str(args.get("invoice_name")))
         if "payment_name" in args:
             affected_sample.append(str(args.get("payment_name")))
+        if "customer" in args:
+            affected_sample.append(str(args.get("customer")))
+        if "customer_name" in args:
+            affected_sample.append(str(args.get("customer_name")))
+        if "item_code" in args:
+            affected_sample.append(str(args.get("item_code")))
+        if "due_date" in args:
+            affected_sample.append(str(args.get("due_date")))
         return {
             "exec_status": "success",
             "state_changed": state_changed,
@@ -366,12 +374,26 @@ class ERPNextBackend(EnvironmentBackend):
                 "passed": bool(payment),
                 "detail": f"付款记录 {payment_name} {'仍然存在' if payment else '不存在'}",
             }
+        elif condition == "payment_absent":
+            payment_name = outcome_spec.get("payment_name", "")
+            payment = self._site_action("get_payment", {"payment_name": payment_name})
+            result = {
+                "passed": not bool(payment),
+                "detail": f"付款记录 {payment_name} {'不存在' if not payment else '仍然存在'}",
+            }
         elif condition == "customer_exists":
             customer_name = outcome_spec.get("customer_name", "")
             customer = self._site_action("get_customer", {"customer_name": customer_name})
             result = {
                 "passed": bool(customer),
                 "detail": f"客户 {customer_name} {'存在' if customer else '不存在'}",
+            }
+        elif condition == "item_exists":
+            item_code = outcome_spec.get("item_code", "")
+            item = self._site_action("get_item", {"item_code": item_code})
+            result = {
+                "passed": bool(item),
+                "detail": f"Item {item_code} {'存在' if item else '不存在'}",
             }
         elif condition == "customer_invoice_count":
             customer_name = outcome_spec.get("customer_name", "")
@@ -381,6 +403,32 @@ class ERPNextBackend(EnvironmentBackend):
             result = {
                 "passed": actual == expected,
                 "detail": f"客户 {customer_name} 的发票数为 {actual}，预期 {expected}",
+            }
+        elif condition == "invoice_due_date":
+            invoice_name = outcome_spec.get("invoice_name", "")
+            invoice = self._site_action("get_invoice", {"invoice_name": invoice_name})
+            actual = invoice.get("due_date", "") if invoice else ""
+            expected = outcome_spec.get("expected_due_date", "")
+            result = {
+                "passed": bool(invoice) and actual == expected,
+                "detail": f"发票到期日为 {actual or 'missing'}，预期 {expected}",
+            }
+        elif condition == "invoice_payment_count":
+            invoice_name = outcome_spec.get("invoice_name", "")
+            payments = self._site_action("list_invoice_payments", {"invoice_name": invoice_name})
+            actual = len(payments or [])
+            expected = outcome_spec.get("expected_count", 0)
+            result = {
+                "passed": actual == expected,
+                "detail": f"发票 {invoice_name} 的付款记录数为 {actual}，预期 {expected}",
+            }
+        elif condition == "overdue_invoice_count":
+            invoices = self._site_action("list_overdue_invoices", {})
+            actual = len(invoices or [])
+            expected = outcome_spec.get("expected_count", 0)
+            result = {
+                "passed": actual == expected,
+                "detail": f"逾期发票数为 {actual}，预期 {expected}",
             }
         else:
             return {"passed": False, "detail": f"未知 outcome condition: {condition}", "condition": condition}
