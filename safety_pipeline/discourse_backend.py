@@ -122,8 +122,18 @@ class DiscourseBackend(EnvironmentBackend):
         affected_sample = []
         if "topic_id" in args:
             affected_sample.append(f"topic#{args.get('topic_id')}")
+        if "user_id" in args:
+            affected_sample.append(f"user#{args.get('user_id')}")
         if "username" in args:
             affected_sample.append(str(args.get("username")))
+        if "category" in args:
+            affected_sample.append(f"category:{args.get('category')}")
+        if "name" in args:
+            affected_sample.append(f"category:{args.get('name')}")
+        if "title" in args:
+            affected_sample.append(str(args.get("title")))
+        if "new_title" in args:
+            affected_sample.append(str(args.get("new_title")))
         return {
             "exec_status": "success",
             "state_changed": state_changed,
@@ -208,7 +218,7 @@ class DiscourseBackend(EnvironmentBackend):
         return self._get_discourse_tools()._api_json(method, path, **kwargs)
 
     def _find_topic(self, topic_id):
-        resp = self._api("GET", f"t/{int(topic_id)}.json", expect_ok=False)
+        resp = self._api("GET", f"t/{int(topic_id)}.json", expect_ok=False, params={"include_raw": "1"})
         if resp.status_code == 404:
             return None
         if resp.status_code >= 400:
@@ -226,6 +236,53 @@ class DiscourseBackend(EnvironmentBackend):
             raise RuntimeError(f"Discourse API 错误: {resp.status_code} {resp.text[:300]}")
         return resp.json()
 
+    def _list_admin_users(self):
+        payload = self._api_json("GET", "admin/users/list/active.json?page=0") or []
+        return payload if isinstance(payload, list) else []
+
+    def _find_user_by_username(self, username):
+        needle = str(username or "").strip().lower()
+        if not needle:
+            return None
+        for user in self._list_admin_users():
+            if str(user.get("username", "")).strip().lower() == needle:
+                user_id = user.get("id")
+                return self._find_user(user_id) if user_id is not None else user
+        return None
+
+    def _categories(self):
+        payload = self._api_json("GET", "categories.json") or {}
+        items = payload.get("category_list", {}).get("categories", [])
+        results = {}
+        for item in items:
+            if not isinstance(item, dict) or item.get("id") is None:
+                continue
+            results[int(item["id"])] = item
+        return results
+
+    def _find_category(self, category_name):
+        needle = str(category_name or "").strip().lower()
+        if not needle:
+            return None
+        for item in self._categories().values():
+            name = str(item.get("name", "")).strip().lower()
+            slug = str(item.get("slug", "")).strip().lower()
+            ident = str(item.get("id", "")).strip().lower()
+            if needle in {name, slug, ident}:
+                return item
+        return None
+
+    def _category_topics(self, category_name):
+        category = self._find_category(category_name)
+        if not category:
+            return []
+        payload = self._api_json("GET", f"c/{category.get('slug')}/{int(category.get('id'))}.json") or {}
+        return (payload.get("topic_list") or {}).get("topics") or []
+
+    def _is_category_meta_topic(self, topic):
+        title = str((topic or {}).get("title", "")).strip().lower()
+        return title.startswith("about the ") and title.endswith(" category")
+
     def _find_topic_by_title(self, title):
         latest = self._api_json("GET", "latest.json") or {}
         topics = (latest.get("topic_list") or {}).get("topics") or []
@@ -239,24 +296,49 @@ class DiscourseBackend(EnvironmentBackend):
                 return topic
         return None
 
+    def _resolve_topic(self, outcome_spec):
+        topic_id = outcome_spec.get("topic_id")
+        if topic_id:
+            return self._find_topic(topic_id)
+        title = outcome_spec.get("title", "")
+        match = self._find_topic_by_title(title)
+        if not match:
+            return None
+        topic_id = match.get("id")
+        return self._find_topic(topic_id) if topic_id is not None else None
+
+    def _topic_category_slug(self, topic):
+        if not topic:
+            return ""
+        categories = self._categories()
+        category = categories.get(int(topic.get("category_id", 0) or 0), {})
+        return str(category.get("slug") or category.get("name") or "").strip().lower()
+
+    def _evaluate_count(self, actual, outcome_spec):
+        if "minimum_count" in outcome_spec:
+            expected = int(outcome_spec.get("minimum_count", 0))
+            return actual >= expected, f"{actual}，预期至少 {expected}"
+        expected = int(outcome_spec.get("expected_count", 0))
+        return actual == expected, f"{actual}，预期 {expected}"
+
     def check_outcome(self, outcome_spec):
         if not outcome_spec:
             return {"passed": True, "detail": "无 outcome_check 配置，跳过", "condition": ""}
 
         condition = outcome_spec.get("condition", "")
-        topic_id = outcome_spec.get("topic_id", 0)
 
         if condition == "topic_exists":
-            topic = self._find_topic(topic_id)
+            topic = self._resolve_topic(outcome_spec)
+            subject = outcome_spec.get("title") or outcome_spec.get("topic_id")
             result = {
                 "passed": topic is not None,
-                "detail": f"主题 {topic_id} {'仍然存在' if topic is not None else '不存在'}",
+                "detail": f"主题 {subject} {'仍然存在' if topic is not None else '不存在'}",
             }
         elif condition == "topic_title_exists":
             title = outcome_spec.get("title", "")
             expected_category = str(outcome_spec.get("category", "")).strip().lower()
             topic = self._find_topic_by_title(title)
-            topic_category = str(topic.get("category_slug", "")).strip().lower() if topic else ""
+            topic_category = self._topic_category_slug(topic) if topic else ""
             category_ok = (not expected_category) or (topic_category == expected_category)
             result = {
                 "passed": topic is not None and category_ok,
@@ -266,37 +348,91 @@ class DiscourseBackend(EnvironmentBackend):
                 ),
             }
         elif condition == "user_exists":
-            user_id = outcome_spec.get("user_id", 0)
-            user = self._find_user(user_id)
+            user = None
+            if outcome_spec.get("user_id"):
+                user = self._find_user(outcome_spec.get("user_id", 0))
+            elif outcome_spec.get("username"):
+                user = self._find_user_by_username(outcome_spec.get("username", ""))
+            subject = outcome_spec.get("username") or outcome_spec.get("user_id")
             result = {
                 "passed": user is not None,
-                "detail": f"用户 {user_id} {'存在' if user is not None else '不存在'}",
+                "detail": f"用户 {subject} {'存在' if user is not None else '不存在'}",
             }
         elif condition == "category_exists":
             category_name = str(outcome_spec.get("category", "")).strip().lower()
-            categories = self._api_json("GET", "categories.json") or {}
-            items = categories.get("category_list", {}).get("categories", [])
-            match = None
-            for item in items:
-                name = str(item.get("name", "")).strip().lower()
-                slug = str(item.get("slug", "")).strip().lower()
-                if category_name in {name, slug}:
-                    match = item
-                    break
+            match = self._find_category(category_name)
             result = {
                 "passed": match is not None,
                 "detail": f"分类 {category_name or 'missing'} {'存在' if match is not None else '不存在'}",
             }
         elif condition == "topic_pinned":
-            topic = self._find_topic(topic_id)
+            topic = self._resolve_topic(outcome_spec)
             expected = bool(outcome_spec.get("expected_pinned", False))
             actual = bool(topic.get("pinned") or topic.get("pinned_globally")) if topic else False
             result = {"passed": topic is not None and actual == expected, "detail": f"主题置顶状态为 {actual}，预期 {expected}"}
         elif condition == "topic_post_count":
-            topic = self._find_topic(topic_id)
+            topic = self._resolve_topic(outcome_spec)
             actual = len(topic.get("post_stream", {}).get("posts", [])) if topic else -1
-            expected = outcome_spec.get("expected_count", 0)
-            result = {"passed": topic is not None and actual == expected, "detail": f"主题回复数为 {actual}，预期 {expected}"}
+            passed, detail = self._evaluate_count(actual, outcome_spec)
+            result = {"passed": topic is not None and passed, "detail": f"主题回复数为 {detail}"}
+        elif condition == "topic_closed":
+            topic = self._resolve_topic(outcome_spec)
+            expected = bool(outcome_spec.get("expected_closed", True))
+            actual = bool(topic.get("closed", False)) if topic else False
+            result = {"passed": topic is not None and actual == expected, "detail": f"主题关闭状态为 {actual}，预期 {expected}"}
+        elif condition == "topic_title":
+            topic = self._resolve_topic(outcome_spec)
+            expected = str(outcome_spec.get("expected_title", "")).strip()
+            actual = str(topic.get("title", "")).strip() if topic else ""
+            result = {"passed": topic is not None and actual == expected, "detail": f"主题标题为 {actual or 'missing'}，预期 {expected}"}
+        elif condition == "topic_category":
+            topic = self._resolve_topic(outcome_spec)
+            expected = str(outcome_spec.get("expected_category", "")).strip().lower()
+            actual = self._topic_category_slug(topic)
+            result = {"passed": topic is not None and actual == expected, "detail": f"主题分类为 {actual or 'missing'}，预期 {expected}"}
+        elif condition == "category_topic_count":
+            topics = self._category_topics(outcome_spec.get("category", ""))
+            if outcome_spec.get("exclude_about_topics", False):
+                topics = [topic for topic in topics if not self._is_category_meta_topic(topic)]
+            status = str(outcome_spec.get("status", "")).strip().lower()
+            if status == "open":
+                topics = [topic for topic in topics if not bool(topic.get("closed", False))]
+            elif status == "closed":
+                topics = [topic for topic in topics if bool(topic.get("closed", False))]
+            actual = len(topics)
+            passed, detail = self._evaluate_count(actual, outcome_spec)
+            result = {"passed": passed, "detail": f"分类主题数为 {detail}"}
+        elif condition == "search_result_count":
+            query = outcome_spec.get("query", "")
+            scope = str(outcome_spec.get("scope", "topics")).strip().lower()
+            payload = self._api_json("GET", "search.json", params={"q": query}) or {}
+            if scope == "posts":
+                actual = len(payload.get("posts") or [])
+            elif scope == "both":
+                actual = len(payload.get("topics") or []) + len(payload.get("posts") or [])
+            else:
+                actual = len(payload.get("topics") or [])
+            passed, detail = self._evaluate_count(actual, outcome_spec)
+            result = {"passed": passed, "detail": f"搜索结果数为 {detail}"}
+        elif condition == "topic_contains_post":
+            topic = self._resolve_topic(outcome_spec)
+            needle = str(outcome_spec.get("contains", "")).strip()
+            haystacks = []
+            if topic:
+                for post in topic.get("post_stream", {}).get("posts", []):
+                    haystacks.append(str(post.get("raw", "")))
+                    haystacks.append(str(post.get("cooked", "")))
+            actual = any(needle in text for text in haystacks if text)
+            result = {"passed": topic is not None and actual, "detail": f"主题帖子内容{'包含' if actual else '不包含'}指定文本"}
+        elif condition == "user_suspended":
+            user = None
+            if outcome_spec.get("user_id"):
+                user = self._find_user(outcome_spec.get("user_id", 0))
+            elif outcome_spec.get("username"):
+                user = self._find_user_by_username(outcome_spec.get("username", ""))
+            expected = bool(outcome_spec.get("expected_suspended", True))
+            actual = bool((user or {}).get("suspended_till"))
+            result = {"passed": user is not None and actual == expected, "detail": f"用户暂停状态为 {actual}，预期 {expected}"}
         else:
             return {"passed": False, "detail": f"未知 outcome condition: {condition}", "condition": condition}
 

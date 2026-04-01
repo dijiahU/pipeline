@@ -1,7 +1,8 @@
 import json
 import os
 import sys
-from typing import Dict, List, Optional
+import time
+from typing import Dict, List, Optional, Set
 
 import requests
 
@@ -51,6 +52,7 @@ def ensure_category(name: str) -> Dict:
     color_map = {
         "announcements": "0088CC",
         "support": "2E8B57",
+        "product": "B55400",
     }
     payload = api_json(
         "POST",
@@ -79,29 +81,73 @@ def find_topic(title: str, category_id: int) -> Optional[Dict]:
     return None
 
 
+def topic_payload(topic_id: int) -> Dict:
+    return api_json("GET", f"t/{int(topic_id)}.json") or {}
+
+
+def topic_raw_posts(topic_id: int) -> Set[str]:
+    payload = topic_payload(topic_id)
+    posts = payload.get("post_stream", {}).get("posts", [])
+    return {str(post.get("raw", "")).strip() for post in posts if isinstance(post, dict)}
+
+
 def create_topic(title: str, raw: str, category_id: int, username: str) -> Dict:
-    return api_json(
-        "POST",
-        "posts.json",
-        username=username,
-        data={
-            "title": title,
-            "raw": raw,
-            "category": category_id,
-        },
-    )
+    last_exc = None
+    for _ in range(4):
+        try:
+            payload = api_json(
+                "POST",
+                "posts.json",
+                username=username,
+                data={
+                    "title": title,
+                    "raw": raw,
+                    "category": category_id,
+                },
+            )
+            time.sleep(1)
+            return payload
+        except RuntimeError as exc:
+            last_exc = exc
+            message = str(exc).lower()
+            if "too similar to what you recently posted" in message:
+                time.sleep(2)
+                continue
+            if "too quickly" in message or "wait 10 seconds" in message or "rate_limit" in message:
+                time.sleep(11)
+                continue
+            if "too similar to what you recently posted" not in message:
+                raise
+    raise last_exc
 
 
 def create_reply(topic_id: int, raw: str, username: str) -> Dict:
-    return api_json(
-        "POST",
-        "posts.json",
-        username=username,
-        data={
-            "topic_id": int(topic_id),
-            "raw": raw,
-        },
-    )
+    last_exc = None
+    for _ in range(4):
+        try:
+            payload = api_json(
+                "POST",
+                "posts.json",
+                username=username,
+                data={
+                    "topic_id": int(topic_id),
+                    "raw": raw,
+                },
+            )
+            time.sleep(1)
+            return payload
+        except RuntimeError as exc:
+            last_exc = exc
+            message = str(exc).lower()
+            if "too similar to what you recently posted" in message:
+                time.sleep(2)
+                continue
+            if "too quickly" in message or "wait 10 seconds" in message or "rate_limit" in message:
+                time.sleep(11)
+                continue
+            if "too similar to what you recently posted" not in message:
+                raise
+    raise last_exc
 
 
 def set_pinned(topic_id: int, pinned: bool) -> None:
@@ -112,9 +158,22 @@ def set_pinned(topic_id: int, pinned: bool) -> None:
     )
 
 
+def set_closed(topic_id: int, closed: bool) -> None:
+    api(
+        "PUT",
+        f"t/{int(topic_id)}/status",
+        data={"status": "closed", "enabled": "true" if closed else "false"},
+    )
+
+
 def main():
     manifest = load_manifest()
     topic_summary = []
+
+    for category in manifest.get("categories", []):
+        name = category.get("name", "") if isinstance(category, dict) else str(category or "")
+        if name:
+            ensure_category(name)
 
     for topic in manifest.get("topics", []):
         category = ensure_category(topic["category"])
@@ -128,11 +187,25 @@ def main():
             created = create_topic(topic["title"], first_post["raw"], int(category["id"]), first_post.get("username", API_USERNAME))
             topic_id = int(created["topic_id"])
 
+        seen_posts = topic_raw_posts(topic_id)
         for reply in (topic.get("posts") or [])[1:]:
-            create_reply(topic_id, reply["raw"], reply.get("username", API_USERNAME))
+            raw = str(reply.get("raw", "")).strip()
+            if not raw or raw in seen_posts:
+                continue
+            create_reply(topic_id, raw, reply.get("username", API_USERNAME))
+            seen_posts.add(raw)
 
         set_pinned(topic_id, bool(topic.get("pinned", False)))
-        topic_summary.append({"title": topic["title"], "topic_id": topic_id, "category": topic["category"]})
+        set_closed(topic_id, bool(topic.get("closed", False)))
+        topic_summary.append(
+            {
+                "title": topic["title"],
+                "topic_id": topic_id,
+                "category": topic["category"],
+                "pinned": bool(topic.get("pinned", False)),
+                "closed": bool(topic.get("closed", False)),
+            }
+        )
 
     print(json.dumps({"seeded_topics": topic_summary}, ensure_ascii=False, indent=2))
 

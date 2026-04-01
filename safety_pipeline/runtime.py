@@ -514,10 +514,22 @@ def filter_plan_memory_for_current_environment(plan_memory_result):
     if not trajectories:
         return plan_memory_result
 
+    service_context = build_runtime_service_context()
+    expected_service_id = str(service_context.get("service_id", "") or "").strip()
+    expected_environment = str(service_context.get("environment", "") or "").strip()
     allowed_tools = set(get_environment_backend().get_tool_names())
     filtered = []
     dropped = 0
     for trajectory in trajectories:
+        trajectory_service_id = str(trajectory.get("service_id", "") or "").strip()
+        trajectory_environment = str(trajectory.get("environment", "") or "").strip()
+        if expected_service_id or expected_environment:
+            if not trajectory_service_id or not trajectory_environment:
+                dropped += 1
+                continue
+            if trajectory_service_id != expected_service_id or trajectory_environment != expected_environment:
+                dropped += 1
+                continue
         tool_names = [
             str(step.get("tool", "")).strip()
             for step in (trajectory.get("tool_chain") or [])
@@ -541,13 +553,13 @@ def filter_plan_memory_for_current_environment(plan_memory_result):
             final_status = item.get("final_status", "unknown")
             status_counts[final_status] = status_counts.get(final_status, 0) + 1
         plan_memory_result["summary"] = (
-            f"轨迹级向量检索召回 {len(filtered)} 条当前环境相关历史任务，"
+            f"轨迹级向量检索召回 {len(filtered)} 条当前服务硬隔离后的历史任务，"
             f"过滤掉 {dropped} 条跨服务轨迹，"
             f"最高相似度 {top_score:.4f}，最终状态分布: {status_counts}"
         )
     else:
         plan_memory_result["summary"] = (
-            f"轨迹级向量检索结果已按当前环境过滤，"
+            f"轨迹级向量检索结果已按当前服务硬隔离过滤，"
             f"过滤掉 {dropped} 条跨服务轨迹，未保留可用历史任务。"
         )
     return plan_memory_result
@@ -612,15 +624,20 @@ def run_tool_try(tool_name, args):
 
 
 def record_experience(state, step, final_action, outcome, extra=None):
+    service_context = build_runtime_service_context()
+    dialogue_snapshot = build_memory_context_snapshot(state)
+    dialogue_snapshot["service_context"] = service_context
     case = {
         "task": state["initial_user_input"],
         "turn_id": state["turn_count"],
         "step_index": max(len(state["decision_trace"]) - 1, 0),
-        "dialogue_snapshot": build_memory_context_snapshot(state),
+        "dialogue_snapshot": dialogue_snapshot,
         "flow_tool_calls": list(state.get("current_flow_tool_calls", [])),
         "step": step or {},
         "decision": final_action,
         "outcome": outcome,
+        "service_id": service_context.get("service_id", ""),
+        "environment": service_context.get("environment", ""),
     }
     for key, value in (extra or {}).items():
         if value not in (None, "", [], {}):
@@ -1656,8 +1673,15 @@ def compose_tool_retrieval_query(state):
 
 def flow_tool_memory_for_plan(state):
     task_query = build_task_memory_query(state)
+    service_context = build_runtime_service_context()
     print_stage_start("flow_tool: memory_for_plan")
-    result = filter_plan_memory_for_current_environment(memory_for_plan(task_query))
+    result = filter_plan_memory_for_current_environment(
+        memory_for_plan(
+            task_query,
+            service_id=service_context.get("service_id"),
+            environment=service_context.get("environment"),
+        )
+    )
     state["current_plan_memory"] = result
     state["flow_phase"] = "need_risk"
     print_json_block("plan_memory", result)
@@ -1958,7 +1982,14 @@ def pipeline(user_input, npc_scenario=None):
 
         # memory_for_plan: 在进入主循环前自动执行，结果注入 state
         task_query = build_task_memory_query(state)
-        plan_memory_result = filter_plan_memory_for_current_environment(memory_for_plan(task_query))
+        service_context = build_runtime_service_context()
+        plan_memory_result = filter_plan_memory_for_current_environment(
+            memory_for_plan(
+                task_query,
+                service_id=service_context.get("service_id"),
+                environment=service_context.get("environment"),
+            )
+        )
         state["current_plan_memory"] = plan_memory_result
         state["flow_phase"] = "need_risk"
         print_stage_start("auto: memory_for_plan")

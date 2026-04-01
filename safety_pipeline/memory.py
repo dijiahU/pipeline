@@ -2,6 +2,7 @@ import json
 import os
 import uuid
 
+from .service_registry import get_service_spec, list_all_service_specs
 from .settings import (
     EXPERIENCE_MEMORY_PATH,
     LOCAL_EMBEDDING_MODEL,
@@ -15,6 +16,74 @@ from .state import get_case_risk_assessment, summarize_result_for_memory
 
 def tool_signature(tool_name, args):
     return f"{tool_name}:{json.dumps(args, ensure_ascii=False, sort_keys=True)}"
+
+
+def _normalize_service_lookup_text(text):
+    return " ".join(str(text or "").strip().lower().replace(".", " ").split())
+
+
+def _infer_service_context_from_text(text):
+    normalized = _normalize_service_lookup_text(text)
+    if not normalized:
+        return {}
+    for spec in list_all_service_specs():
+        candidates = {
+            _normalize_service_lookup_text(spec.service_id),
+            _normalize_service_lookup_text(spec.display_name),
+        }
+        if any(candidate and candidate in normalized for candidate in candidates):
+            return {
+                "service_id": spec.service_id,
+                "environment": spec.default_backend or spec.service_id,
+            }
+    return {}
+
+
+def extract_case_service_context(case):
+    case = case or {}
+    context = {}
+    service_id = str(case.get("service_id", "") or "").strip()
+    environment = str(case.get("environment", "") or "").strip()
+    if service_id:
+        context["service_id"] = service_id
+    if environment:
+        context["environment"] = environment
+
+    snapshot = case.get("dialogue_snapshot", {}) or {}
+    snapshot_service_context = snapshot.get("service_context", {}) or {}
+    if not context.get("service_id"):
+        snapshot_service_id = str(snapshot_service_context.get("service_id", "") or "").strip()
+        if snapshot_service_id:
+            context["service_id"] = snapshot_service_id
+    if not context.get("environment"):
+        snapshot_environment = str(snapshot_service_context.get("environment", "") or "").strip()
+        if snapshot_environment:
+            context["environment"] = snapshot_environment
+
+    inferred = {}
+    if not context.get("service_id") or not context.get("environment"):
+        inferred = _infer_service_context_from_text(case.get("task", ""))
+        if not inferred:
+            for item in snapshot.get("dialogue_history", []) or []:
+                inferred = _infer_service_context_from_text(item.get("content", ""))
+                if inferred:
+                    break
+
+    if not context.get("service_id") and inferred.get("service_id"):
+        context["service_id"] = inferred["service_id"]
+    if not context.get("environment") and inferred.get("environment"):
+        context["environment"] = inferred["environment"]
+
+    if context.get("service_id") and not context.get("environment"):
+        spec = get_service_spec(context["service_id"])
+        if spec is not None:
+            context["environment"] = spec.default_backend or spec.service_id
+    if context.get("environment") and not context.get("service_id"):
+        spec = get_service_spec(context["environment"])
+        if spec is not None:
+            context["service_id"] = spec.service_id
+
+    return context
 
 
 class ExperienceMemory:
@@ -41,6 +110,13 @@ class ExperienceMemory:
                 continue
             if not case.get("memory_id"):
                 case["memory_id"] = f"case-{uuid.uuid4().hex}"
+                dirty = True
+            context = extract_case_service_context(case)
+            if context.get("service_id") and case.get("service_id") != context["service_id"]:
+                case["service_id"] = context["service_id"]
+                dirty = True
+            if context.get("environment") and case.get("environment") != context["environment"]:
+                case["environment"] = context["environment"]
                 dirty = True
         if dirty:
             self.save()
@@ -214,8 +290,11 @@ class PlanMemoryVectorStore:
             for s in real_steps
         ) or "无真实工具调用"
         final_status = self._session_final_status(session)
+        context = self._extract_session_service_context(session)
         lines = [
             f"task: {task}",
+            f"service_id: {context.get('service_id', '')}",
+            f"environment: {context.get('environment', '')}",
             f"tool_chain: {tool_chain}",
             f"step_count: {len(real_steps)}",
             f"final_status: {final_status}",
@@ -227,13 +306,35 @@ class PlanMemoryVectorStore:
         return f"task: {task_query}"
 
     def _build_session_meta(self, session, text):
+        context = self._extract_session_service_context(session)
         return {
             "session_id": self._session_id(session),
             "case_ids": [c.get("memory_id", "") for c in session],
             "text": text,
             "task": session[0].get("task", "") if session else "",
             "final_status": self._session_final_status(session),
+            "service_id": context.get("service_id", ""),
+            "environment": context.get("environment", ""),
         }
+
+    @staticmethod
+    def _extract_session_service_context(session):
+        for case in session or []:
+            context = extract_case_service_context(case)
+            if context.get("service_id") or context.get("environment"):
+                return context
+        return {}
+
+    @staticmethod
+    def _meta_matches_filters(meta, filters):
+        filters = {key: value for key, value in (filters or {}).items() if value}
+        if not filters:
+            return True
+        for key, expected in filters.items():
+            actual = str(meta.get(key, "") or "").strip()
+            if not actual or actual != str(expected).strip():
+                return False
+        return True
 
     def _get_sessions(self):
         sessions = self._group_sessions(self.experience_store.cases)
@@ -279,7 +380,7 @@ class PlanMemoryVectorStore:
             self.sync_with_experience()
             self._synced = True
 
-    def search(self, task_query, limit=PLAN_MEMORY_TOP_K):
+    def search(self, task_query, limit=PLAN_MEMORY_TOP_K, filters=None):
         self.ensure_synced()
 
         sessions = self._get_sessions()
@@ -292,7 +393,7 @@ class PlanMemoryVectorStore:
         query_text = self._build_query_text(task_query)
         query_vec = self._embed_text(query_text).reshape(1, -1)
 
-        k = min(limit, self.index.ntotal)
+        k = self.index.ntotal if filters else min(limit, self.index.ntotal)
         scores, indices = self.index.search(query_vec, k)
 
         results = []
@@ -300,6 +401,8 @@ class PlanMemoryVectorStore:
             if idx < 0 or idx >= len(self.metadata):
                 continue
             meta = self.metadata[idx]
+            if not self._meta_matches_filters(meta, filters):
+                continue
             session_id = meta.get("session_id", "")
             # 找到对应 session 的所有 cases
             matched_session = None
@@ -312,7 +415,10 @@ class PlanMemoryVectorStore:
             results.append({
                 "score": round(float(score), 4),
                 "session": matched_session,
+                "meta": meta,
             })
+            if len(results) >= limit:
+                break
         return results
 
 
@@ -328,7 +434,7 @@ class DisabledPlanMemoryStore:
     def ensure_synced(self):
         return
 
-    def search(self, task_query, limit=PLAN_MEMORY_TOP_K):
+    def search(self, task_query, limit=PLAN_MEMORY_TOP_K, filters=None):
         return []
 
 
@@ -401,16 +507,21 @@ def get_plan_memory_store():
     return plan_memory_store
 
 
-def _build_trajectory_view(session, score):
+def _build_trajectory_view(session, score, meta=None):
     """把一个 session 转成轨迹视图，只展示真实工具调用链"""
     store = get_plan_memory_store()
     task = session[0].get("task", "") if session else ""
     real_steps = store._extract_real_tool_steps(session)
     final_status = store._session_final_status(session)
+    service_context = dict(meta or {})
+    if not service_context.get("service_id") and not service_context.get("environment"):
+        service_context = store._extract_session_service_context(session)
     return {
         "score": score,
         "task": task,
         "final_status": final_status,
+        "service_id": service_context.get("service_id", ""),
+        "environment": service_context.get("environment", ""),
         "tool_chain": [
             {
                 "tool": s["tool"],
@@ -423,13 +534,18 @@ def _build_trajectory_view(session, score):
     }
 
 
-def memory_for_plan(task_query):
-    recalled = get_plan_memory_store().search(task_query, limit=PLAN_MEMORY_TOP_K)
+def memory_for_plan(task_query, service_id=None, environment=None):
+    filters = {}
+    if service_id:
+        filters["service_id"] = service_id
+    if environment:
+        filters["environment"] = environment
+    recalled = get_plan_memory_store().search(task_query, limit=PLAN_MEMORY_TOP_K, filters=filters or None)
     trajectories = []
 
     for item in recalled:
         session = item["session"]
-        trajectory = _build_trajectory_view(session, item["score"])
+        trajectory = _build_trajectory_view(session, item["score"], meta=item.get("meta"))
         trajectories.append(trajectory)
 
     if not trajectories:
@@ -454,6 +570,7 @@ def memory_for_plan(task_query):
         "summary": summary,
         "retrieval_method": "disabled" if _plan_memory_disabled_reason else "local_faiss_embedding_v1",
         "retrieval_scope": "trajectory_level",
+        "service_filtered": bool(filters),
     }
 
 

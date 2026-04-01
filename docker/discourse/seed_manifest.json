@@ -1,40 +1,145 @@
 {
-  "users": [
+  "categories": [
     {
-      "id": 1,
-      "username": "moderator",
-      "role": "staff"
+      "name": "announcements"
     },
     {
-      "id": 2,
+      "name": "support"
+    },
+    {
+      "name": "product"
+    }
+  ],
+  "users": [
+    {
+      "username": "moderator",
+      "role": "staff",
+      "email": "moderator@example.com",
+      "name": "Moderator"
+    },
+    {
       "username": "sam",
-      "role": "member"
+      "role": "member",
+      "email": "sam@example.com",
+      "name": "Sam"
+    },
+    {
+      "username": "alice",
+      "role": "member",
+      "email": "alice@example.com",
+      "name": "Alice"
+    },
+    {
+      "username": "maya",
+      "role": "member",
+      "email": "maya@example.com",
+      "name": "Maya"
+    },
+    {
+      "username": "spammer123",
+      "role": "member",
+      "email": "spammer123@example.com",
+      "name": "Spammer 123"
     }
   ],
   "topics": [
     {
-      "id": 201,
       "title": "Q2 Launch Checklist",
       "category": "announcements",
-      "pinned": false,
+      "pinned": true,
+      "closed": false,
       "posts": [
         {
-          "id": 1,
           "username": "moderator",
-          "raw": "Draft checklist for the Q2 public launch."
+          "raw": "Draft checklist for the Q2 public launch, including comms, support coverage, and final QA sign-off."
         }
       ]
     },
     {
-      "id": 202,
+      "title": "Scheduled maintenance follow-up",
+      "category": "announcements",
+      "pinned": false,
+      "closed": false,
+      "posts": [
+        {
+          "username": "maya",
+          "raw": "Maintenance finished overnight with no major regressions, but we still need to confirm analytics backfill."
+        }
+      ]
+    },
+    {
       "title": "Forum downtime follow-up",
       "category": "support",
       "pinned": false,
+      "closed": false,
       "posts": [
         {
-          "id": 1,
           "username": "sam",
-          "raw": "The forum was unavailable for about 12 minutes yesterday."
+          "raw": "The forum was unavailable for about 12 minutes yesterday during the deploy window."
+        },
+        {
+          "username": "admin",
+          "raw": "We confirmed the outage window and published an internal incident summary for follow-up."
+        },
+        {
+          "username": "moderator",
+          "raw": "Please keep adding repro details here if anyone noticed lingering login issues after the outage."
+        }
+      ]
+    },
+    {
+      "title": "Login redirect bug on mobile",
+      "category": "support",
+      "pinned": false,
+      "closed": false,
+      "posts": [
+        {
+          "username": "alice",
+          "raw": "I can reproduce a login redirect bug on mobile Safari after submitting the sign-in form."
+        },
+        {
+          "username": "admin",
+          "raw": "Thanks for the bug report. We are checking cookies, session expiry, and CDN cache behaviour now."
+        }
+      ]
+    },
+    {
+      "title": "Resolved: invoice export mismatch",
+      "category": "support",
+      "pinned": false,
+      "closed": true,
+      "posts": [
+        {
+          "username": "sam",
+          "raw": "The CSV invoice export had duplicated totals yesterday, but the data looks correct again after the patch."
+        },
+        {
+          "username": "moderator",
+          "raw": "Marking this resolved for now. We can reopen it if finance sees another mismatch in the weekly report."
+        }
+      ]
+    },
+    {
+      "title": "Feature request: digest frequency controls",
+      "category": "support",
+      "pinned": false,
+      "closed": false,
+      "posts": [
+        {
+          "username": "alice",
+          "raw": "It would help if users could pick how often digests arrive instead of using a single weekly default."
+        }
+      ]
+    },
+    {
+      "title": "Product roadmap Q3 notes",
+      "category": "product",
+      "pinned": false,
+      "closed": false,
+      "posts": [
+        {
+          "username": "maya",
+          "raw": "Sharing the first pass of Q3 product roadmap notes so the community can review priorities and sequencing."
         }
       ]
     }

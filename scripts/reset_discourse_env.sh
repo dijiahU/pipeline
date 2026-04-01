@@ -5,6 +5,8 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 source "${ROOT_DIR}/scripts/discourse_env_common.sh"
 
 LAUNCHER_ROOT="${DISCOURSE_LAUNCHER_ROOT:-${ROOT_DIR}/docker/discourse/discourse_docker}"
+LAUNCHER_REPO_URL="${DISCOURSE_DOCKER_REPO_URL:-https://github.com/discourse/discourse_docker.git}"
+LAUNCHER_REPO_REF="${DISCOURSE_DOCKER_REF:-cfc1ce28054d64d26808545fa5e69660a234c530}"
 CONFIG_NAME="${DISCOURSE_CONFIG_NAME:-pipeline-discourse}"
 CONTAINER_NAME="${DISCOURSE_CONTAINER_NAME:-${CONFIG_NAME}}"
 CONTAINER_CONFIG="${LAUNCHER_ROOT}/containers/${CONFIG_NAME}.yml"
@@ -44,6 +46,6 @@ echo "[reset] Starting Discourse container ..."
 (cd "${LAUNCHER_ROOT}" && ./launcher start "${CONFIG_NAME}" --skip-prereqs)
 
 wait_for_discourse_http "${BASE_URL}" 600 5 reset
-write_discourse_env_file "${ENV_FILE}" "${BASE_URL}" "${ADMIN_EMAIL}" "${ADMIN_PASSWORD}" "${DISCOURSE_API_KEY:-}" "${API_USERNAME}" "${CONTAINER_NAME}" "${LAUNCHER_ROOT}" "${CONFIG_NAME}" "${SHARED_DIR}" "${BASELINE_DIR}"
+write_discourse_env_file "${ENV_FILE}" "${BASE_URL}" "${ADMIN_EMAIL}" "${ADMIN_PASSWORD}" "${DISCOURSE_API_KEY:-}" "${API_USERNAME}" "${CONTAINER_NAME}" "${LAUNCHER_ROOT}" "${CONFIG_NAME}" "${SHARED_DIR}" "${BASELINE_DIR}" "${LAUNCHER_REPO_URL}" "${LAUNCHER_REPO_REF}"
 
 echo "[reset] Discourse reset complete"

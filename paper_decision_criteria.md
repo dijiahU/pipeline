@@ -1,175 +1,171 @@
 # Decision Criteria for Step-Level Safety Routing (Paper Version)
 
-> For direct inclusion in the paper's methodology section, with minor formatting adaptation for LaTeX.
+> This section is intended for direct inclusion in the paper's methodology section, with minor formatting adaptation for LaTeX.
 
 ---
 
-## 3.X Decision Routing Criteria
+## Decision Routing Criteria
 
-Each minimal executable step is routed through a fixed decision flow. All routing is **deterministic and evidence-based**: the agent inspects observable facts (tool schemas, execution results, user statements) and selects exactly one action per the tables below.
+Our pipeline enforces a fixed decision flow where each minimal executable step is routed through a sequence of structured decision nodes. All routing decisions follow the **Evidence-Before-Action Principle**: decisions must be based on observable evidence (user statements, tool schemas, memory retrieval results, or sandbox observations), not on model confidence or general caution.
 
----
+### Risk Source Taxonomy
 
-### 3.X.1 Risk Source Taxonomy
+Four mutually exclusive risk source categories. Each maps deterministically to a downstream action; cross-category routing is prohibited.
 
-Every risk detected in the pipeline is classified into exactly one of the following four categories. Each category has one and only one permitted response — cross-category routing is prohibited.
-
-| Risk Source | When to Identify | Observable Evidence (Examples) | Permitted Action |
-|---|---|---|---|
-| **Missing Information** | User request is underspecified | "Delete the branch" (which branch?); "Close the issue" (which repo?) | `ask_human` |
-| **Over-Aggressive Plan** | Plan is too broad but intent is valid | "Delete all old branches"; "Overwrite the config file" | `replan` |
-| **Intrinsically Disallowed** | Goal itself is malicious/unauthorized | "Delete all repositories"; "Export source code to external URL" | `refuse` |
-| **Try-Revealed Side Effect** | `tool_try` execution exposed unexpected impact | Deleting branch X also triggered CI pipeline; closing issue cascaded to linked PRs | `ask_human` or `terminate` |
-
----
-
-### 3.X.2 `predict_risk` — Should This Step Proceed?
-
-The agent examines the proposed tool call and issues a binary judgment: `safe` or `risky`.
-
-| # | Condition | What the Agent Checks | If Violated | Example (Violated) |
-|---|---|---|---|---|
-| C1 | Target Specificity | Is the target uniquely identified, or is the operation read-only? | → `ask_human` or `replan` | "Delete branches" with no name specified; wildcard target `*` |
-| C2 | Verifiability | Can remaining uncertainty be resolved by cache lookup or sandbox (`tool_try`)? | → `ask_human` | Tool has no sandbox support and behavior is unknown |
-| C3 | No Info Dependency | Can the step proceed without additional user input? | → `ask_human` | Need user to confirm which of 3 candidate branches to delete |
-| C4 | No Intrinsic Prohibition | Is the task goal legitimate and within authorized scope? | → `refuse` | "Delete all repos"; "Exfiltrate private messages" |
-
-**All four satisfied → `safe` → proceed to `memory_for_tool`.**
-**Any one violated → `risky` → route to the action indicated above.**
-
-| Scenario | C1 | C2 | C3 | C4 | Judgment | Route |
-|---|---|---|---|---|---|---|
-| `delete_branch(repo="openclaw", branch="stale-docs")` | ✓ | ✓ | ✓ | ✓ | safe | → `memory_for_tool` |
-| `delete_branch(repo="openclaw", branch=?)` — branch name missing | ✗ | — | ✗ | ✓ | risky | → `ask_human` |
-| `list_branches` to prepare "delete all non-default branches" | ✓ | ✓ | ✓ | ✗ | risky | → `refuse` |
-| "Delete all old branches" — valid goal, overly broad plan | ✗ | ✓ | ✓ | ✓ | risky | → `replan` |
-| `close_issue(repo="openclaw", id=42)` | ✓ | ✓ | ✓ | ✓ | safe | → `memory_for_tool` |
-
----
-
-### 3.X.3 `memory_for_tool` — Has This Exact Call Been Verified Before?
-
-Automatically triggered after `safe` judgment. Looks up the tool memory cache for a prior verified execution.
-
-| Tool Name Match? | Arguments Exactly Identical? | Result | Next Action |
-|---|---|---|---|
-| ✓ | ✓ | Cache **hit** | → Direct execution (skip `tool_try`) |
-| ✓ | ✗ (any argument differs) | Cache **miss** | → `tool_try` |
-| ✗ | — | Cache **miss** | → `tool_try` |
-
-| Cached Record | New Call | Match? | Why |
-|---|---|---|---|
-| `delete_branch(repo="X", branch="A")` | `delete_branch(repo="X", branch="A")` | ✓ Hit | Exact same tool + args |
-| `delete_branch(repo="X", branch="A")` | `delete_branch(repo="X", branch="B")` | ✗ Miss | `branch` differs |
-| `delete_branch(repo="X", branch="A")` | `close_issue(repo="X", id=1)` | ✗ Miss | Different tool |
-
----
-
-### 3.X.4 `tool_try` + `judge_try_result` — Speculative Execution and Judgment
-
-On cache miss: create Docker volume checkpoint → execute tool against real service → inspect result.
-
-| # | Condition | What the Agent Checks | Example (Satisfied ✓) | Example (Violated ✗) |
-|---|---|---|---|---|
-| T1 | Scope Containment | Did only the requested objects get affected? | Deleted only branch `stale-docs` | Deleted `stale-docs` and `stale-docs-v2` |
-| T2 | No Collateral Impact | Were objects outside the target set left untouched? | Other branches unchanged | Linked PR was auto-closed |
-| T3 | No Policy Violation | Were protected resources unaffected? | Default branch `main` untouched | Default branch protection was removed |
-| T4 | No Unexpected External Effect | No unintended outbound effects? | No webhook triggered | Webhook sent notification to external Slack |
-
-| T1 | T2 | T3 | T4 | Judgment | Next Action |
-|---|---|---|---|---|---|
-| ✓ | ✓ | ✓ | ✓ | safe | Commit checkpoint → record to tool memory → advance to next step |
-| ✗ | — | — | — | unsafe, user can clarify scope | Rollback checkpoint → `ask_human` |
-| — | — | ✗ | — | unsafe, unrecoverable | Rollback checkpoint → `terminate` |
-
----
-
-### 3.X.5 `ask_human` — When Must the Agent Escalate to the User?
-
-| # | Required Condition | What It Means | Counter-Example (Do NOT use `ask_human`) |
-|---|---|---|---|
-| 1 | Information gap exists that only the user can fill | Agent cannot infer the answer from schema, task, or history | Agent is merely unfamiliar with a tool → use `tool_try` instead |
-| 2 | Question is specific and actionable | "Which of these 3 branches should be deleted?" | "Are you sure you want to proceed?" (generic confirmation) |
-| 3 | Task becomes safely executable after user responds | The goal is legitimate; only details are missing | Goal is "delete all repos" → `refuse` instead |
-| 4 | No safer alternative the agent can choose autonomously | Agent has exhausted its own options | Plan is too broad but a narrower plan exists → `replan` instead |
-
----
-
-### 3.X.6 `replan` — When Should the Agent Replace the Current Step?
-
-| # | Required Condition | What It Means | Counter-Example (Do NOT use `replan`) |
-|---|---|---|---|
-| 1 | Risk comes from the **plan**, not from missing info or a bad goal | The intent is valid; the approach is too aggressive | User didn't specify which branch → `ask_human` instead |
-| 2 | Agent can propose a concrete safer alternative on its own | No user input needed to find the alternative | Only the user knows the correct target → `ask_human` instead |
-| 3 | Alternative achieves the same goal with reduced scope | Not a different goal, just a safer path | Alternative changes the user's intent → not valid |
-| 4 | Replan count for this step < $k=2$ | Prevents infinite replan loops | Already replanned twice → escalate to `ask_human` or `refuse` |
-
-| Original Step | Replanned Step | Why Replan |
+| Risk Source | Definition | Required Action |
 |---|---|---|
-| "Delete all old branches" | `list_branches` → enumerate candidates first | Broad → enumerate first |
-| "Overwrite config file" | `read_config` → then selective patch | Blind write → read-first |
-| `delete_branch(branch="*")` | `delete_branch(branch="stale-docs")` | Wildcard → named target |
+| **Missing Information** | The request lacks user-specific information (target identity, scope boundary, or authorization) that cannot be inferred from context | `ask_human` |
+| **Over-Aggressive Plan** | The proposed step is valid in intent but too broad or insufficiently controlled; a safer alternative exists | `replan` |
+| **Intrinsically Disallowed** | The task goal itself is malicious, unauthorized, or policy-violating; no additional information makes it acceptable | `refuse` |
+| **Try-Revealed Side Effect** | Speculative execution revealed effects outside the expected scope | `ask_human` or `terminate` |
+
+### `predict_risk`
+
+Binary risk assessment (`safe` / `risky`). A step is `safe` if and only if **all four** conditions hold:
+
+| Condition | Description | Violation → Risk Source |
+|---|---|---|
+| **(C1)** Target Specificity | The target object is uniquely identified (e.g., a named branch, a specific issue ID), or the operation is read-only with no side effects | Missing Information / Over-Aggressive Plan |
+| **(C2)** Verifiability | Residual uncertainty can be resolved through tool memory cache or speculative sandbox execution (`tool_try`) | — |
+| **(C3)** No Information Dependency | The step does not require additional user input to proceed | Missing Information |
+| **(C4)** No Intrinsic Prohibition | The task goal is legitimate and falls within the agent's authorized scope | Intrinsically Disallowed |
+
+**Boundary cases:**
+
+| Case | Judgment | Reason |
+|---|---|---|
+| Write operation on a uniquely identified target (e.g., `delete_branch(repo="openclaw", branch="stale-docs")`) | `safe` | C1–C4 satisfied; actual safety verified via `tool_try` |
+| Read-only step facilitating a downstream bulk-destructive goal (e.g., `list_branches` to prepare "delete all non-default branches") | `risky` | C4 violated at intent level |
+| Unfamiliar tool with well-defined schema and valid arguments | `safe` | C1–C4 satisfied; uncertainty resolved via C2 (`tool_try`) |
+
+###  `memory_for_tool`
+
+Automatically triggered after `predict_risk = safe`. Queries the tool memory for an exact-match prior verification.
+
+| Condition | Next Action |
+|---|---|
+| **Cache hit**: exact match on tool name AND complete argument object | Direct execution (bypass `tool_try`) |
+| **Cache miss**: any argument differs or no prior record | `tool_try` |
+
+No fuzzy matching, semantic similarity, or cross-argument transfer. A cached `delete_branch(repo="X", branch="A")` does **not** validate `delete_branch(repo="X", branch="B")`.
+
+###  `tool_try` + `judge_try_result`
+
+On cache miss, the system creates a Docker volume checkpoint and executes the tool call against the real service. The result is judged `safe` if and only if **all four** conditions hold:
+
+| Condition | Description |
+|---|---|
+| **(T1)** Scope Containment | All affected objects fall within the explicitly requested scope |
+| **(T2)** No Collateral Impact | No objects outside the target set were modified, deleted, or accessed |
+| **(T3)** No Policy Violation | No protected resources (default branches, system-critical data) were affected |
+| **(T4)** No Unexpected External Effect | No unintended outbound requests, permission changes, or cascading triggers were observed |
+
+**Routing after judgment:**
+
+| Judgment | Condition | Next Action |
+|---|---|---|
+| `safe` | T1–T4 all satisfied | Commit checkpoint, record to tool memory, advance |
+| `unsafe` | Scope/policy violation, user can clarify | Rollback checkpoint → `ask_human` |
+| `unsafe` | Unrecoverable risk, no human path | Rollback checkpoint → `terminate` |
+
+###  `ask_human`
+
+| Condition | Satisfied? |
+|---|---|
+| Safe completion depends on information only the user can provide | **Required** |
+| Missing info cannot be inferred from tool schema, task description, or execution history | **Required** |
+| The question posed is specific and actionable (not generic confirmation) | **Required** |
+| Task goal would become safely executable once user responds | **Required** |
+| Task goal is not intrinsically disallowed | **Required** |
+
+**Exclusion rules** (must NOT use `ask_human`):
+
+| Situation | Correct Action Instead |
+|---|---|
+| Model uncertainty about unfamiliar tools | `tool_try` |
+| Generic caution without evidence of a specific gap | Proceed as `safe` |
+| Over-aggressive plan with clear safer alternative | `replan` |
+| Intrinsically disallowed goal | `refuse` |
+
+###  `replan`
+
+| Condition | Satisfied? |
+|---|---|
+| Risk originates from the **plan**, not from missing user info or a prohibited goal | **Required** |
+| Agent can autonomously propose a concrete, safer alternative | **Required** |
+| Alternative achieves the same user goal with reduced scope or risk | **Required** |
+| Replan count for this step signature < $k=2$ | **Required** |
+
+**Replan cap enforcement:**
+
+| Replan Count | Next Action |
+|---|---|
+| < $k=2$ | `predict_risk` on replacement step |
+| $= k=2$ | Escalate to `ask_human` or `refuse` |
+
+**Typical replan patterns:**
+
+| Original Plan | Replanned Step | Rationale |
+|---|---|---|
+| Batch delete all old branches | `list_branches` to enumerate candidates | Broad → enumerate first |
+| Overwrite config file | Read current config, then selective patch | Write-first → read-first |
+| Wildcard target deletion | Single explicit-target deletion | Wildcard → named target |
+
+###  `refuse`
+
+Reserved for requests whose goals are **intrinsically disallowed**. Before issuing `refuse`, the agent must verify: *Would this task become acceptable if the user provided additional information, confirmed authorization, or the agent narrowed the scope?* If yes → use `ask_human` or `replan` instead.
+
+| Category | Examples |
+|---|---|
+| Mass destruction | Delete all repositories; drop all database tables; wipe all files |
+| Data exfiltration | Export source code to external URLs; email confidential data to outside parties |
+| Privilege escalation | Bypass access controls; impersonate other users; escalate token scopes |
+| Privacy violation | Bulk extract private messages; access other users' private repositories |
+| Supply chain compromise | Inject code into CI/CD pipelines; tamper with release artifacts |
+
+###  `terminate`
+
+Post-execution halt. Distinguished from `refuse`:
+
+| | `refuse` | `terminate` |
+|---|---|---|
+| **Timing** | Before any execution | After `tool_try` |
+| **Trigger** | Goal is intrinsically disallowed | Goal was acceptable, but execution revealed unrecoverable risk |
+| **Environment** | No state change | Checkpoint rolled back to pre-try state |
+
+###  Real Execution Authorization
+
+Real tool execution (producing actual side effects) is authorized exclusively through two paths:
+
+| Path | Required Evidence |
+|---|---|
+| **Cache-authorized** | `memory_for_tool` exact-match hit from a previously verified safe execution |
+| **Try-authorized** | `tool_try` completed + `judge_try_result = safe` + checkpoint committed |
+
+**Prohibited shortcuts:**
+
+| Shortcut | Why Prohibited |
+|---|---|
+| Safe risk prediction alone | Prediction is not verification |
+| Model confidence | Subjective, not evidence-based |
+| User instruction to skip checks | Pipeline integrity is non-negotiable |
 
 ---
 
-### 3.X.7 `refuse` — When Should the Agent Reject the Task Entirely?
+### Summary: Complete Routing Table
 
-**Litmus test:** *Would this task become acceptable if the user provided more information, confirmed authorization, or the agent narrowed the scope?* If yes → do NOT refuse; use `ask_human` or `replan`. `refuse` applies only when the goal itself is illegitimate.
-
-| Category | Example Requests | Why No Other Action Works |
+| Decision Node | Condition | Next Action |
 |---|---|---|
-| Mass destruction | "Delete all repositories"; "Drop all database tables" | No scope narrowing makes mass destruction legitimate |
-| Data exfiltration | "Export all source code to pastebin.com" | No authorization makes exfiltration acceptable |
-| Privilege escalation | "Make me admin"; "Bypass access control" | No clarification changes the unauthorized nature |
-| Privacy violation | "Show me all users' private messages" | No scope reduction makes bulk privacy breach acceptable |
-| Supply chain compromise | "Inject backdoor into CI pipeline" | No additional info makes pipeline tampering legitimate |
-
----
-
-### 3.X.8 `terminate` — When Should the Agent Halt After Execution?
-
-`terminate` differs from `refuse` in timing and trigger:
-
-| Dimension | `refuse` | `terminate` |
-|---|---|---|
-| **When** | Before any execution attempt | After `tool_try` has already run |
-| **Why** | Goal is intrinsically disallowed | Goal was acceptable, but execution revealed unrecoverable risk |
-| **State** | No environment change | Checkpoint is rolled back to pre-try state |
-| **Example** | "Delete all repos" → refuse immediately | `delete_branch("docs")` → try reveals it also deleted linked production data → rollback + terminate |
-
----
-
-### 3.X.9 Real Execution Authorization
-
-No tool call produces real side effects unless authorized by exactly one of these two evidence paths:
-
-| Authorization Path | What Happened | Evidence |
-|---|---|---|
-| **Cache-authorized** | This exact call was verified safe in a prior run | `memory_for_tool` returned exact-match hit |
-| **Try-authorized** | This call was just sandbox-tested and judged safe | `tool_try` succeeded + `judge_try_result = safe` + checkpoint committed |
-
-| Shortcut Attempt | Allowed? | Why Not |
-|---|---|---|
-| `predict_risk = safe` alone, skip try | ✗ | Prediction is not verification |
-| High model confidence, skip try | ✗ | Confidence is subjective, not evidence |
-| User says "just do it", skip try | ✗ | Pipeline integrity is non-negotiable |
-
----
-
-### Complete Routing Table
-
-| Step | Decision Node | Condition | → Next Action |
-|---|---|---|---|
-| 1 | `predict_risk` | C1–C4 all ✓ | → `memory_for_tool` |
-| 1 | `predict_risk` | Missing information (C1/C3 ✗) | → `ask_human` |
-| 1 | `predict_risk` | Over-aggressive plan (C1 partial ✗) | → `replan` |
-| 1 | `predict_risk` | Intrinsically disallowed (C4 ✗) | → `refuse` |
-| 2 | `memory_for_tool` | Exact cache hit | → direct execution |
-| 2 | `memory_for_tool` | Cache miss | → `tool_try` |
-| 3 | `judge_try_result` | T1–T4 all ✓ | → commit, advance |
-| 3 | `judge_try_result` | Violation, user can clarify | → rollback, `ask_human` |
-| 3 | `judge_try_result` | Unrecoverable risk | → rollback, `terminate` |
-| 4 | Step completed | More steps in queue | → `predict_risk` (next step) |
-| 4 | Step completed | Queue empty | → done |
-| — | `replan` | Count < $k=2$ | → `predict_risk` (replacement) |
-| — | `replan` | Count $= k=2$ | → `ask_human` or `refuse` |
+| `predict_risk` | C1–C4 all satisfied | → `memory_for_tool` |
+| `predict_risk` | Missing information (C1 or C3 violated) | → `ask_human` |
+| `predict_risk` | Over-aggressive plan (C1 partially violated, safer alternative exists) | → `replan` |
+| `predict_risk` | Intrinsically disallowed (C4 violated) | → `refuse` |
+| `memory_for_tool` | Exact cache hit | → direct execution |
+| `memory_for_tool` | Cache miss | → `tool_try` |
+| `judge_try_result` | T1–T4 all satisfied | → commit checkpoint, advance |
+| `judge_try_result` | Scope/policy violation, user can clarify | → rollback, `ask_human` |
+| `judge_try_result` | Unrecoverable risk, no human path | → rollback, `terminate` |
+| Step completed | More steps in queue | → `predict_risk` (next step) |
+| Step completed | Queue empty, task fulfilled | → natural language reply (done) |
+| `replan` | Cap not reached, alternative exists | → `predict_risk` (replacement step) |
+| `replan` | Cap ($k=2$) reached | → `ask_human` or `refuse` |

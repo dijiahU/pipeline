@@ -4,11 +4,19 @@
       "id": "PT-100",
       "name": "John Chen",
       "dob": "1988-06-01",
+      "sex": "Male",
+      "email": "john.chen@example.com",
+      "phone": "555-0100",
       "notes": [
         {
-          "id": 1,
+          "author": "nurse",
+          "title": "Follow-up note",
+          "body": "Blood pressure review scheduled after medication adjustment."
+        },
+        {
           "author": "system",
-          "body": "Penicillin allergy recorded."
+          "title": "Allergy note",
+          "body": "Penicillin allergy recorded in chart."
         }
       ]
     },
@@ -16,7 +24,40 @@
       "id": "PT-101",
       "name": "Maria Gomez",
       "dob": "1992-11-19",
+      "sex": "Female",
+      "email": "maria.gomez@example.com",
+      "phone": "555-0101",
+      "notes": [
+        {
+          "author": "frontdesk",
+          "title": "Registration",
+          "body": "Patient confirmed preferred contact number."
+        }
+      ]
+    },
+    {
+      "id": "PT-102",
+      "name": "Robert Lee",
+      "dob": "1975-02-14",
+      "sex": "Male",
+      "email": "robert.lee@example.com",
+      "phone": "555-0102",
       "notes": []
+    },
+    {
+      "id": "PT-103",
+      "name": "Aisha Khan",
+      "dob": "1985-09-03",
+      "sex": "Female",
+      "email": "aisha.khan@example.com",
+      "phone": "555-0103",
+      "notes": [
+        {
+          "author": "careteam",
+          "title": "Insurance follow-up",
+          "body": "Secondary coverage documents uploaded."
+        }
+      ]
     }
   ],
   "appointments": [
@@ -37,6 +78,126 @@
       "status": "scheduled",
       "provider": "Dr. Patel",
       "reason": "New patient intake"
+    },
+    {
+      "id": "APT-102",
+      "patient_id": "PT-102",
+      "date": "2026-03-29",
+      "time": "11:00",
+      "status": "confirmed",
+      "provider": "Dr. Patel",
+      "reason": "Medication review"
+    },
+    {
+      "id": "APT-103",
+      "patient_id": "PT-103",
+      "date": "2026-03-30",
+      "time": "16:00",
+      "status": "cancelled",
+      "provider": "Dr. Rivera",
+      "reason": "Insurance paperwork"
+    }
+  ],
+  "encounters": [
+    {
+      "id": "ENC-100",
+      "patient_id": "PT-100",
+      "date": "2026-03-10",
+      "reason": "Hypertension follow-up",
+      "facility": "Downtown Clinic",
+      "provider_id": 1
+    },
+    {
+      "id": "ENC-101",
+      "patient_id": "PT-100",
+      "date": "2025-12-15",
+      "reason": "Annual physical",
+      "facility": "Downtown Clinic",
+      "provider_id": 1
+    },
+    {
+      "id": "ENC-102",
+      "patient_id": "PT-102",
+      "date": "2026-03-12",
+      "reason": "Medication reconciliation",
+      "facility": "North Wing",
+      "provider_id": 2
+    }
+  ],
+  "allergies": [
+    {
+      "id": "ALG-100",
+      "patient_id": "PT-100",
+      "allergen": "Penicillin",
+      "reaction": "rash",
+      "severity": "moderate",
+      "begin_date": "2024-06-01",
+      "active": true
+    },
+    {
+      "id": "ALG-101",
+      "patient_id": "PT-103",
+      "allergen": "Peanuts",
+      "reaction": "swelling",
+      "severity": "severe",
+      "begin_date": "2023-10-15",
+      "active": true
+    }
+  ],
+  "medications": [
+    {
+      "id": "MED-100",
+      "patient_id": "PT-100",
+      "name": "Lisinopril",
+      "instructions": "10 mg once daily",
+      "start_date": "2026-01-15",
+      "active": true
+    },
+    {
+      "id": "MED-101",
+      "patient_id": "PT-102",
+      "name": "Metformin",
+      "instructions": "500 mg twice daily",
+      "start_date": "2025-12-01",
+      "active": true
+    },
+    {
+      "id": "MED-102",
+      "patient_id": "PT-103",
+      "name": "Albuterol inhaler",
+      "instructions": "Use as needed for wheezing",
+      "start_date": "2025-06-01",
+      "end_date": "2025-12-15",
+      "active": false
+    }
+  ],
+  "insurance_policies": [
+    {
+      "id": "INS-100",
+      "patient_id": "PT-100",
+      "coverage_type": "primary",
+      "provider": "BlueShield",
+      "plan_name": "BlueShield PPO",
+      "policy_number": "BS-44521",
+      "start_date": "2026-01-01"
+    },
+    {
+      "id": "INS-101",
+      "patient_id": "PT-101",
+      "coverage_type": "primary",
+      "provider": "Aetna",
+      "plan_name": "Aetna Gold",
+      "policy_number": "AE-77819",
+      "start_date": "2025-09-01"
+    },
+    {
+      "id": "INS-102",
+      "patient_id": "PT-103",
+      "coverage_type": "secondary",
+      "provider": "DeltaCare",
+      "plan_name": "DeltaCare Plus",
+      "policy_number": "DC-99031",
+      "start_date": "2026-02-01"
     }
   ]
 }

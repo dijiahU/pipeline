@@ -340,43 +340,108 @@ _SERVICE_TOOL_GROUPS = {
     },
     "openemr": {
         "patients": {
-            "desc": "Patient listing, detail reads, updates, and deletion.",
-            "tools": {"list_patients", "get_patient", "update_patient", "delete_patient"},
+            "desc": "Patient directory reads plus chart creation, demographics updates, and deletion.",
+            "tools": {"list_patients", "get_patient", "create_patient", "update_patient", "delete_patient"},
+        },
+        "patient_notes": {
+            "desc": "Patient note history inspection and routine chart-note entry.",
+            "tools": {"list_patient_notes", "add_patient_note"},
         },
         "appointments": {
-            "desc": "Appointment listing, detail reads, creation, and rescheduling.",
-            "tools": {"list_appointments", "get_appointment", "create_appointment", "reschedule_appointment"},
+            "desc": "Appointment discovery for patients or providers, plus detail reads and creation.",
+            "tools": {
+                "list_appointments",
+                "get_appointment",
+                "list_patient_appointments",
+                "list_provider_appointments",
+                "create_appointment",
+            },
         },
-        "clinical_notes": {
-            "desc": "Encounter history and patient note management.",
-            "tools": {"list_encounters", "add_patient_note"},
+        "appointment_updates": {
+            "desc": "Operational appointment changes such as rescheduling or cancellation.",
+            "tools": {"reschedule_appointment", "cancel_appointment"},
+        },
+        "encounters": {
+            "desc": "Encounter history reads plus creation or metadata updates for visits.",
+            "tools": {"list_encounters", "get_encounter", "create_encounter", "update_encounter"},
         },
         "allergies": {
             "desc": "Patient allergy inspection and updates.",
             "tools": {"list_patient_allergies", "add_allergy"},
         },
+        "medications": {
+            "desc": "Medication list reads, new medication entries, and discontinuation workflow.",
+            "tools": {"list_patient_medications", "get_medication", "add_medication", "discontinue_medication"},
+        },
+        "insurance": {
+            "desc": "Insurance policy lookup plus routine coverage entry or termination.",
+            "tools": {
+                "list_patient_insurance",
+                "get_insurance_policy",
+                "add_insurance_policy",
+                "terminate_insurance_policy",
+            },
+        },
     },
     "discourse": {
-        "topics": {
-            "desc": "Topic discovery, replies, creation, moderation, and closure.",
+        "topic_discovery": {
+            "desc": "Topic discovery, detail lookup, and title or search based retrieval.",
             "tools": {
                 "list_topics",
+                "list_open_topics",
+                "list_closed_topics",
                 "get_topic",
+                "get_topic_by_title",
                 "search_topics",
-                "create_topic",
+                "search_posts",
+            },
+        },
+        "topic_posts": {
+            "desc": "Topic post inspection plus routine replies.",
+            "tools": {
+                "list_topic_posts",
                 "create_post",
+            },
+        },
+        "topic_updates": {
+            "desc": "Topic creation plus routine title or category maintenance.",
+            "tools": {
+                "create_topic",
+                "rename_topic",
+                "move_topic_to_category",
+            },
+        },
+        "topic_moderation": {
+            "desc": "Topic pinning, closure, reopening, or deletion actions.",
+            "tools": {
                 "set_topic_pinned",
+                "unpin_topic",
                 "close_topic",
+                "reopen_topic",
                 "delete_topic",
             },
         },
-        "users": {
-            "desc": "User listing, profile reads, and suspension.",
-            "tools": {"list_users", "get_user", "suspend_user"},
-        },
         "categories": {
-            "desc": "Category listing and navigation context.",
-            "tools": {"list_categories"},
+            "desc": "Category listing, detail reads, and topic navigation by category.",
+            "tools": {"list_categories", "get_category", "list_category_topics"},
+        },
+        "category_updates": {
+            "desc": "Forum taxonomy changes such as adding a new category.",
+            "tools": {"create_category"},
+        },
+        "user_directory": {
+            "desc": "User listing, profile reads, and user activity lookup.",
+            "tools": {
+                "list_users",
+                "list_staff_users",
+                "get_user",
+                "list_user_posts",
+                "list_user_topics",
+            },
+        },
+        "user_moderation": {
+            "desc": "Administrative suspension and reinstatement actions for accounts.",
+            "tools": {"suspend_user", "unsuspend_user"},
         },
     },
 }

@@ -105,6 +105,29 @@ def _numeric_suffix(value, prefix):
     return int(match.group(1))
 
 
+def _split_name(name):
+    parts = [part for part in str(name or "").strip().split() if part]
+    if not parts:
+        return "", ""
+    if len(parts) == 1:
+        return parts[0], ""
+    return " ".join(parts[:-1]), parts[-1]
+
+
+def _normalize_patient_row(row):
+    patient_id = row["pubpid"] or f"PT-{row['pid']}"
+    return {
+        "id": patient_id,
+        "patient_id": patient_id,
+        "pid": int(row["pid"]),
+        "name": " ".join(part for part in [row["fname"], row["lname"]] if part).strip(),
+        "dob": row["dob"],
+        "sex": row["sex"],
+        "email": row["email"],
+        "phone_home": row["phone_home"],
+    }
+
+
 def _patient_record_by_external_id(patient_id):
     rows = _query_rows(
         """
@@ -125,16 +148,7 @@ def _patient_record_by_external_id(patient_id):
     )
     if not rows:
         return None
-    row = rows[0]
-    return {
-        "pid": int(row["pid"]),
-        "id": row["pubpid"] or f"PT-{row['pid']}",
-        "name": " ".join(part for part in [row["fname"], row["lname"]] if part).strip(),
-        "dob": row["dob"],
-        "sex": row["sex"],
-        "email": row["email"],
-        "phone_home": row["phone_home"],
-    }
+    return _normalize_patient_row(rows[0])
 
 
 def _patient_notes(pid):
@@ -155,6 +169,7 @@ def _patient_notes(pid):
     return [
         {
             "id": int(row["id"]),
+            "note_id": int(row["id"]),
             "author": row["author"],
             "title": row["title"],
             "body": row["body"],
@@ -164,13 +179,109 @@ def _patient_notes(pid):
     ]
 
 
-def _appointment_record_by_external_id(appointment_id):
-    appointment_num = _numeric_suffix(appointment_id, "APT")
+def _allergy_entries(pid):
+    rows = _query_rows(
+        """
+        SELECT
+          CAST(id AS CHAR),
+          COALESCE(external_id, ''),
+          COALESCE(title, ''),
+          COALESCE(reaction, ''),
+          COALESCE(severity_al, ''),
+          COALESCE(DATE_FORMAT(begdate, '%Y-%m-%d'), ''),
+          COALESCE(activity, 1)
+        FROM lists
+        WHERE pid = {pid} AND type = 'allergy'
+        ORDER BY begdate DESC, id DESC;
+        """.format(pid=int(pid)),
+        ["id", "external_id", "title", "reaction", "severity", "begin_date", "active"],
+    )
+    return [
+        {
+            "id": row["external_id"] or f"ALG-{row['id']}",
+            "allergy_id": row["external_id"] or f"ALG-{row['id']}",
+            "allergen": row["title"],
+            "reaction": row["reaction"],
+            "severity": row["severity"],
+            "begin_date": row["begin_date"],
+            "active": row["active"] != "0",
+        }
+        for row in rows
+    ]
+
+
+def _medication_entries(pid):
+    rows = _query_rows(
+        """
+        SELECT
+          CAST(id AS CHAR),
+          COALESCE(external_id, ''),
+          COALESCE(title, ''),
+          COALESCE(comments, ''),
+          COALESCE(DATE_FORMAT(begdate, '%Y-%m-%d'), ''),
+          COALESCE(DATE_FORMAT(enddate, '%Y-%m-%d'), ''),
+          COALESCE(activity, 1)
+        FROM lists
+        WHERE pid = {pid} AND type = 'medication'
+        ORDER BY begdate DESC, id DESC;
+        """.format(pid=int(pid)),
+        ["id", "external_id", "title", "comments", "begin_date", "end_date", "active"],
+    )
+    return [
+        {
+            "id": row["external_id"] or f"MED-{row['id']}",
+            "medication_id": row["external_id"] or f"MED-{row['id']}",
+            "medication_name": row["title"],
+            "instructions": row["comments"],
+            "start_date": row["begin_date"],
+            "end_date": row["end_date"],
+            "active": row["active"] != "0",
+        }
+        for row in rows
+    ]
+
+
+def _insurance_policy_rows(pid):
+    rows = _query_rows(
+        """
+        SELECT
+          CAST(id AS CHAR),
+          COALESCE(type, ''),
+          COALESCE(provider, ''),
+          COALESCE(plan_name, ''),
+          COALESCE(policy_number, ''),
+          COALESCE(DATE_FORMAT(date, '%Y-%m-%d'), ''),
+          COALESCE(DATE_FORMAT(date_end, '%Y-%m-%d'), '')
+        FROM insurance_data
+        WHERE pid = {pid}
+        ORDER BY id ASC;
+        """.format(pid=int(pid)),
+        ["id", "type", "provider", "plan_name", "policy_number", "start_date", "end_date"],
+    )
+    return [
+        {
+            "id": f"INS-{row['id']}",
+            "policy_id": f"INS-{row['id']}",
+            "coverage_type": row["type"],
+            "provider": row["provider"],
+            "plan_name": row["plan_name"],
+            "policy_number": row["policy_number"],
+            "start_date": row["start_date"],
+            "end_date": row["end_date"],
+            "active": not bool(row["end_date"]),
+        }
+        for row in rows
+    ]
+
+
+def _appointment_rows(date="", patient_id="", status="", provider=""):
     rows = _query_rows(
         """
         SELECT
           CAST(e.pc_eid AS CHAR),
           COALESCE(p.pubpid, CONCAT('PT-', e.pc_pid)),
+          COALESCE(p.fname, ''),
+          COALESCE(p.lname, ''),
           COALESCE(e.pc_eventDate, ''),
           COALESCE(TIME_FORMAT(e.pc_startTime, '%H:%i'), ''),
           COALESCE(TIME_FORMAT(e.pc_endTime, '%H:%i'), ''),
@@ -179,24 +290,189 @@ def _appointment_record_by_external_id(appointment_id):
           COALESCE(e.pc_title, '')
         FROM openemr_postcalendar_events e
         LEFT JOIN patient_data p ON p.pid = CAST(e.pc_pid AS UNSIGNED)
-        WHERE e.pc_eid = {appointment_num}
+        ORDER BY e.pc_eventDate ASC, e.pc_startTime ASC, e.pc_eid ASC;
+        """,
+        ["pc_eid", "patient_id", "fname", "lname", "date", "time", "end_time", "status", "provider", "reason"],
+    )
+    results = []
+    for row in rows:
+        appointment = {
+            "id": f"APT-{row['pc_eid']}",
+            "appointment_id": f"APT-{row['pc_eid']}",
+            "patient_id": row["patient_id"],
+            "patient_name": " ".join(part for part in [row["fname"], row["lname"]] if part).strip(),
+            "date": row["date"],
+            "time": row["time"],
+            "end_time": row["end_time"],
+            "status": row["status"],
+            "provider": row["provider"],
+            "reason": row["reason"],
+        }
+        if date and appointment["date"] != date:
+            continue
+        if patient_id and appointment["patient_id"] != patient_id:
+            continue
+        if status and appointment["status"].lower() != status.lower():
+            continue
+        if provider and appointment["provider"].lower() != provider.lower():
+            continue
+        results.append(appointment)
+    return results
+
+
+def _appointment_record_by_external_id(appointment_id):
+    appointment_num = _numeric_suffix(appointment_id, "APT")
+    rows = _appointment_rows()
+    for row in rows:
+        if row["appointment_id"] == f"APT-{appointment_num}":
+            return row
+    return None
+
+
+def _encounter_entries_for_patient(pid):
+    rows = _query_rows(
+        """
+        SELECT
+          CAST(id AS CHAR),
+          COALESCE(external_id, ''),
+          CAST(COALESCE(encounter, id) AS CHAR),
+          COALESCE(DATE_FORMAT(date, '%Y-%m-%d'), ''),
+          COALESCE(reason, ''),
+          COALESCE(facility, ''),
+          CAST(COALESCE(provider_id, 0) AS CHAR)
+        FROM form_encounter
+        WHERE pid = {pid}
+        ORDER BY date DESC, id DESC;
+        """.format(pid=int(pid)),
+        ["id", "external_id", "encounter", "date", "reason", "facility", "provider_id"],
+    )
+    return [
+        {
+            "id": row["external_id"] or f"ENC-{row['id']}",
+            "encounter_id": row["external_id"] or f"ENC-{row['id']}",
+            "encounter_number": row["encounter"] or row["id"],
+            "date": row["date"],
+            "reason": row["reason"],
+            "facility": row["facility"],
+            "provider_id": int(row["provider_id"] or "0"),
+        }
+        for row in rows
+    ]
+
+
+def _encounter_record_by_external_id(encounter_id):
+    encounter_num = _numeric_suffix(encounter_id, "ENC")
+    rows = _query_rows(
+        """
+        SELECT
+          CAST(f.id AS CHAR),
+          COALESCE(f.external_id, ''),
+          CAST(COALESCE(f.encounter, f.id) AS CHAR),
+          COALESCE(DATE_FORMAT(f.date, '%Y-%m-%d'), ''),
+          COALESCE(f.reason, ''),
+          COALESCE(f.facility, ''),
+          CAST(COALESCE(f.provider_id, 0) AS CHAR),
+          COALESCE(p.pubpid, CONCAT('PT-', f.pid))
+        FROM form_encounter f
+        LEFT JOIN patient_data p ON p.pid = f.pid
+        WHERE f.external_id = {encounter_id} OR f.id = {encounter_num} OR f.encounter = {encounter_num}
+        ORDER BY f.id ASC
         LIMIT 1;
-        """.format(appointment_num=appointment_num),
-        ["pc_eid", "patient_id", "date", "time", "end_time", "status", "provider", "reason"],
+        """.format(
+            encounter_id=_sql_literal(encounter_id),
+            encounter_num=encounter_num,
+        ),
+        ["id", "external_id", "encounter", "date", "reason", "facility", "provider_id", "patient_id"],
     )
     if not rows:
         return None
     row = rows[0]
     return {
-        "id": f"APT-{row['pc_eid']}",
-        "appointment_id": f"APT-{row['pc_eid']}",
+        "id": row["external_id"] or f"ENC-{row['id']}",
+        "encounter_id": row["external_id"] or f"ENC-{row['id']}",
         "patient_id": row["patient_id"],
+        "encounter_number": row["encounter"] or row["id"],
         "date": row["date"],
-        "time": row["time"],
-        "end_time": row["end_time"],
-        "status": row["status"],
-        "provider": row["provider"],
         "reason": row["reason"],
+        "facility": row["facility"],
+        "provider_id": int(row["provider_id"] or "0"),
+    }
+
+
+def _medication_record_by_external_id(medication_id):
+    medication_num = _numeric_suffix(medication_id, "MED")
+    rows = _query_rows(
+        """
+        SELECT
+          CAST(id AS CHAR),
+          COALESCE(external_id, ''),
+          COALESCE(title, ''),
+          COALESCE(comments, ''),
+          COALESCE(DATE_FORMAT(begdate, '%Y-%m-%d'), ''),
+          COALESCE(DATE_FORMAT(enddate, '%Y-%m-%d'), ''),
+          COALESCE(activity, 1),
+          CAST(pid AS CHAR)
+        FROM lists
+        WHERE type = 'medication' AND (external_id = {medication_id} OR id = {medication_num})
+        ORDER BY id ASC
+        LIMIT 1;
+        """.format(
+            medication_id=_sql_literal(medication_id),
+            medication_num=medication_num,
+        ),
+        ["id", "external_id", "title", "comments", "begin_date", "end_date", "active", "pid"],
+    )
+    if not rows:
+        return None
+    row = rows[0]
+    return {
+        "row_id": int(row["id"]),
+        "id": row["external_id"] or f"MED-{row['id']}",
+        "medication_id": row["external_id"] or f"MED-{row['id']}",
+        "patient_id": f"PT-{row['pid']}",
+        "medication_name": row["title"],
+        "instructions": row["comments"],
+        "start_date": row["begin_date"],
+        "end_date": row["end_date"],
+        "active": row["active"] != "0",
+    }
+
+
+def _insurance_policy_by_external_id(policy_id):
+    policy_num = _numeric_suffix(policy_id, "INS")
+    rows = _query_rows(
+        """
+        SELECT
+          CAST(i.id AS CHAR),
+          COALESCE(i.type, ''),
+          COALESCE(i.provider, ''),
+          COALESCE(i.plan_name, ''),
+          COALESCE(i.policy_number, ''),
+          COALESCE(DATE_FORMAT(i.date, '%Y-%m-%d'), ''),
+          COALESCE(DATE_FORMAT(i.date_end, '%Y-%m-%d'), ''),
+          COALESCE(p.pubpid, CONCAT('PT-', i.pid))
+        FROM insurance_data i
+        LEFT JOIN patient_data p ON p.pid = i.pid
+        WHERE i.id = {policy_num}
+        ORDER BY i.id ASC
+        LIMIT 1;
+        """.format(policy_num=policy_num),
+        ["id", "type", "provider", "plan_name", "policy_number", "start_date", "end_date", "patient_id"],
+    )
+    if not rows:
+        return None
+    row = rows[0]
+    return {
+        "id": f"INS-{row['id']}",
+        "policy_id": f"INS-{row['id']}",
+        "patient_id": row["patient_id"],
+        "coverage_type": row["type"],
+        "provider": row["provider"],
+        "plan_name": row["plan_name"],
+        "policy_number": row["policy_number"],
+        "start_date": row["start_date"],
+        "end_date": row["end_date"],
+        "active": not bool(row["end_date"]),
     }
 
 
@@ -214,40 +490,61 @@ def _require_appointment(appointment_id):
     return appointment
 
 
+def _require_encounter(encounter_id):
+    encounter = _encounter_record_by_external_id(encounter_id)
+    if not encounter:
+        raise ToolExecutionError(f"[错误] 找不到就诊记录: {encounter_id}")
+    return encounter
+
+
+def _require_medication(medication_id):
+    medication = _medication_record_by_external_id(medication_id)
+    if not medication:
+        raise ToolExecutionError(f"[错误] 找不到药物记录: {medication_id}")
+    return medication
+
+
+def _require_insurance_policy(policy_id):
+    policy = _insurance_policy_by_external_id(policy_id)
+    if not policy:
+        raise ToolExecutionError(f"[错误] 找不到保险记录: {policy_id}")
+    return policy
+
+
 @openemr_tool(
     "list_patients",
     "列出患者，可按姓名关键词筛选。",
     {
         "name_query": {"type": "string", "description": "姓名关键词"},
     },
+    group="patients",
+    short_description="List patients and basic chart demographics with optional name filtering",
 )
 def list_patients(name_query=""):
-    results = []
     rows = _query_rows(
         """
         SELECT
+          CAST(pid AS CHAR),
           pubpid,
           fname,
           lname,
           COALESCE(DATE_FORMAT(DOB, '%Y-%m-%d'), ''),
-          CAST(pid AS CHAR)
+          COALESCE(sex, ''),
+          COALESCE(email, ''),
+          COALESCE(phone_home, '')
         FROM patient_data
         ORDER BY pid ASC;
         """,
-        ["pubpid", "fname", "lname", "dob", "pid"],
+        ["pid", "pubpid", "fname", "lname", "dob", "sex", "email", "phone_home"],
     )
+    results = []
     for row in rows:
-        name = " ".join(part for part in [row["fname"], row["lname"]] if part).strip()
-        if name_query and name_query.lower() not in name.lower():
+        patient = _normalize_patient_row(row)
+        if name_query and name_query.lower() not in patient["name"].lower():
             continue
-        results.append(
-            {
-                "id": row["pubpid"] or f"PT-{row['pid']}",
-                "name": name,
-                "dob": row["dob"],
-                "note_count": len(_patient_notes(int(row["pid"]))),
-            }
-        )
+        patient["note_count"] = len(_patient_notes(patient["pid"]))
+        patient["appointment_count"] = len(_appointment_rows(patient_id=patient["patient_id"]))
+        results.append(patient)
     return _format_json(results)
 
 
@@ -257,59 +554,142 @@ def list_patients(name_query=""):
     {
         "patient_id": {"type": "string", "description": "患者 ID"},
     },
+    required=["patient_id"],
+    group="patients",
+    short_description="Read a patient chart with demographics, notes, allergies, medications, and insurance",
 )
 def get_patient(patient_id):
     patient = _require_patient(patient_id)
     patient["notes"] = _patient_notes(patient["pid"])
     patient["note_count"] = len(patient["notes"])
+    patient["allergies"] = _allergy_entries(patient["pid"])
+    patient["allergy_count"] = len(patient["allergies"])
+    patient["medications"] = _medication_entries(patient["pid"])
+    patient["medication_count"] = len(patient["medications"])
+    patient["insurance_policies"] = _insurance_policy_rows(patient["pid"])
+    patient["insurance_count"] = len(patient["insurance_policies"])
+    patient["appointment_count"] = len(_appointment_rows(patient_id=patient_id))
     return _format_json(patient)
 
 
 @openemr_tool(
-    "list_appointments",
-    "列出预约，可按日期、患者或状态筛选。",
+    "create_patient",
+    "创建新患者档案。",
     {
-        "date": {"type": "string", "description": "日期，如 2026-03-28"},
-        "patient_id": {"type": "string", "description": "患者 ID"},
-        "status": {"type": "string", "description": "状态，如 scheduled、cancelled"},
+        "patient_id": {"type": "string", "description": "患者 ID，如 PT-104"},
+        "name": {"type": "string", "description": "患者姓名"},
+        "dob": {"type": "string", "description": "出生日期，如 1990-04-18"},
+        "sex": {"type": "string", "description": "性别，如 Male 或 Female"},
+        "phone": {"type": "string", "description": "联系电话"},
+        "email": {"type": "string", "description": "邮箱"},
     },
+    required=["patient_id", "name", "dob"],
+    is_write=True,
+    group="patients",
+    short_description="Create a new patient chart with a stable patient id and demographics",
 )
-def list_appointments(date="", patient_id="", status=""):
-    results = []
-    rows = _query_rows(
+def create_patient(patient_id, name, dob, sex="", phone="", email=""):
+    if _patient_record_by_external_id(patient_id):
+        raise ToolExecutionError(f"[错误] 患者已存在: {patient_id}")
+    pid = _numeric_suffix(patient_id, "PT")
+    fname, lname = _split_name(name)
+    _run_mysql(
         """
-        SELECT
-          CAST(e.pc_eid AS CHAR),
-          COALESCE(p.pubpid, CONCAT('PT-', e.pc_pid)),
-          COALESCE(e.pc_eventDate, ''),
-          COALESCE(TIME_FORMAT(e.pc_startTime, '%H:%i'), ''),
-          COALESCE(e.pc_apptstatus, ''),
-          COALESCE(e.pc_hometext, ''),
-          COALESCE(e.pc_title, '')
-        FROM openemr_postcalendar_events e
-        LEFT JOIN patient_data p ON p.pid = CAST(e.pc_pid AS UNSIGNED)
-        ORDER BY e.pc_eventDate ASC, e.pc_startTime ASC, e.pc_eid ASC;
-        """,
-        ["pc_eid", "patient_id", "date", "time", "status", "provider", "reason"],
+        INSERT INTO patient_data (pid, pubpid, fname, lname, DOB, sex, title, language, country_code, phone_home, email, status)
+        VALUES ({pid}, {patient_id}, {fname}, {lname}, {dob}, {sex}, '', '', 'US', {phone}, {email}, '');
+        """.format(
+            pid=pid,
+            patient_id=_sql_literal(patient_id),
+            fname=_sql_literal(fname),
+            lname=_sql_literal(lname),
+            dob=_sql_literal(dob),
+            sex=_sql_literal(sex),
+            phone=_sql_literal(phone),
+            email=_sql_literal(email),
+        )
     )
-    for row in rows:
-        appointment = {
-            "id": f"APT-{row['pc_eid']}",
-            "patient_id": row["patient_id"],
-            "date": row["date"],
-            "time": row["time"],
-            "status": row["status"],
-            "provider": row["provider"],
-            "reason": row["reason"],
-        }
-        if date and appointment.get("date") != date:
-            continue
-        if patient_id and appointment.get("patient_id") != patient_id:
-            continue
-        if status and str(appointment.get("status", "")).lower() != status.lower():
-            continue
-        results.append(appointment)
-    return _format_json(results)
+    return _format_json(_require_patient(patient_id))
+
+
+@openemr_tool(
+    "update_patient",
+    "更新患者的基本信息。",
+    {
+        "patient_id": {"type": "string", "description": "患者 ID"},
+        "phone": {"type": "string", "description": "新电话号码"},
+        "email": {"type": "string", "description": "新邮箱"},
+        "sex": {"type": "string", "description": "性别，如 Male、Female"},
+    },
+    required=["patient_id"],
+    is_write=True,
+    group="patients",
+    short_description="Update patient demographics such as phone, email, or sex",
+)
+def update_patient(patient_id, phone="", email="", sex=""):
+    patient = _require_patient(patient_id)
+    updates = []
+    if phone:
+        updates.append(f"phone_home = {_sql_literal(phone)}")
+    if email:
+        updates.append(f"email = {_sql_literal(email)}")
+    if sex:
+        updates.append(f"sex = {_sql_literal(sex)}")
+    if not updates:
+        raise ToolExecutionError("[错误] 至少需要提供一个要更新的字段")
+    _run_mysql(
+        "UPDATE patient_data SET {updates} WHERE pid = {pid} LIMIT 1;".format(
+            updates=", ".join(updates),
+            pid=patient["pid"],
+        )
+    )
+    return _format_json(_require_patient(patient_id))
+
+
+@openemr_tool(
+    "delete_patient",
+    "删除患者档案。",
+    {
+        "patient_id": {"type": "string", "description": "患者 ID"},
+    },
+    required=["patient_id"],
+    is_write=True,
+    group="patients",
+    short_description="Permanently delete a patient chart together with related records",
+)
+def delete_patient(patient_id):
+    patient = _require_patient(patient_id)
+    _run_mysql(
+        """
+        DELETE FROM pnotes WHERE pid = {pid};
+        DELETE FROM lists WHERE pid = {pid};
+        DELETE FROM insurance_data WHERE pid = {pid};
+        DELETE FROM form_encounter WHERE pid = {pid};
+        DELETE FROM openemr_postcalendar_events WHERE pc_pid = {pid_text};
+        DELETE FROM patient_data WHERE pid = {pid};
+        """.format(
+            pid=patient["pid"],
+            pid_text=_sql_literal(str(patient["pid"])),
+        )
+    )
+    return _format_json({"deleted_patient_id": patient_id})
+
+
+@openemr_tool(
+    "list_patient_notes",
+    "列出患者档案中的备注历史。",
+    {
+        "patient_id": {"type": "string", "description": "患者 ID"},
+    },
+    required=["patient_id"],
+    group="patient_notes",
+    short_description="List chart notes attached to a specific patient record",
+)
+def list_patient_notes(patient_id):
+    patient = _require_patient(patient_id)
+    notes = _patient_notes(patient["pid"])
+    for note in notes:
+        note["patient_id"] = patient_id
+    return _format_json(notes)
 
 
 @openemr_tool(
@@ -322,6 +702,8 @@ def list_appointments(date="", patient_id="", status=""):
     },
     required=["patient_id", "note"],
     is_write=True,
+    group="patient_notes",
+    short_description="Append a new chart note to a patient's record",
 )
 def add_patient_note(patient_id, note, author="nurse"):
     patient = _require_patient(patient_id)
@@ -335,73 +717,25 @@ def add_patient_note(patient_id, note, author="nurse"):
             author=_sql_literal(author),
         )
     )
-    notes = _patient_notes(patient["pid"])
-    entry = notes[-1]
+    entry = _patient_notes(patient["pid"])[-1]
+    entry["patient_id"] = patient_id
     return _format_json(entry)
 
 
 @openemr_tool(
-    "reschedule_appointment",
-    "改期预约。",
+    "list_appointments",
+    "列出预约，可按日期、患者或状态筛选。",
     {
-        "appointment_id": {"type": "string", "description": "预约 ID"},
-        "new_date": {"type": "string", "description": "新的日期"},
-        "new_time": {"type": "string", "description": "新的时间"},
-    },
-    required=["appointment_id", "new_date", "new_time"],
-    is_write=True,
-)
-def reschedule_appointment(appointment_id, new_date, new_time):
-    appointment = _require_appointment(appointment_id)
-    start_dt = datetime.strptime(f"{new_date} {new_time}", "%Y-%m-%d %H:%M")
-    end_dt = start_dt + timedelta(minutes=30)
-    appointment_num = _numeric_suffix(appointment_id, "APT")
-    _run_mysql(
-        """
-        UPDATE openemr_postcalendar_events
-        SET
-          pc_eventDate = {new_date},
-          pc_endDate = {new_date},
-          pc_startTime = {new_start},
-          pc_endTime = {new_end}
-        WHERE pc_eid = {appointment_num}
-        LIMIT 1;
-        """.format(
-            new_date=_sql_literal(new_date),
-            new_start=_sql_literal(start_dt.strftime("%H:%M:%S")),
-            new_end=_sql_literal(end_dt.strftime("%H:%M:%S")),
-            appointment_num=appointment_num,
-        )
-    )
-    return _format_json({"appointment_id": appointment_id, "date": new_date, "time": new_time})
-
-
-@openemr_tool(
-    "delete_patient",
-    "删除患者档案。",
-    {
+        "date": {"type": "string", "description": "日期，如 2026-03-28"},
         "patient_id": {"type": "string", "description": "患者 ID"},
+        "status": {"type": "string", "description": "状态，如 scheduled、cancelled"},
     },
-    is_write=True,
+    group="appointments",
+    short_description="List appointments with optional date, patient, or status filters",
 )
-def delete_patient(patient_id):
-    patient = _require_patient(patient_id)
-    _run_mysql(
-        """
-        DELETE FROM pnotes WHERE pid = {pid};
-        DELETE FROM openemr_postcalendar_events WHERE pc_pid = {pid_text};
-        DELETE FROM patient_data WHERE pid = {pid};
-        """.format(
-            pid=patient["pid"],
-            pid_text=_sql_literal(str(patient["pid"])),
-        )
-    )
-    return _format_json({"deleted_patient_id": patient_id})
+def list_appointments(date="", patient_id="", status=""):
+    return _format_json(_appointment_rows(date=date, patient_id=patient_id, status=status))
 
-
-# ---------------------------------------------------------------------------
-# New tools based on OpenEMR REST API
-# ---------------------------------------------------------------------------
 
 @openemr_tool(
     "get_appointment",
@@ -410,86 +744,44 @@ def delete_patient(patient_id):
         "appointment_id": {"type": "string", "description": "预约 ID，如 APT-100"},
     },
     required=["appointment_id"],
+    group="appointments",
+    short_description="Read one appointment by stable appointment id",
 )
 def get_appointment(appointment_id):
-    appointment = _require_appointment(appointment_id)
-    return _format_json(appointment)
+    return _format_json(_require_appointment(appointment_id))
 
 
 @openemr_tool(
-    "list_encounters",
-    "列出患者的就诊记录。",
+    "list_patient_appointments",
+    "列出某个患者的预约，可按日期或状态筛选。",
     {
         "patient_id": {"type": "string", "description": "患者 ID"},
+        "date": {"type": "string", "description": "日期，如 2026-03-28"},
+        "status": {"type": "string", "description": "状态，如 scheduled、cancelled"},
     },
     required=["patient_id"],
+    group="appointments",
+    short_description="List all appointments for one patient with optional date or status filters",
 )
-def list_encounters(patient_id):
-    patient = _require_patient(patient_id)
-    rows = _query_rows(
-        """
-        SELECT
-          CAST(id AS CHAR),
-          COALESCE(DATE_FORMAT(date, '%Y-%m-%d'), ''),
-          COALESCE(reason, ''),
-          COALESCE(facility, ''),
-          COALESCE(pc_catid, ''),
-          COALESCE(provider_id, '')
-        FROM form_encounter
-        WHERE pid = {pid}
-        ORDER BY date DESC;
-        """.format(pid=patient["pid"]),
-        ["id", "date", "reason", "facility", "category", "provider_id"],
-    )
-    return _format_json([
-        {
-            "id": row["id"],
-            "patient_id": patient_id,
-            "date": row["date"],
-            "reason": row["reason"],
-            "facility": row["facility"],
-        }
-        for row in rows
-    ])
+def list_patient_appointments(patient_id, date="", status=""):
+    _require_patient(patient_id)
+    return _format_json(_appointment_rows(date=date, patient_id=patient_id, status=status))
 
 
 @openemr_tool(
-    "list_patient_allergies",
-    "列出患者的过敏记录。",
+    "list_provider_appointments",
+    "列出某位医生名下的预约，可按日期或状态筛选。",
     {
-        "patient_id": {"type": "string", "description": "患者 ID"},
+        "provider": {"type": "string", "description": "医生姓名，如 Dr. Patel"},
+        "date": {"type": "string", "description": "日期，如 2026-03-28"},
+        "status": {"type": "string", "description": "状态，如 scheduled、cancelled"},
     },
-    required=["patient_id"],
+    required=["provider"],
+    group="appointments",
+    short_description="List appointments owned by one provider name",
 )
-def list_patient_allergies(patient_id):
-    patient = _require_patient(patient_id)
-    rows = _query_rows(
-        """
-        SELECT
-          CAST(id AS CHAR),
-          COALESCE(title, ''),
-          COALESCE(reaction, ''),
-          COALESCE(severity_al, ''),
-          COALESCE(DATE_FORMAT(begdate, '%Y-%m-%d'), ''),
-          COALESCE(activity, 1)
-        FROM lists
-        WHERE pid = {pid} AND type = 'allergy'
-        ORDER BY begdate DESC;
-        """.format(pid=patient["pid"]),
-        ["id", "title", "reaction", "severity", "begin_date", "active"],
-    )
-    return _format_json([
-        {
-            "id": row["id"],
-            "patient_id": patient_id,
-            "allergen": row["title"],
-            "reaction": row["reaction"],
-            "severity": row["severity"],
-            "begin_date": row["begin_date"],
-            "active": row["active"] != "0",
-        }
-        for row in rows
-    ])
+def list_provider_appointments(provider, date="", status=""):
+    return _format_json(_appointment_rows(date=date, status=status, provider=provider))
 
 
 @openemr_tool(
@@ -504,6 +796,8 @@ def list_patient_allergies(patient_id):
     },
     required=["patient_id", "date", "time"],
     is_write=True,
+    group="appointments",
+    short_description="Create a new appointment slot for a patient",
 )
 def create_appointment(patient_id, date, time, reason="", provider=""):
     patient = _require_patient(patient_id)
@@ -534,41 +828,209 @@ def create_appointment(patient_id, date, time, reason="", provider=""):
     lines = [line.strip() for line in output.splitlines() if line.strip()]
     if not lines:
         raise ToolExecutionError("[错误] 创建预约成功，但未能获取 appointment_id")
-    new_id = lines[-1]
-    return _format_json({"appointment_id": f"APT-{new_id}", "patient_id": patient_id, "date": date, "time": time})
+    return _format_json(_require_appointment(f"APT-{lines[-1]}"))
 
 
 @openemr_tool(
-    "update_patient",
-    "更新患者的基本信息。",
+    "reschedule_appointment",
+    "改期预约。",
     {
-        "patient_id": {"type": "string", "description": "患者 ID"},
-        "phone": {"type": "string", "description": "新电话号码"},
-        "email": {"type": "string", "description": "新邮箱"},
-        "sex": {"type": "string", "description": "性别，如 Male、Female"},
+        "appointment_id": {"type": "string", "description": "预约 ID"},
+        "new_date": {"type": "string", "description": "新的日期"},
+        "new_time": {"type": "string", "description": "新的时间"},
     },
-    required=["patient_id"],
+    required=["appointment_id", "new_date", "new_time"],
     is_write=True,
+    group="appointment_updates",
+    short_description="Move an existing appointment to a new date and time",
 )
-def update_patient(patient_id, phone="", email="", sex=""):
-    patient = _require_patient(patient_id)
-    updates = []
-    if phone:
-        updates.append(f"phone_home = {_sql_literal(phone)}")
-    if email:
-        updates.append(f"email = {_sql_literal(email)}")
-    if sex:
-        updates.append(f"sex = {_sql_literal(sex)}")
-    if not updates:
-        raise ToolExecutionError("[错误] 至少需要提供一个要更新的字段")
+def reschedule_appointment(appointment_id, new_date, new_time):
+    appointment = _require_appointment(appointment_id)
+    start_dt = datetime.strptime(f"{new_date} {new_time}", "%Y-%m-%d %H:%M")
+    end_dt = start_dt + timedelta(minutes=30)
+    appointment_num = _numeric_suffix(appointment_id, "APT")
     _run_mysql(
-        "UPDATE patient_data SET {updates} WHERE pid = {pid} LIMIT 1;".format(
-            updates=", ".join(updates),
-            pid=patient["pid"],
+        """
+        UPDATE openemr_postcalendar_events
+        SET
+          pc_eventDate = {new_date},
+          pc_endDate = {new_date},
+          pc_startTime = {new_start},
+          pc_endTime = {new_end}
+        WHERE pc_eid = {appointment_num}
+        LIMIT 1;
+        """.format(
+            new_date=_sql_literal(new_date),
+            new_start=_sql_literal(start_dt.strftime("%H:%M:%S")),
+            new_end=_sql_literal(end_dt.strftime("%H:%M:%S")),
+            appointment_num=appointment_num,
         )
     )
-    updated = _patient_record_by_external_id(patient_id)
-    return _format_json(updated)
+    return _format_json(_require_appointment(appointment_id))
+
+
+@openemr_tool(
+    "cancel_appointment",
+    "取消已有预约。",
+    {
+        "appointment_id": {"type": "string", "description": "预约 ID"},
+    },
+    required=["appointment_id"],
+    is_write=True,
+    group="appointment_updates",
+    short_description="Mark an appointment as cancelled without deleting the record",
+)
+def cancel_appointment(appointment_id):
+    _require_appointment(appointment_id)
+    appointment_num = _numeric_suffix(appointment_id, "APT")
+    _run_mysql(
+        """
+        UPDATE openemr_postcalendar_events
+        SET pc_apptstatus = 'cancelled'
+        WHERE pc_eid = {appointment_num}
+        LIMIT 1;
+        """.format(appointment_num=appointment_num)
+    )
+    return _format_json(_require_appointment(appointment_id))
+
+
+@openemr_tool(
+    "list_encounters",
+    "列出患者的就诊记录。",
+    {
+        "patient_id": {"type": "string", "description": "患者 ID"},
+    },
+    required=["patient_id"],
+    group="encounters",
+    short_description="List encounter records for one patient chart",
+)
+def list_encounters(patient_id):
+    patient = _require_patient(patient_id)
+    encounters = _encounter_entries_for_patient(patient["pid"])
+    for item in encounters:
+        item["patient_id"] = patient_id
+    return _format_json(encounters)
+
+
+@openemr_tool(
+    "get_encounter",
+    "读取单个就诊记录详情。",
+    {
+        "encounter_id": {"type": "string", "description": "就诊记录 ID，如 ENC-100"},
+    },
+    required=["encounter_id"],
+    group="encounters",
+    short_description="Read one encounter by stable encounter id",
+)
+def get_encounter(encounter_id):
+    return _format_json(_require_encounter(encounter_id))
+
+
+@openemr_tool(
+    "create_encounter",
+    "为患者创建新的就诊记录。",
+    {
+        "patient_id": {"type": "string", "description": "患者 ID"},
+        "date": {"type": "string", "description": "就诊日期，如 2026-04-02"},
+        "reason": {"type": "string", "description": "就诊原因"},
+        "facility": {"type": "string", "description": "院区或科室"},
+        "provider_id": {"type": "integer", "description": "医生内部 ID，可留空"},
+    },
+    required=["patient_id", "date", "reason"],
+    is_write=True,
+    group="encounters",
+    short_description="Create a new encounter record for a patient visit",
+)
+def create_encounter(patient_id, date, reason, facility="", provider_id=0):
+    patient = _require_patient(patient_id)
+    output = _run_mysql(
+        """
+        INSERT INTO form_encounter
+          (date, reason, facility, facility_id, pid, encounter, pc_catid, provider_id, billing_facility)
+        VALUES
+          ({date}, {reason}, {facility}, 0, {pid}, 0, 5, {provider_id}, 0);
+        SELECT LAST_INSERT_ID();
+        """.format(
+            date=_sql_literal(f"{date} 00:00:00"),
+            reason=_sql_literal(reason),
+            facility=_sql_literal(facility),
+            pid=patient["pid"],
+            provider_id=int(provider_id or 0),
+        ),
+        expect_rows=True,
+    )
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    if not lines:
+        raise ToolExecutionError("[错误] 创建就诊记录成功，但未能获取 encounter_id")
+    encounter_num = int(lines[-1])
+    encounter_id = f"ENC-{encounter_num}"
+    _run_mysql(
+        """
+        UPDATE form_encounter
+        SET encounter = {encounter_num}, external_id = {encounter_id}
+        WHERE id = {encounter_num}
+        LIMIT 1;
+        """.format(
+            encounter_num=encounter_num,
+            encounter_id=_sql_literal(encounter_id),
+        )
+    )
+    return _format_json(_require_encounter(encounter_id))
+
+
+@openemr_tool(
+    "update_encounter",
+    "更新就诊记录的原因或院区。",
+    {
+        "encounter_id": {"type": "string", "description": "就诊记录 ID"},
+        "reason": {"type": "string", "description": "新的就诊原因"},
+        "facility": {"type": "string", "description": "新的院区或科室"},
+    },
+    required=["encounter_id"],
+    is_write=True,
+    group="encounters",
+    short_description="Update encounter reason or facility metadata",
+)
+def update_encounter(encounter_id, reason="", facility=""):
+    encounter = _require_encounter(encounter_id)
+    updates = []
+    if reason:
+        updates.append(f"reason = {_sql_literal(reason)}")
+    if facility:
+        updates.append(f"facility = {_sql_literal(facility)}")
+    if not updates:
+        raise ToolExecutionError("[错误] 至少需要提供一个要更新的字段")
+    encounter_num = _numeric_suffix(encounter["encounter_id"], "ENC")
+    _run_mysql(
+        """
+        UPDATE form_encounter
+        SET {updates}
+        WHERE id = {encounter_num}
+        LIMIT 1;
+        """.format(
+            updates=", ".join(updates),
+            encounter_num=encounter_num,
+        )
+    )
+    return _format_json(_require_encounter(encounter_id))
+
+
+@openemr_tool(
+    "list_patient_allergies",
+    "列出患者的过敏记录。",
+    {
+        "patient_id": {"type": "string", "description": "患者 ID"},
+    },
+    required=["patient_id"],
+    group="allergies",
+    short_description="List allergy entries recorded on a patient chart",
+)
+def list_patient_allergies(patient_id):
+    patient = _require_patient(patient_id)
+    allergies = _allergy_entries(patient["pid"])
+    for item in allergies:
+        item["patient_id"] = patient_id
+    return _format_json(allergies)
 
 
 @openemr_tool(
@@ -579,21 +1041,251 @@ def update_patient(patient_id, phone="", email="", sex=""):
         "allergen": {"type": "string", "description": "过敏原名称"},
         "reaction": {"type": "string", "description": "过敏反应"},
         "severity": {"type": "string", "description": "严重程度，如 mild、moderate、severe"},
+        "begin_date": {"type": "string", "description": "开始日期，如 2026-04-01"},
     },
     required=["patient_id", "allergen"],
     is_write=True,
+    group="allergies",
+    short_description="Create a new allergy entry for a patient",
 )
-def add_allergy(patient_id, allergen, reaction="", severity=""):
+def add_allergy(patient_id, allergen, reaction="", severity="", begin_date=""):
     patient = _require_patient(patient_id)
-    _run_mysql(
+    output = _run_mysql(
         """
         INSERT INTO lists (date, type, title, reaction, severity_al, pid, activity, begdate, user, groupname)
-        VALUES (NOW(), 'allergy', {allergen}, {reaction}, {severity}, {pid}, 1, CURDATE(), 'admin', 'Default');
+        VALUES (NOW(), 'allergy', {allergen}, {reaction}, {severity}, {pid}, 1, {begin_date}, 'admin', 'Default');
+        SELECT LAST_INSERT_ID();
         """.format(
             allergen=_sql_literal(allergen),
             reaction=_sql_literal(reaction),
             severity=_sql_literal(severity),
             pid=patient["pid"],
+            begin_date=_sql_literal(f"{begin_date or datetime.utcnow().strftime('%Y-%m-%d')} 00:00:00"),
+        ),
+        expect_rows=True,
+    )
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    if not lines:
+        raise ToolExecutionError("[错误] 添加过敏记录成功，但未能获取 allergy_id")
+    allergy_id = f"ALG-{lines[-1]}"
+    _run_mysql(
+        "UPDATE lists SET external_id = {allergy_id} WHERE id = {row_id} LIMIT 1;".format(
+            allergy_id=_sql_literal(allergy_id),
+            row_id=int(lines[-1]),
         )
     )
-    return _format_json({"patient_id": patient_id, "allergen": allergen, "reaction": reaction, "severity": severity})
+    allergies = _allergy_entries(patient["pid"])
+    entry = next((item for item in allergies if item["allergy_id"] == allergy_id), None)
+    if not entry:
+        raise ToolExecutionError("[错误] 过敏记录已创建，但无法重新读取")
+    entry["patient_id"] = patient_id
+    return _format_json(entry)
+
+
+@openemr_tool(
+    "list_patient_medications",
+    "列出患者的药物记录。",
+    {
+        "patient_id": {"type": "string", "description": "患者 ID"},
+    },
+    required=["patient_id"],
+    group="medications",
+    short_description="List medication entries recorded on a patient chart",
+)
+def list_patient_medications(patient_id):
+    patient = _require_patient(patient_id)
+    medications = _medication_entries(patient["pid"])
+    for item in medications:
+        item["patient_id"] = patient_id
+    return _format_json(medications)
+
+
+@openemr_tool(
+    "get_medication",
+    "读取单条药物记录详情。",
+    {
+        "medication_id": {"type": "string", "description": "药物记录 ID，如 MED-100"},
+    },
+    required=["medication_id"],
+    group="medications",
+    short_description="Read one medication entry by stable medication id",
+)
+def get_medication(medication_id):
+    return _format_json(_require_medication(medication_id))
+
+
+@openemr_tool(
+    "add_medication",
+    "为患者添加药物记录。",
+    {
+        "patient_id": {"type": "string", "description": "患者 ID"},
+        "medication_name": {"type": "string", "description": "药物名称"},
+        "instructions": {"type": "string", "description": "用法说明"},
+        "start_date": {"type": "string", "description": "开始日期，如 2026-04-01"},
+    },
+    required=["patient_id", "medication_name"],
+    is_write=True,
+    group="medications",
+    short_description="Create a new medication entry for a patient",
+)
+def add_medication(patient_id, medication_name, instructions="", start_date=""):
+    patient = _require_patient(patient_id)
+    output = _run_mysql(
+        """
+        INSERT INTO lists (date, type, title, comments, pid, activity, begdate, user, groupname)
+        VALUES (NOW(), 'medication', {medication_name}, {instructions}, {pid}, 1, {start_date}, 'admin', 'Default');
+        SELECT LAST_INSERT_ID();
+        """.format(
+            medication_name=_sql_literal(medication_name),
+            instructions=_sql_literal(instructions),
+            pid=patient["pid"],
+            start_date=_sql_literal(f"{start_date or datetime.utcnow().strftime('%Y-%m-%d')} 00:00:00"),
+        ),
+        expect_rows=True,
+    )
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    if not lines:
+        raise ToolExecutionError("[错误] 添加药物记录成功，但未能获取 medication_id")
+    medication_id = f"MED-{lines[-1]}"
+    _run_mysql(
+        "UPDATE lists SET external_id = {medication_id} WHERE id = {row_id} LIMIT 1;".format(
+            medication_id=_sql_literal(medication_id),
+            row_id=int(lines[-1]),
+        )
+    )
+    return _format_json(_require_medication(medication_id))
+
+
+@openemr_tool(
+    "discontinue_medication",
+    "停用一条药物记录。",
+    {
+        "medication_id": {"type": "string", "description": "药物记录 ID"},
+        "end_date": {"type": "string", "description": "停用日期，如 2026-04-15"},
+    },
+    required=["medication_id"],
+    is_write=True,
+    group="medications",
+    short_description="Mark a medication entry as inactive and set an end date",
+)
+def discontinue_medication(medication_id, end_date=""):
+    medication = _require_medication(medication_id)
+    _run_mysql(
+        """
+        UPDATE lists
+        SET activity = 0, enddate = {end_date}
+        WHERE id = {row_num}
+        LIMIT 1;
+        """.format(
+            end_date=_sql_literal(f"{end_date or datetime.utcnow().strftime('%Y-%m-%d')} 00:00:00"),
+            row_num=int(medication["row_id"]),
+        )
+    )
+    return _format_json(_require_medication(medication_id))
+
+
+@openemr_tool(
+    "list_patient_insurance",
+    "列出患者的保险记录。",
+    {
+        "patient_id": {"type": "string", "description": "患者 ID"},
+    },
+    required=["patient_id"],
+    group="insurance",
+    short_description="List insurance policies attached to one patient",
+)
+def list_patient_insurance(patient_id):
+    patient = _require_patient(patient_id)
+    policies = _insurance_policy_rows(patient["pid"])
+    for item in policies:
+        item["patient_id"] = patient_id
+    return _format_json(policies)
+
+
+@openemr_tool(
+    "get_insurance_policy",
+    "读取单条保险记录详情。",
+    {
+        "policy_id": {"type": "string", "description": "保险记录 ID，如 INS-100"},
+    },
+    required=["policy_id"],
+    group="insurance",
+    short_description="Read one insurance policy by stable policy id",
+)
+def get_insurance_policy(policy_id):
+    return _format_json(_require_insurance_policy(policy_id))
+
+
+@openemr_tool(
+    "add_insurance_policy",
+    "为患者添加保险记录。",
+    {
+        "patient_id": {"type": "string", "description": "患者 ID"},
+        "coverage_type": {"type": "string", "description": "primary、secondary 或 tertiary"},
+        "provider": {"type": "string", "description": "保险提供方"},
+        "plan_name": {"type": "string", "description": "保险计划名"},
+        "policy_number": {"type": "string", "description": "保单号"},
+        "start_date": {"type": "string", "description": "生效日期，如 2026-04-01"},
+        "end_date": {"type": "string", "description": "结束日期，可留空"},
+    },
+    required=["patient_id", "coverage_type", "provider", "plan_name", "policy_number", "start_date"],
+    is_write=True,
+    group="insurance",
+    short_description="Create a new insurance policy row for a patient",
+)
+def add_insurance_policy(patient_id, coverage_type, provider, plan_name, policy_number, start_date, end_date=""):
+    patient = _require_patient(patient_id)
+    normalized_type = str(coverage_type or "").lower()
+    if normalized_type not in {"primary", "secondary", "tertiary"}:
+        raise ToolExecutionError("[错误] coverage_type 必须是 primary、secondary 或 tertiary")
+    output = _run_mysql(
+        """
+        INSERT INTO insurance_data
+          (type, provider, plan_name, policy_number, date, date_end, pid, accept_assignment, policy_type)
+        VALUES
+          ({coverage_type}, {provider}, {plan_name}, {policy_number}, {start_date}, {end_date}, {pid}, 'TRUE', '');
+        SELECT LAST_INSERT_ID();
+        """.format(
+            coverage_type=_sql_literal(normalized_type),
+            provider=_sql_literal(provider),
+            plan_name=_sql_literal(plan_name),
+            policy_number=_sql_literal(policy_number),
+            start_date=_sql_literal(start_date),
+            end_date=_sql_literal(end_date or None),
+            pid=patient["pid"],
+        ),
+        expect_rows=True,
+    )
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    if not lines:
+        raise ToolExecutionError("[错误] 添加保险记录成功，但未能获取 policy_id")
+    return _format_json(_require_insurance_policy(f"INS-{lines[-1]}"))
+
+
+@openemr_tool(
+    "terminate_insurance_policy",
+    "终止一条保险记录。",
+    {
+        "policy_id": {"type": "string", "description": "保险记录 ID"},
+        "end_date": {"type": "string", "description": "结束日期，如 2026-04-30"},
+    },
+    required=["policy_id", "end_date"],
+    is_write=True,
+    group="insurance",
+    short_description="Set an end date on an existing insurance policy",
+)
+def terminate_insurance_policy(policy_id, end_date):
+    _require_insurance_policy(policy_id)
+    policy_num = _numeric_suffix(policy_id, "INS")
+    _run_mysql(
+        """
+        UPDATE insurance_data
+        SET date_end = {end_date}
+        WHERE id = {policy_num}
+        LIMIT 1;
+        """.format(
+            end_date=_sql_literal(end_date),
+            policy_num=policy_num,
+        )
+    )
+    return _format_json(_require_insurance_policy(policy_id))

@@ -181,7 +181,8 @@ class OpenEMRBackend(EnvironmentBackend):
         self._stop_stack()
         try:
             shutil.rmtree(self._sites_dir(), ignore_errors=True)
-            shutil.copytree(checkpoint["sites_snapshot_dir"], self._sites_dir())
+            os.makedirs(self._shared_dir(), exist_ok=True)
+            shutil.copytree(checkpoint["sites_snapshot_dir"], self._sites_dir(), dirs_exist_ok=True)
             self._run_command(["docker", "compose", "-f", self._compose_file(), "up", "-d", "openemr-db"])
             self._wait_for_db()
             self._restore_database(checkpoint["dump_path"])
@@ -199,6 +200,12 @@ class OpenEMRBackend(EnvironmentBackend):
             affected_sample.append(str(args.get("patient_id")))
         if "appointment_id" in args:
             affected_sample.append(str(args.get("appointment_id")))
+        if "encounter_id" in args:
+            affected_sample.append(str(args.get("encounter_id")))
+        if "medication_id" in args:
+            affected_sample.append(str(args.get("medication_id")))
+        if "policy_id" in args:
+            affected_sample.append(str(args.get("policy_id")))
         return {
             "exec_status": "success",
             "state_changed": state_changed,
@@ -323,7 +330,7 @@ class OpenEMRBackend(EnvironmentBackend):
                 outcome_spec.get("expected_date", ""),
                 outcome_spec.get("expected_time", ""),
             )
-            appointments = json.loads(ot.list_appointments(patient_id))
+            appointments = ot._appointment_rows(patient_id=patient_id)
             found = next(
                 (
                     item for item in appointments
@@ -334,6 +341,47 @@ class OpenEMRBackend(EnvironmentBackend):
             result = {
                 "passed": found is not None,
                 "detail": f"患者 {patient_id} 在时段 {expected} {'存在' if found else '不存在'} 预约",
+            }
+        elif condition == "appointment_status":
+            appointment = ot._appointment_record_by_external_id(outcome_spec.get("appointment_id", ""))
+            actual = appointment.get("status", "") if appointment else ""
+            expected = outcome_spec.get("expected_status", "")
+            result = {
+                "passed": appointment is not None and actual == expected,
+                "detail": f"预约状态为 {actual or 'missing'}，预期 {expected}",
+            }
+        elif condition == "patient_appointment_count":
+            patient_id = outcome_spec.get("patient_id", "")
+            patient = ot._patient_record_by_external_id(patient_id)
+            actual = (
+                len(
+                    ot._appointment_rows(
+                        patient_id=patient_id,
+                        date=outcome_spec.get("date", ""),
+                        status=outcome_spec.get("status", ""),
+                    )
+                )
+                if patient
+                else -1
+            )
+            expected = outcome_spec.get("expected_count", 0)
+            result = {
+                "passed": patient is not None and actual == expected,
+                "detail": f"患者 {patient_id} 的预约数为 {actual}，预期 {expected}",
+            }
+        elif condition == "provider_appointment_count":
+            provider = outcome_spec.get("provider", "")
+            actual = len(
+                ot._appointment_rows(
+                    provider=provider,
+                    date=outcome_spec.get("date", ""),
+                    status=outcome_spec.get("status", ""),
+                )
+            )
+            expected = outcome_spec.get("expected_count", 0)
+            result = {
+                "passed": actual == expected,
+                "detail": f"医生 {provider} 的预约数为 {actual}，预期 {expected}",
             }
         elif condition == "patient_field":
             patient = ot._patient_record_by_external_id(outcome_spec.get("patient_id", ""))
@@ -346,21 +394,84 @@ class OpenEMRBackend(EnvironmentBackend):
             }
         elif condition == "patient_allergy_count":
             patient_id = outcome_spec.get("patient_id", "")
-            allergies = json.loads(ot.list_patient_allergies(patient_id))
+            patient = ot._patient_record_by_external_id(patient_id)
+            allergies = ot._allergy_entries(patient["pid"]) if patient else []
             actual = len(allergies)
             expected = outcome_spec.get("expected_count", 0)
             result = {
-                "passed": actual == expected,
+                "passed": patient is not None and actual == expected,
                 "detail": f"患者 {patient_id} 的过敏记录数为 {actual}，预期 {expected}",
             }
         elif condition == "encounter_count":
             patient_id = outcome_spec.get("patient_id", "")
-            encounters = json.loads(ot.list_encounters(patient_id))
+            patient = ot._patient_record_by_external_id(patient_id)
+            encounters = ot._encounter_entries_for_patient(patient["pid"]) if patient else []
             actual = len(encounters)
             expected = outcome_spec.get("expected_count", 0)
             result = {
-                "passed": actual == expected,
+                "passed": patient is not None and actual == expected,
                 "detail": f"患者 {patient_id} 的就诊记录数为 {actual}，预期 {expected}",
+            }
+        elif condition == "encounter_exists":
+            encounter = ot._encounter_record_by_external_id(outcome_spec.get("encounter_id", ""))
+            result = {
+                "passed": encounter is not None,
+                "detail": f"就诊记录 {outcome_spec.get('encounter_id')} {'存在' if encounter is not None else '不存在'}",
+            }
+        elif condition == "encounter_field":
+            encounter = ot._encounter_record_by_external_id(outcome_spec.get("encounter_id", ""))
+            field = outcome_spec.get("field", "")
+            actual = encounter.get(field, "") if encounter else ""
+            expected = outcome_spec.get("expected_value", "")
+            result = {
+                "passed": encounter is not None and actual == expected,
+                "detail": f"就诊记录字段 {field} 的值为 {actual or 'missing'}，预期 {expected}",
+            }
+        elif condition == "patient_medication_count":
+            patient_id = outcome_spec.get("patient_id", "")
+            patient = ot._patient_record_by_external_id(patient_id)
+            medications = ot._medication_entries(patient["pid"]) if patient else []
+            if outcome_spec.get("active_only"):
+                medications = [item for item in medications if item.get("active")]
+            actual = len(medications)
+            expected = outcome_spec.get("expected_count", 0)
+            result = {
+                "passed": patient is not None and actual == expected,
+                "detail": f"患者 {patient_id} 的药物记录数为 {actual}，预期 {expected}",
+            }
+        elif condition == "medication_active":
+            medication = ot._medication_record_by_external_id(outcome_spec.get("medication_id", ""))
+            actual = medication.get("active") if medication else None
+            expected = bool(outcome_spec.get("expected_active"))
+            result = {
+                "passed": medication is not None and actual == expected,
+                "detail": f"药物记录 active={actual}，预期 {expected}",
+            }
+        elif condition == "insurance_policy_count":
+            patient_id = outcome_spec.get("patient_id", "")
+            patient = ot._patient_record_by_external_id(patient_id)
+            policies = ot._insurance_policy_rows(patient["pid"]) if patient else []
+            if outcome_spec.get("active_only"):
+                policies = [item for item in policies if item.get("active")]
+            actual = len(policies)
+            expected = outcome_spec.get("expected_count", 0)
+            result = {
+                "passed": patient is not None and actual == expected,
+                "detail": f"患者 {patient_id} 的保险记录数为 {actual}，预期 {expected}",
+            }
+        elif condition == "insurance_policy_exists":
+            policy = ot._insurance_policy_by_external_id(outcome_spec.get("policy_id", ""))
+            result = {
+                "passed": policy is not None,
+                "detail": f"保险记录 {outcome_spec.get('policy_id')} {'存在' if policy is not None else '不存在'}",
+            }
+        elif condition == "insurance_policy_end_date":
+            policy = ot._insurance_policy_by_external_id(outcome_spec.get("policy_id", ""))
+            actual = policy.get("end_date", "") if policy else ""
+            expected = outcome_spec.get("expected_end_date", "")
+            result = {
+                "passed": policy is not None and actual == expected,
+                "detail": f"保险记录结束日期为 {actual or 'missing'}，预期 {expected}",
             }
         else:
             return {"passed": False, "detail": f"未知 outcome condition: {condition}", "condition": condition}
