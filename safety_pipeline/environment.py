@@ -15,6 +15,7 @@ import uuid
 from .backend_abc import EnvironmentBackend
 from .discourse_backend import DiscourseBackend
 from .erpnext_backend import ERPNextBackend
+from .mailu_backend import MailuBackend
 from .openemr_backend import OpenEMRBackend
 from .settings import REPO_ROOT, reload_runtime_env
 from .zammad_backend import ZammadBackend
@@ -1780,6 +1781,7 @@ _BACKEND_FACTORIES = {
     "discourse": DiscourseBackend,
     "erpnext": ERPNextBackend,
     "gitea": GiteaBackend,
+    "mailu": MailuBackend,
     "nocodb": NocoDBBackend,
     "openemr": OpenEMRBackend,
     "owncloud": OwnCloudBackend,

@@ -269,6 +269,142 @@ services:
       - zammad_storage:/opt/zammad/storage
       - ./docker/zammad/auto_wizard_pipeline.json:/opt/zammad/contrib/auto_wizard_pipeline.json:ro
 
+  mailu-redis:
+    image: redis:7-alpine
+    container_name: ${MAILU_REDIS_CONTAINER:-pipeline-mailu-redis}
+    restart: unless-stopped
+    volumes:
+      - mailu_redis_data:/data
+    networks:
+      default:
+      mailu_network:
+        ipv4_address: 192.168.203.5
+        aliases:
+          - redis
+
+  mailu-front:
+    image: ${MAILU_FRONT_IMAGE:-ghcr.io/mailu/nginx:2024.06}
+    container_name: ${MAILU_FRONT_CONTAINER:-pipeline-mailu-front}
+    restart: unless-stopped
+    ports:
+      - "${MAILU_HTTP_PORT:-8443}:80"
+      - "${MAILU_SMTP_PORT:-2525}:25"
+      - "${MAILU_IMAP_PORT:-1143}:143"
+    environment:
+      - TZ=UTC
+      - SECRET_KEY=${MAILU_SECRET_KEY:-pipeline-mailu-secret-key-2024}
+      - DOMAIN=example.com
+      - HOSTNAMES=mail.example.com
+      - POSTMASTER=admin
+      - SUBNET=192.168.203.0/24
+      - TLS_FLAVOR=notls
+      - ADMIN=true
+      - WEBMAIL=none
+      - API=true
+      - MESSAGE_SIZE_LIMIT=50000000
+      - LOG_LEVEL=WARNING
+      - WEB_ADMIN=/admin
+    depends_on:
+      - mailu-admin
+      - mailu-dovecot
+      - mailu-postfix
+    volumes:
+      - mailu_certs:/certs
+      - mailu_overrides:/overrides:ro
+    networks:
+      default:
+      mailu_network:
+        ipv4_address: 192.168.203.254
+        aliases:
+          - front
+
+  mailu-admin:
+    image: ${MAILU_ADMIN_IMAGE:-ghcr.io/mailu/admin:2024.06}
+    container_name: ${MAILU_ADMIN_CONTAINER:-pipeline-mailu-admin}
+    restart: unless-stopped
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    environment:
+      - TZ=UTC
+      - SECRET_KEY=${MAILU_SECRET_KEY:-pipeline-mailu-secret-key-2024}
+      - DOMAIN=example.com
+      - HOSTNAMES=mail.example.com
+      - POSTMASTER=admin
+      - SUBNET=192.168.203.0/24
+      - TLS_FLAVOR=notls
+      - INITIAL_ADMIN_ACCOUNT=admin
+      - INITIAL_ADMIN_DOMAIN=example.com
+      - INITIAL_ADMIN_PW=${MAILU_ADMIN_PASSWORD:-Admin123!}
+      - INITIAL_ADMIN_MODE=ifmissing
+      - API=true
+      - API_TOKEN=${MAILU_API_TOKEN:-pipeline-mailu-api-token-2024}
+      - WEB_ADMIN=/admin
+      - AUTH_RATELIMIT_IP=9999/minute;99999/hour
+      - AUTH_RATELIMIT_USER=9999/minute;99999/hour
+      - CREDENTIAL_ROUNDS=12
+      - REDIS_ADDRESS=192.168.203.5
+      - LOG_LEVEL=WARNING
+    depends_on:
+      - mailu-redis
+    volumes:
+      - mailu_data:/data
+      - mailu_dkim:/dkim
+    networks:
+      default:
+      mailu_network:
+        ipv4_address: 192.168.203.2
+        aliases:
+          - admin
+
+  mailu-dovecot:
+    image: ${MAILU_DOVECOT_IMAGE:-ghcr.io/mailu/dovecot:2024.06}
+    container_name: ${MAILU_DOVECOT_CONTAINER:-pipeline-mailu-dovecot}
+    restart: unless-stopped
+    environment:
+      - TZ=UTC
+      - SECRET_KEY=${MAILU_SECRET_KEY:-pipeline-mailu-secret-key-2024}
+      - DOMAIN=example.com
+      - HOSTNAMES=mail.example.com
+      - POSTMASTER=admin
+      - SUBNET=192.168.203.0/24
+      - TLS_FLAVOR=notls
+      - LOG_LEVEL=WARNING
+    volumes:
+      - mailu_mail:/mail
+      - mailu_overrides:/overrides:ro
+    networks:
+      default:
+      mailu_network:
+        ipv4_address: 192.168.203.3
+        aliases:
+          - imap
+
+  mailu-postfix:
+    image: ${MAILU_POSTFIX_IMAGE:-ghcr.io/mailu/postfix:2024.06}
+    container_name: ${MAILU_POSTFIX_CONTAINER:-pipeline-mailu-postfix}
+    restart: unless-stopped
+    environment:
+      - TZ=UTC
+      - SECRET_KEY=${MAILU_SECRET_KEY:-pipeline-mailu-secret-key-2024}
+      - DOMAIN=example.com
+      - HOSTNAMES=mail.example.com
+      - POSTMASTER=admin
+      - SUBNET=192.168.203.0/24
+      - TLS_FLAVOR=notls
+      - RELAYHOST=
+      - MESSAGE_SIZE_LIMIT=50000000
+      - LOG_LEVEL=WARNING
+    volumes:
+      - mailu_queue:/queue
+      - mailu_overrides:/overrides:ro
+    networks:
+      default:
+      mailu_network:
+        ipv4_address: 192.168.203.4
+        aliases:
+          - smtp
+
 volumes:
   nocodb_data:
   nocodb_pg_data:
@@ -278,3 +414,17 @@ volumes:
   zammad_postgresql_data:
   zammad_redis_data:
   zammad_storage:
+  mailu_data:
+  mailu_mail:
+  mailu_certs:
+  mailu_dkim:
+  mailu_overrides:
+  mailu_queue:
+  mailu_redis_data:
+
+networks:
+  mailu_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 192.168.203.0/24

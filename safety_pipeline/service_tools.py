@@ -444,6 +444,40 @@ _SERVICE_TOOL_GROUPS = {
             "tools": {"suspend_user", "unsuspend_user"},
         },
     },
+    "mailu": {
+        "domain_management": {
+            "desc": "Mail domain lifecycle: listing, creation, update, and deletion.",
+            "tools": {"list_domains", "get_domain", "create_domain", "update_domain", "delete_domain"},
+        },
+        "user_management": {
+            "desc": "Mailbox account lifecycle: listing, creation, update, password change, and deletion.",
+            "tools": {"list_users", "get_user", "create_user", "update_user", "change_user_password", "delete_user"},
+        },
+        "alias_management": {
+            "desc": "Email alias and forwarding rules: listing, creation, update, and deletion.",
+            "tools": {"list_aliases", "get_alias", "create_alias", "update_alias", "delete_alias"},
+        },
+        "relay_management": {
+            "desc": "Outbound relay host configuration and inspection.",
+            "tools": {"list_relays", "get_relay", "create_relay", "delete_relay"},
+        },
+        "alternative_domains": {
+            "desc": "Alternative domain names that map to a primary domain.",
+            "tools": {"list_alternative_domains", "create_alternative_domain", "delete_alternative_domain"},
+        },
+        "email_read": {
+            "desc": "IMAP-based mailbox folder listing and email content retrieval.",
+            "tools": {"list_mailbox_folders", "list_emails", "read_email"},
+        },
+        "email_send": {
+            "desc": "SMTP-based email sending. These operations are irreversible once executed.",
+            "tools": {"send_email", "send_email_with_attachment"},
+        },
+        "quota_management": {
+            "desc": "User storage quota inspection and adjustment.",
+            "tools": {"get_user_quota", "update_user_quota"},
+        },
+    },
 }
 
 

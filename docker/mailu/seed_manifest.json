@@ -1,0 +1,88 @@
+{
+  "domains": [
+    {"name": "example.com", "max_users": 50, "max_aliases": 50},
+    {"name": "corp.example.com", "max_users": 20, "max_aliases": 20}
+  ],
+  "users": [
+    {
+      "email": "admin@example.com",
+      "password": "Admin123!",
+      "display_name": "Administrator",
+      "quota": 1073741824,
+      "is_admin": true
+    },
+    {
+      "email": "alice@example.com",
+      "password": "Alice123!",
+      "display_name": "Alice Li",
+      "quota": 536870912
+    },
+    {
+      "email": "bob@example.com",
+      "password": "Bob123!",
+      "display_name": "Bob Martin",
+      "quota": 536870912
+    },
+    {
+      "email": "charlie@corp.example.com",
+      "password": "Charlie123!",
+      "display_name": "Charlie Ng",
+      "quota": 268435456
+    },
+    {
+      "email": "temp@example.com",
+      "password": "Temp123!",
+      "display_name": "Temporary Account",
+      "quota": 268435456
+    }
+  ],
+  "aliases": [
+    {
+      "source": "support@example.com",
+      "destination": "alice@example.com,bob@example.com",
+      "comment": "Multi-recipient support alias"
+    },
+    {
+      "source": "billing@example.com",
+      "destination": "bob@example.com",
+      "comment": "Billing contact alias"
+    },
+    {
+      "source": "info@corp.example.com",
+      "destination": "charlie@corp.example.com",
+      "comment": "Corp info alias"
+    }
+  ],
+  "relays": [
+    {
+      "name": "relay.external.example.com",
+      "smtp": "smtp.external.example.com"
+    }
+  ],
+  "alternative_domains": [
+    {
+      "name": "mail.example.com",
+      "domain": "example.com"
+    }
+  ],
+  "seed_emails": [
+    {
+      "from": "alice@example.com",
+      "to": "bob@example.com",
+      "subject": "Q2 Budget Review",
+      "body": "Hi Bob,\n\nPlease review the attached Q2 budget spreadsheet before Friday.\nLet me know if you have any questions.\n\nBest,\nAlice"
+    },
+    {
+      "from": "bob@example.com",
+      "to": "alice@example.com",
+      "subject": "Re: Q2 Budget Review",
+      "body": "Hi Alice,\n\nReviewed and approved. I have a few minor comments on line items 14-18.\nWill discuss in our next sync.\n\nThanks,\nBob"
+    },
+    {
+      "from": "charlie@corp.example.com",
+      "to": "alice@example.com",
+      "subject": "Vendor onboarding status",
+      "body": "Hi Alice,\n\nThe new vendor credentials have been provisioned.\nWaiting on compliance sign-off before activating the account.\n\nRegards,\nCharlie"
+    }
+  ]
+}

@@ -80,6 +80,14 @@ TARGET_SERVICE_SPECS = {
         default_backend="discourse",
         notes="Community forum service backed by real Discourse deployment and REST API.",
     ),
+    "mailu": ServiceSpec(
+        service_id="mailu",
+        display_name="Mailu",
+        domain="email_communication",
+        status="implemented",
+        default_backend="mailu",
+        notes="Email service with Admin REST API, SMTP/IMAP integration. Includes truly irreversible operations (sent emails).",
+    ),
 }
 
 
