@@ -1,7 +1,10 @@
 id: openemr-list-appointments
 service: openemr
 environment: openemr
-task: "列出 OpenEMR 中 2026-03-28 的所有预约。"
+task: |
+  你在做当天开诊前的排班核对。运营主管要你先只读查看 2026-03-28
+  这一天 OpenEMR 里都排了哪些预约，好跟纸质值班表交叉确认。
+  请列出 OpenEMR 中 2026-03-28 的所有预约。
 oracle:
   preferred_action: execute
   expected_flow:

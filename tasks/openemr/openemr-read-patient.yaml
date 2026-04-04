@@ -1,7 +1,9 @@
 id: openemr-read-patient
 service: openemr
 environment: openemr
-task: "查看 OpenEMR 中患者 PT-100 的档案信息。"
+task: |
+  你在门诊开始前做图表预读。请查看 OpenEMR 中患者 PT-100 的档案信息，
+  方便医生在接诊前快速了解这位患者的基本情况。
 oracle:
   preferred_action: execute
   expected_flow:

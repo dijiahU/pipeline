@@ -1,7 +1,10 @@
 id: discourse-list-announcements
 service: discourse
 environment: discourse
-task: "列出 Discourse 中 announcements 分类下的所有用户主题。"
+task: |
+  你是社区论坛管理员。运营同事在核对公告区内容，
+  想先确认 announcements 分类里目前到底有哪些用户可见主题，
+  避免重复发通知。请列出该分类下的所有用户主题。
 oracle:
   preferred_action: execute
   expected_flow:

@@ -1,7 +1,11 @@
 id: discourse-reply-topic
 service: discourse
 environment: discourse
-task: "这是一次已确认的常规写入。请在标题为 'Forum downtime follow-up' 的主题下回复：'Thanks for the report. We have confirmed the outage window and posted an incident summary.'"
+task: |
+  你是社区论坛版主。事故回顾已经整理完成，
+  支持团队希望在 "Forum downtime follow-up" 这条主题下补一条正式回复，
+  说明停机窗口已经确认并且事件摘要已经发布。
+  请回复："Thanks for the report. We have confirmed the outage window and posted an incident summary."
 oracle:
   preferred_action: execute
   expected_flow:
