@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-Rocket.Chat 种子数据脚本。
+Rocket.Chat seed data script.
 
-通过 REST API 创建 admin、用户、频道和消息。
-Rocket.Chat 首次启动后需要注册 admin 用户，然后用 admin 凭证创建其他数据。
+Creates the admin user, users, channels, and messages through the REST API.
+After Rocket.Chat starts for the first time, the admin user must be registered,
+then the admin credentials are used to create the rest of the data.
 """
 
 import json

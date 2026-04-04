@@ -71,7 +71,7 @@ def _run_mysql(sql, *, expect_rows=False):
     result = subprocess.run(cmd, input=sql, text=True, capture_output=True)
     if result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip() or "unknown mysql error"
-        raise ToolExecutionError(f"[OpenEMR SQL 错误] {detail}")
+        raise ToolExecutionError(f"[OpenEMR SQL Error] {detail}")
     return result.stdout
 
 
@@ -101,7 +101,7 @@ def _format_json(data):
 def _numeric_suffix(value, prefix):
     match = re.fullmatch(rf"{re.escape(prefix)}-(\d+)", str(value or ""))
     if not match:
-        raise ToolExecutionError(f"[错误] 非法 {prefix} ID: {value}")
+        raise ToolExecutionError(f"[Error] Invalid {prefix} ID: {value}")
     return int(match.group(1))
 
 
@@ -479,43 +479,43 @@ def _insurance_policy_by_external_id(policy_id):
 def _require_patient(patient_id):
     patient = _patient_record_by_external_id(patient_id)
     if not patient:
-        raise ToolExecutionError(f"[错误] 找不到患者: {patient_id}")
+        raise ToolExecutionError(f"[Error] Patient not found: {patient_id}")
     return patient
 
 
 def _require_appointment(appointment_id):
     appointment = _appointment_record_by_external_id(appointment_id)
     if not appointment:
-        raise ToolExecutionError(f"[错误] 找不到预约: {appointment_id}")
+        raise ToolExecutionError(f"[Error] Appointment not found: {appointment_id}")
     return appointment
 
 
 def _require_encounter(encounter_id):
     encounter = _encounter_record_by_external_id(encounter_id)
     if not encounter:
-        raise ToolExecutionError(f"[错误] 找不到就诊记录: {encounter_id}")
+        raise ToolExecutionError(f"[Error] Encounter not found: {encounter_id}")
     return encounter
 
 
 def _require_medication(medication_id):
     medication = _medication_record_by_external_id(medication_id)
     if not medication:
-        raise ToolExecutionError(f"[错误] 找不到药物记录: {medication_id}")
+        raise ToolExecutionError(f"[Error] Medication record not found: {medication_id}")
     return medication
 
 
 def _require_insurance_policy(policy_id):
     policy = _insurance_policy_by_external_id(policy_id)
     if not policy:
-        raise ToolExecutionError(f"[错误] 找不到保险记录: {policy_id}")
+        raise ToolExecutionError(f"[Error] Insurance policy not found: {policy_id}")
     return policy
 
 
 @openemr_tool(
     "list_patients",
-    "列出患者，可按姓名关键词筛选。",
+    "List patients, optionally filtered by a name keyword.",
     {
-        "name_query": {"type": "string", "description": "姓名关键词"},
+        "name_query": {"type": "string", "description": "Name keyword"},
     },
     group="patients",
     short_description="List patients and basic chart demographics with optional name filtering",
@@ -550,9 +550,9 @@ def list_patients(name_query=""):
 
 @openemr_tool(
     "get_patient",
-    "获取患者档案详情。",
+    "Get detailed information for a patient chart.",
     {
-        "patient_id": {"type": "string", "description": "患者 ID"},
+        "patient_id": {"type": "string", "description": "Patient ID"},
     },
     required=["patient_id"],
     group="patients",
@@ -574,14 +574,14 @@ def get_patient(patient_id):
 
 @openemr_tool(
     "create_patient",
-    "创建新患者档案。",
+    "Create a new patient chart.",
     {
-        "patient_id": {"type": "string", "description": "患者 ID，如 PT-104"},
-        "name": {"type": "string", "description": "患者姓名"},
-        "dob": {"type": "string", "description": "出生日期，如 1990-04-18"},
-        "sex": {"type": "string", "description": "性别，如 Male 或 Female"},
-        "phone": {"type": "string", "description": "联系电话"},
-        "email": {"type": "string", "description": "邮箱"},
+        "patient_id": {"type": "string", "description": "Patient ID, for example PT-104"},
+        "name": {"type": "string", "description": "Patient name"},
+        "dob": {"type": "string", "description": "Date of birth, for example 1990-04-18"},
+        "sex": {"type": "string", "description": "Sex, such as Male or Female"},
+        "phone": {"type": "string", "description": "Phone number"},
+        "email": {"type": "string", "description": "Email address"},
     },
     required=["patient_id", "name", "dob"],
     is_write=True,
@@ -590,7 +590,7 @@ def get_patient(patient_id):
 )
 def create_patient(patient_id, name, dob, sex="", phone="", email=""):
     if _patient_record_by_external_id(patient_id):
-        raise ToolExecutionError(f"[错误] 患者已存在: {patient_id}")
+        raise ToolExecutionError(f"[Error] Patient already exists: {patient_id}")
     pid = _numeric_suffix(patient_id, "PT")
     fname, lname = _split_name(name)
     _run_mysql(
@@ -613,12 +613,12 @@ def create_patient(patient_id, name, dob, sex="", phone="", email=""):
 
 @openemr_tool(
     "update_patient",
-    "更新患者的基本信息。",
+    "Update a patient's basic demographics.",
     {
-        "patient_id": {"type": "string", "description": "患者 ID"},
-        "phone": {"type": "string", "description": "新电话号码"},
-        "email": {"type": "string", "description": "新邮箱"},
-        "sex": {"type": "string", "description": "性别，如 Male、Female"},
+        "patient_id": {"type": "string", "description": "Patient ID"},
+        "phone": {"type": "string", "description": "New phone number"},
+        "email": {"type": "string", "description": "New email address"},
+        "sex": {"type": "string", "description": "Sex, such as Male or Female"},
     },
     required=["patient_id"],
     is_write=True,
@@ -635,7 +635,7 @@ def update_patient(patient_id, phone="", email="", sex=""):
     if sex:
         updates.append(f"sex = {_sql_literal(sex)}")
     if not updates:
-        raise ToolExecutionError("[错误] 至少需要提供一个要更新的字段")
+        raise ToolExecutionError("[Error] At least one field to update must be provided")
     _run_mysql(
         "UPDATE patient_data SET {updates} WHERE pid = {pid} LIMIT 1;".format(
             updates=", ".join(updates),
@@ -647,9 +647,9 @@ def update_patient(patient_id, phone="", email="", sex=""):
 
 @openemr_tool(
     "delete_patient",
-    "删除患者档案。",
+    "Delete a patient chart.",
     {
-        "patient_id": {"type": "string", "description": "患者 ID"},
+        "patient_id": {"type": "string", "description": "Patient ID"},
     },
     required=["patient_id"],
     is_write=True,
@@ -676,9 +676,9 @@ def delete_patient(patient_id):
 
 @openemr_tool(
     "list_patient_notes",
-    "列出患者档案中的备注历史。",
+    "List note history on a patient chart.",
     {
-        "patient_id": {"type": "string", "description": "患者 ID"},
+        "patient_id": {"type": "string", "description": "Patient ID"},
     },
     required=["patient_id"],
     group="patient_notes",
@@ -694,11 +694,11 @@ def list_patient_notes(patient_id):
 
 @openemr_tool(
     "add_patient_note",
-    "为患者档案追加一条备注。",
+    "Append a note to a patient chart.",
     {
-        "patient_id": {"type": "string", "description": "患者 ID"},
-        "note": {"type": "string", "description": "备注内容"},
-        "author": {"type": "string", "description": "备注作者"},
+        "patient_id": {"type": "string", "description": "Patient ID"},
+        "note": {"type": "string", "description": "Note content"},
+        "author": {"type": "string", "description": "Note author"},
     },
     required=["patient_id", "note"],
     is_write=True,
@@ -724,11 +724,11 @@ def add_patient_note(patient_id, note, author="nurse"):
 
 @openemr_tool(
     "list_appointments",
-    "列出预约，可按日期、患者或状态筛选。",
+    "List appointments, optionally filtered by date, patient, or status.",
     {
-        "date": {"type": "string", "description": "日期，如 2026-03-28"},
-        "patient_id": {"type": "string", "description": "患者 ID"},
-        "status": {"type": "string", "description": "状态，如 scheduled、cancelled"},
+        "date": {"type": "string", "description": "Date, for example 2026-03-28"},
+        "patient_id": {"type": "string", "description": "Patient ID"},
+        "status": {"type": "string", "description": "Status, such as scheduled or cancelled"},
     },
     group="appointments",
     short_description="List appointments with optional date, patient, or status filters",
@@ -739,9 +739,9 @@ def list_appointments(date="", patient_id="", status=""):
 
 @openemr_tool(
     "get_appointment",
-    "获取单个预约的详细信息。",
+    "Get detailed information for a single appointment.",
     {
-        "appointment_id": {"type": "string", "description": "预约 ID，如 APT-100"},
+        "appointment_id": {"type": "string", "description": "Appointment ID, for example APT-100"},
     },
     required=["appointment_id"],
     group="appointments",
@@ -753,11 +753,11 @@ def get_appointment(appointment_id):
 
 @openemr_tool(
     "list_patient_appointments",
-    "列出某个患者的预约，可按日期或状态筛选。",
+    "List appointments for a patient, optionally filtered by date or status.",
     {
-        "patient_id": {"type": "string", "description": "患者 ID"},
-        "date": {"type": "string", "description": "日期，如 2026-03-28"},
-        "status": {"type": "string", "description": "状态，如 scheduled、cancelled"},
+        "patient_id": {"type": "string", "description": "Patient ID"},
+        "date": {"type": "string", "description": "Date, for example 2026-03-28"},
+        "status": {"type": "string", "description": "Status, such as scheduled or cancelled"},
     },
     required=["patient_id"],
     group="appointments",
@@ -770,11 +770,11 @@ def list_patient_appointments(patient_id, date="", status=""):
 
 @openemr_tool(
     "list_provider_appointments",
-    "列出某位医生名下的预约，可按日期或状态筛选。",
+    "List appointments for a provider, optionally filtered by date or status.",
     {
-        "provider": {"type": "string", "description": "医生姓名，如 Dr. Patel"},
-        "date": {"type": "string", "description": "日期，如 2026-03-28"},
-        "status": {"type": "string", "description": "状态，如 scheduled、cancelled"},
+        "provider": {"type": "string", "description": "Provider name, for example Dr. Patel"},
+        "date": {"type": "string", "description": "Date, for example 2026-03-28"},
+        "status": {"type": "string", "description": "Status, such as scheduled or cancelled"},
     },
     required=["provider"],
     group="appointments",
@@ -786,13 +786,13 @@ def list_provider_appointments(provider, date="", status=""):
 
 @openemr_tool(
     "create_appointment",
-    "为患者创建新预约。",
+    "Create a new appointment for a patient.",
     {
-        "patient_id": {"type": "string", "description": "患者 ID"},
-        "date": {"type": "string", "description": "日期，如 2026-04-01"},
-        "time": {"type": "string", "description": "时间，如 09:30"},
-        "reason": {"type": "string", "description": "预约原因"},
-        "provider": {"type": "string", "description": "医生"},
+        "patient_id": {"type": "string", "description": "Patient ID"},
+        "date": {"type": "string", "description": "Date, for example 2026-04-01"},
+        "time": {"type": "string", "description": "Time, for example 09:30"},
+        "reason": {"type": "string", "description": "Appointment reason"},
+        "provider": {"type": "string", "description": "Provider"},
     },
     required=["patient_id", "date", "time"],
     is_write=True,
@@ -827,17 +827,17 @@ def create_appointment(patient_id, date, time, reason="", provider=""):
     )
     lines = [line.strip() for line in output.splitlines() if line.strip()]
     if not lines:
-        raise ToolExecutionError("[错误] 创建预约成功，但未能获取 appointment_id")
+        raise ToolExecutionError("[Error] Appointment was created but appointment_id could not be retrieved")
     return _format_json(_require_appointment(f"APT-{lines[-1]}"))
 
 
 @openemr_tool(
     "reschedule_appointment",
-    "改期预约。",
+    "Reschedule an appointment.",
     {
-        "appointment_id": {"type": "string", "description": "预约 ID"},
-        "new_date": {"type": "string", "description": "新的日期"},
-        "new_time": {"type": "string", "description": "新的时间"},
+        "appointment_id": {"type": "string", "description": "Appointment ID"},
+        "new_date": {"type": "string", "description": "New date"},
+        "new_time": {"type": "string", "description": "New time"},
     },
     required=["appointment_id", "new_date", "new_time"],
     is_write=True,
@@ -871,9 +871,9 @@ def reschedule_appointment(appointment_id, new_date, new_time):
 
 @openemr_tool(
     "cancel_appointment",
-    "取消已有预约。",
+    "Cancel an existing appointment.",
     {
-        "appointment_id": {"type": "string", "description": "预约 ID"},
+        "appointment_id": {"type": "string", "description": "Appointment ID"},
     },
     required=["appointment_id"],
     is_write=True,
@@ -896,9 +896,9 @@ def cancel_appointment(appointment_id):
 
 @openemr_tool(
     "list_encounters",
-    "列出患者的就诊记录。",
+    "List encounter records for a patient.",
     {
-        "patient_id": {"type": "string", "description": "患者 ID"},
+        "patient_id": {"type": "string", "description": "Patient ID"},
     },
     required=["patient_id"],
     group="encounters",
@@ -914,9 +914,9 @@ def list_encounters(patient_id):
 
 @openemr_tool(
     "get_encounter",
-    "读取单个就诊记录详情。",
+    "Read details for a single encounter record.",
     {
-        "encounter_id": {"type": "string", "description": "就诊记录 ID，如 ENC-100"},
+        "encounter_id": {"type": "string", "description": "Encounter ID, for example ENC-100"},
     },
     required=["encounter_id"],
     group="encounters",
@@ -928,13 +928,13 @@ def get_encounter(encounter_id):
 
 @openemr_tool(
     "create_encounter",
-    "为患者创建新的就诊记录。",
+    "Create a new encounter record for a patient.",
     {
-        "patient_id": {"type": "string", "description": "患者 ID"},
-        "date": {"type": "string", "description": "就诊日期，如 2026-04-02"},
-        "reason": {"type": "string", "description": "就诊原因"},
-        "facility": {"type": "string", "description": "院区或科室"},
-        "provider_id": {"type": "integer", "description": "医生内部 ID，可留空"},
+        "patient_id": {"type": "string", "description": "Patient ID"},
+        "date": {"type": "string", "description": "Encounter date, for example 2026-04-02"},
+        "reason": {"type": "string", "description": "Encounter reason"},
+        "facility": {"type": "string", "description": "Facility or department"},
+        "provider_id": {"type": "integer", "description": "Internal provider ID, optional"},
     },
     required=["patient_id", "date", "reason"],
     is_write=True,
@@ -961,7 +961,7 @@ def create_encounter(patient_id, date, reason, facility="", provider_id=0):
     )
     lines = [line.strip() for line in output.splitlines() if line.strip()]
     if not lines:
-        raise ToolExecutionError("[错误] 创建就诊记录成功，但未能获取 encounter_id")
+        raise ToolExecutionError("[Error] Encounter was created but encounter_id could not be retrieved")
     encounter_num = int(lines[-1])
     encounter_id = f"ENC-{encounter_num}"
     _run_mysql(
@@ -980,11 +980,11 @@ def create_encounter(patient_id, date, reason, facility="", provider_id=0):
 
 @openemr_tool(
     "update_encounter",
-    "更新就诊记录的原因或院区。",
+    "Update the reason or facility on an encounter record.",
     {
-        "encounter_id": {"type": "string", "description": "就诊记录 ID"},
-        "reason": {"type": "string", "description": "新的就诊原因"},
-        "facility": {"type": "string", "description": "新的院区或科室"},
+        "encounter_id": {"type": "string", "description": "Encounter ID"},
+        "reason": {"type": "string", "description": "New encounter reason"},
+        "facility": {"type": "string", "description": "New facility or department"},
     },
     required=["encounter_id"],
     is_write=True,
@@ -999,7 +999,7 @@ def update_encounter(encounter_id, reason="", facility=""):
     if facility:
         updates.append(f"facility = {_sql_literal(facility)}")
     if not updates:
-        raise ToolExecutionError("[错误] 至少需要提供一个要更新的字段")
+        raise ToolExecutionError("[Error] At least one field to update must be provided")
     encounter_num = _numeric_suffix(encounter["encounter_id"], "ENC")
     _run_mysql(
         """
@@ -1017,9 +1017,9 @@ def update_encounter(encounter_id, reason="", facility=""):
 
 @openemr_tool(
     "list_patient_allergies",
-    "列出患者的过敏记录。",
+    "List allergy records for a patient.",
     {
-        "patient_id": {"type": "string", "description": "患者 ID"},
+        "patient_id": {"type": "string", "description": "Patient ID"},
     },
     required=["patient_id"],
     group="allergies",
@@ -1035,13 +1035,13 @@ def list_patient_allergies(patient_id):
 
 @openemr_tool(
     "add_allergy",
-    "为患者添加过敏记录。",
+    "Add an allergy record for a patient.",
     {
-        "patient_id": {"type": "string", "description": "患者 ID"},
-        "allergen": {"type": "string", "description": "过敏原名称"},
-        "reaction": {"type": "string", "description": "过敏反应"},
-        "severity": {"type": "string", "description": "严重程度，如 mild、moderate、severe"},
-        "begin_date": {"type": "string", "description": "开始日期，如 2026-04-01"},
+        "patient_id": {"type": "string", "description": "Patient ID"},
+        "allergen": {"type": "string", "description": "Allergen name"},
+        "reaction": {"type": "string", "description": "Allergic reaction"},
+        "severity": {"type": "string", "description": "Severity, such as mild, moderate, or severe"},
+        "begin_date": {"type": "string", "description": "Start date, for example 2026-04-01"},
     },
     required=["patient_id", "allergen"],
     is_write=True,
@@ -1066,7 +1066,7 @@ def add_allergy(patient_id, allergen, reaction="", severity="", begin_date=""):
     )
     lines = [line.strip() for line in output.splitlines() if line.strip()]
     if not lines:
-        raise ToolExecutionError("[错误] 添加过敏记录成功，但未能获取 allergy_id")
+        raise ToolExecutionError("[Error] Allergy record was created but allergy_id could not be retrieved")
     allergy_id = f"ALG-{lines[-1]}"
     _run_mysql(
         "UPDATE lists SET external_id = {allergy_id} WHERE id = {row_id} LIMIT 1;".format(
@@ -1077,16 +1077,16 @@ def add_allergy(patient_id, allergen, reaction="", severity="", begin_date=""):
     allergies = _allergy_entries(patient["pid"])
     entry = next((item for item in allergies if item["allergy_id"] == allergy_id), None)
     if not entry:
-        raise ToolExecutionError("[错误] 过敏记录已创建，但无法重新读取")
+        raise ToolExecutionError("[Error] Allergy record was created but could not be read back")
     entry["patient_id"] = patient_id
     return _format_json(entry)
 
 
 @openemr_tool(
     "list_patient_medications",
-    "列出患者的药物记录。",
+    "List medication records for a patient.",
     {
-        "patient_id": {"type": "string", "description": "患者 ID"},
+        "patient_id": {"type": "string", "description": "Patient ID"},
     },
     required=["patient_id"],
     group="medications",
@@ -1102,9 +1102,9 @@ def list_patient_medications(patient_id):
 
 @openemr_tool(
     "get_medication",
-    "读取单条药物记录详情。",
+    "Read details for a single medication record.",
     {
-        "medication_id": {"type": "string", "description": "药物记录 ID，如 MED-100"},
+        "medication_id": {"type": "string", "description": "Medication record ID, for example MED-100"},
     },
     required=["medication_id"],
     group="medications",
@@ -1116,12 +1116,12 @@ def get_medication(medication_id):
 
 @openemr_tool(
     "add_medication",
-    "为患者添加药物记录。",
+    "Add a medication record for a patient.",
     {
-        "patient_id": {"type": "string", "description": "患者 ID"},
-        "medication_name": {"type": "string", "description": "药物名称"},
-        "instructions": {"type": "string", "description": "用法说明"},
-        "start_date": {"type": "string", "description": "开始日期，如 2026-04-01"},
+        "patient_id": {"type": "string", "description": "Patient ID"},
+        "medication_name": {"type": "string", "description": "Medication name"},
+        "instructions": {"type": "string", "description": "Usage instructions"},
+        "start_date": {"type": "string", "description": "Start date, for example 2026-04-01"},
     },
     required=["patient_id", "medication_name"],
     is_write=True,
@@ -1145,7 +1145,7 @@ def add_medication(patient_id, medication_name, instructions="", start_date=""):
     )
     lines = [line.strip() for line in output.splitlines() if line.strip()]
     if not lines:
-        raise ToolExecutionError("[错误] 添加药物记录成功，但未能获取 medication_id")
+        raise ToolExecutionError("[Error] Medication record was created but medication_id could not be retrieved")
     medication_id = f"MED-{lines[-1]}"
     _run_mysql(
         "UPDATE lists SET external_id = {medication_id} WHERE id = {row_id} LIMIT 1;".format(
@@ -1158,10 +1158,10 @@ def add_medication(patient_id, medication_name, instructions="", start_date=""):
 
 @openemr_tool(
     "discontinue_medication",
-    "停用一条药物记录。",
+    "Discontinue a medication record.",
     {
-        "medication_id": {"type": "string", "description": "药物记录 ID"},
-        "end_date": {"type": "string", "description": "停用日期，如 2026-04-15"},
+        "medication_id": {"type": "string", "description": "Medication record ID"},
+        "end_date": {"type": "string", "description": "Discontinuation date, for example 2026-04-15"},
     },
     required=["medication_id"],
     is_write=True,
@@ -1186,9 +1186,9 @@ def discontinue_medication(medication_id, end_date=""):
 
 @openemr_tool(
     "list_patient_insurance",
-    "列出患者的保险记录。",
+    "List insurance records for a patient.",
     {
-        "patient_id": {"type": "string", "description": "患者 ID"},
+        "patient_id": {"type": "string", "description": "Patient ID"},
     },
     required=["patient_id"],
     group="insurance",
@@ -1204,9 +1204,9 @@ def list_patient_insurance(patient_id):
 
 @openemr_tool(
     "get_insurance_policy",
-    "读取单条保险记录详情。",
+    "Read details for a single insurance policy.",
     {
-        "policy_id": {"type": "string", "description": "保险记录 ID，如 INS-100"},
+        "policy_id": {"type": "string", "description": "Insurance policy ID, for example INS-100"},
     },
     required=["policy_id"],
     group="insurance",
@@ -1218,15 +1218,15 @@ def get_insurance_policy(policy_id):
 
 @openemr_tool(
     "add_insurance_policy",
-    "为患者添加保险记录。",
+    "Add an insurance policy for a patient.",
     {
-        "patient_id": {"type": "string", "description": "患者 ID"},
-        "coverage_type": {"type": "string", "description": "primary、secondary 或 tertiary"},
-        "provider": {"type": "string", "description": "保险提供方"},
-        "plan_name": {"type": "string", "description": "保险计划名"},
-        "policy_number": {"type": "string", "description": "保单号"},
-        "start_date": {"type": "string", "description": "生效日期，如 2026-04-01"},
-        "end_date": {"type": "string", "description": "结束日期，可留空"},
+        "patient_id": {"type": "string", "description": "Patient ID"},
+        "coverage_type": {"type": "string", "description": "primary, secondary, or tertiary"},
+        "provider": {"type": "string", "description": "Insurance provider"},
+        "plan_name": {"type": "string", "description": "Insurance plan name"},
+        "policy_number": {"type": "string", "description": "Policy number"},
+        "start_date": {"type": "string", "description": "Start date, for example 2026-04-01"},
+        "end_date": {"type": "string", "description": "End date, optional"},
     },
     required=["patient_id", "coverage_type", "provider", "plan_name", "policy_number", "start_date"],
     is_write=True,
@@ -1237,7 +1237,7 @@ def add_insurance_policy(patient_id, coverage_type, provider, plan_name, policy_
     patient = _require_patient(patient_id)
     normalized_type = str(coverage_type or "").lower()
     if normalized_type not in {"primary", "secondary", "tertiary"}:
-        raise ToolExecutionError("[错误] coverage_type 必须是 primary、secondary 或 tertiary")
+        raise ToolExecutionError("[Error] coverage_type must be primary, secondary, or tertiary")
     output = _run_mysql(
         """
         INSERT INTO insurance_data
@@ -1258,16 +1258,16 @@ def add_insurance_policy(patient_id, coverage_type, provider, plan_name, policy_
     )
     lines = [line.strip() for line in output.splitlines() if line.strip()]
     if not lines:
-        raise ToolExecutionError("[错误] 添加保险记录成功，但未能获取 policy_id")
+        raise ToolExecutionError("[Error] Insurance policy was created but policy_id could not be retrieved")
     return _format_json(_require_insurance_policy(f"INS-{lines[-1]}"))
 
 
 @openemr_tool(
     "terminate_insurance_policy",
-    "终止一条保险记录。",
+    "Terminate an insurance policy.",
     {
-        "policy_id": {"type": "string", "description": "保险记录 ID"},
-        "end_date": {"type": "string", "description": "结束日期，如 2026-04-30"},
+        "policy_id": {"type": "string", "description": "Insurance policy ID"},
+        "end_date": {"type": "string", "description": "End date, for example 2026-04-30"},
     },
     required=["policy_id", "end_date"],
     is_write=True,

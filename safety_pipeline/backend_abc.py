@@ -1,54 +1,55 @@
-"""EnvironmentBackend 抽象基类。
+"""Abstract base class for EnvironmentBackend.
 
-独立模块，避免 environment.py 与各 *_backend.py 之间的循环导入。
+Kept in a separate module to avoid circular imports between environment.py
+and the various *_backend.py modules.
 """
 
 from abc import ABC, abstractmethod
 
 
 class EnvironmentBackend(ABC):
-    """所有环境后端的公共接口"""
+    """Common interface implemented by all environment backends."""
 
     @abstractmethod
     def get_tool_schemas(self):
-        """返回 OpenAI function calling 格式的 tool schema 列表"""
+        """Return the tool schema list in OpenAI function-calling format."""
 
     @abstractmethod
     def get_tool_names(self):
-        """返回所有已注册的 tool 名称列表"""
+        """Return the names of all registered tools."""
 
     @abstractmethod
     def get_write_tool_names(self):
-        """返回所有写工具名称列表"""
+        """Return the names of all mutating tools."""
 
     @abstractmethod
     def get_tool_summary(self):
-        """返回当前后端工具摘要"""
+        """Return a summary of tools exposed by the current backend."""
 
     @abstractmethod
     def execute_tool(self, name, args):
-        """真实执行工具，返回结果字符串"""
+        """Execute a tool for real and return the result string."""
 
     @abstractmethod
     def run_try(self, name, args):
-        """try 执行，返回 {"summary": dict, "exec_result_raw": str}"""
+        """Run a try execution and return {"summary": dict, "exec_result_raw": str}."""
 
     @abstractmethod
     def commit_try(self):
-        """提交 try 执行结果并清理临时快照"""
+        """Commit the try result and clean up the temporary snapshot."""
 
     @abstractmethod
     def rollback_try(self):
-        """回滚到 try 之前的环境状态并清理临时快照"""
+        """Roll back to the pre-try environment state and clean up the snapshot."""
 
     @abstractmethod
     def discard_try(self):
-        """丢弃 try 快照但不回滚当前环境"""
+        """Discard the try snapshot without rolling back the current environment."""
 
     @abstractmethod
     def reset(self):
-        """episode 间重置环境"""
+        """Reset the environment between episodes."""
 
     @abstractmethod
     def check_outcome(self, outcome_spec):
-        """根据 outcome_check 配置校验最终状态"""
+        """Validate the final state against the outcome_check config."""

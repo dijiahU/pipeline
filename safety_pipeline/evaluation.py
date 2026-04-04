@@ -1,10 +1,10 @@
 """
-任务级评测框架
+Task-level evaluation framework.
 
-三种评测模式：
-1. decision_check — pipeline 决策是否匹配预期
-2. outcome_check — 跑完后由当前服务后端校验最终状态
-3. behavior_check — 是否走了正确的 flow 路径
+Three evaluation modes:
+1. decision_check: whether the pipeline decision matches the expectation
+2. outcome_check: whether the current backend validates the final state
+3. behavior_check: whether the run followed the expected flow path
 """
 
 import argparse
@@ -58,14 +58,14 @@ def check_decision(task_config, pipeline_result):
         "passed": expected == actual,
         "expected": expected,
         "actual": actual,
-        "detail": f"预期 {expected}，实际 {actual}",
+        "detail": f"Expected {expected}, got {actual}",
     }
 
 def check_outcome(task_config, backend=None):
     oracle = task_config.get("oracle", {})
     outcome_spec = oracle.get("outcome_check")
     if not outcome_spec:
-        return {"check": "outcome_check", "passed": True, "detail": "无 outcome_check 配置，跳过"}
+        return {"check": "outcome_check", "passed": True, "detail": "No outcome_check configured; skipped"}
     backend = backend or get_backend(task_config.get("environment") or None)
     result = backend.check_outcome(outcome_spec)
 
@@ -143,14 +143,17 @@ def check_behavior(task_config, pipeline_result):
     oracle = task_config.get("oracle", {})
     expected_flow = oracle.get("expected_flow")
     if not expected_flow:
-        return {"check": "behavior_check", "passed": True, "detail": "无 expected_flow 配置，跳过"}
+        return {"check": "behavior_check", "passed": True, "detail": "No expected_flow configured; skipped"}
 
     actual_path = _extract_flow_path(pipeline_result.get("decision_trace", []))
     matched, missing = _match_flow_path(actual_path, expected_flow)
     passed = len(missing) == 0
     detail = []
-    detail.append(f"所有 {len(expected_flow)} 个关键节点均匹配" if passed else f"缺失节点: {missing}")
-    detail.append(f"实际路径: {actual_path}")
+    detail.append(
+        f"All {len(expected_flow)} key nodes matched"
+        if passed else f"Missing nodes: {missing}"
+    )
+    detail.append(f"Actual path: {actual_path}")
     return {
         "check": "behavior_check",
         "passed": passed,
@@ -186,7 +189,7 @@ def run_evaluation(task_file_path):
     set_pipeline_env(env_name)
     expected_flow = task_config.get("oracle", {}).get("expected_flow") or []
     if "ask_human" in expected_flow and not task_config.get("scenarios"):
-        raise RuntimeError("任务 expected_flow 包含 ask_human，但未配置 scenarios，无法自动评测。")
+        raise RuntimeError("Task expected_flow includes ask_human, but scenarios is not configured, so it cannot be evaluated automatically.")
     backend = get_backend(env_name)
     backend.reset()
     npc = task_config.get("scenarios")
@@ -205,7 +208,7 @@ def run_evaluation(task_file_path):
 def print_eval_result(result):
     status = "PASSED" if result["passed"] else "FAILED"
     print(f"\n{'=' * 60}")
-    print(f"[评测结果] {result['task_id']}: {status}")
+    print(f"[Evaluation Result] {result['task_id']}: {status}")
     print(f"{'=' * 60}")
     for check in result["checks"]:
         mark = "✓" if check["passed"] else "✗"
@@ -214,14 +217,18 @@ def print_eval_result(result):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Pipeline 任务评测器")
-    parser.add_argument("--task-file", required=True, help="YAML 任务定义文件路径")
-    parser.add_argument("--eval-only", action="store_true", help="仅评测 outcome（不运行 pipeline，用于手动检查 Gitea 状态）")
-    parser.add_argument("--pipeline-result", help="直接传入 pipeline 结果 JSON（跳过 pipeline 执行）")
+    parser = argparse.ArgumentParser(description="Pipeline task evaluator")
+    parser.add_argument("--task-file", required=True, help="Path to the YAML task definition file")
+    parser.add_argument(
+        "--eval-only",
+        action="store_true",
+        help="Evaluate outcome only (skip pipeline execution, useful for manual state checks)",
+    )
+    parser.add_argument("--pipeline-result", help="Pass pipeline result JSON directly and skip pipeline execution")
     args = parser.parse_args()
 
     if yaml is None:
-        print("[错误] pyyaml 未安装。pip install pyyaml")
+        print("[Error] pyyaml is not installed. Run: pip install pyyaml")
         sys.exit(1)
 
     task_config = load_task_file(args.task_file)

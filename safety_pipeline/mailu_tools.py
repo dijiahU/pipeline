@@ -1,8 +1,8 @@
 """
-Mailu Admin REST API + SMTP/IMAP 工具注册。
+Mailu Admin REST API plus SMTP/IMAP tool registration.
 
-Admin API 使用 Bearer Token 认证。
-邮件读取通过 IMAP，邮件发送通过 SMTP。
+The Admin API uses Bearer token authentication.
+Mail reading is done through IMAP, and mail sending is done through SMTP.
 """
 
 import email as email_lib
@@ -70,7 +70,7 @@ def get_tool_summary():
 
 def _require_requests():
     if requests is None:
-        raise ToolExecutionError("requests 库未安装。pip install requests")
+        raise ToolExecutionError("requests is not installed. Run: pip install requests")
 
 
 def _headers():
@@ -88,13 +88,13 @@ def _api(method, path, **kwargs):
     try:
         return requests.request(method, url, **kwargs)
     except requests.RequestException as exc:
-        raise ToolExecutionError(f"[Mailu 请求失败] {type(exc).__name__}: {exc}") from exc
+        raise ToolExecutionError(f"[Mailu Request Failed] {type(exc).__name__}: {exc}") from exc
 
 
 def _api_json(method, path, **kwargs):
     resp = _api(method, path, **kwargs)
     if resp.status_code >= 400:
-        raise ToolExecutionError(f"[Mailu API 错误] {resp.status_code}: {resp.text[:500]}")
+        raise ToolExecutionError(f"[Mailu API Error] {resp.status_code}: {resp.text[:500]}")
     if not resp.text:
         return None
     try:
@@ -541,7 +541,7 @@ def _imap_connect(email_addr, password):
         conn.login(email_addr, password)
         return conn
     except imaplib.IMAP4.error as exc:
-        raise ToolExecutionError(f"[IMAP 登录失败] {email_addr}: {exc}") from exc
+        raise ToolExecutionError(f"[IMAP Login Failed] {email_addr}: {exc}") from exc
 
 
 def _get_user_password(email_addr):
@@ -574,7 +574,7 @@ def list_mailbox_folders(email, password=None):
     try:
         status, folders = conn.list()
         if status != "OK":
-            raise ToolExecutionError(f"[IMAP] 获取文件夹失败: {status}")
+            raise ToolExecutionError(f"[IMAP] Failed to list folders: {status}")
         result = []
         for f in folders:
             if isinstance(f, bytes):
@@ -648,7 +648,7 @@ def read_email(email, message_id, password=None, folder="INBOX"):
         conn.select(folder, readonly=True)
         status, msg_data = conn.fetch(str(message_id).encode(), "(RFC822)")
         if status != "OK" or not msg_data[0]:
-            raise ToolExecutionError(f"[IMAP] 邮件 {message_id} 不存在")
+            raise ToolExecutionError(f"[IMAP] Email {message_id} does not exist")
         raw = msg_data[0][1]
         if isinstance(raw, bytes):
             raw = raw.decode("utf-8", errors="replace")
@@ -683,7 +683,7 @@ def read_email(email, message_id, password=None, folder="INBOX"):
 
 @mailu_tool(
     "send_email",
-    "Send an email from a user. WARNING: This operation is IRREVERSIBLE — sent emails cannot be recalled.",
+    "Send an email from a user. WARNING: This operation is IRREVERSIBLE - sent emails cannot be recalled.",
     {
         "from_email": {"type": "string", "description": "Sender email address."},
         "to_email": {"type": "string", "description": "Recipient email address."},
@@ -707,7 +707,7 @@ def send_email(from_email, to_email, subject, body, password=None):
             smtp.login(from_email, pw)
             smtp.sendmail(from_email, [to_email], msg.as_string())
     except smtplib.SMTPException as exc:
-        raise ToolExecutionError(f"[SMTP 发送失败] {exc}") from exc
+        raise ToolExecutionError(f"[SMTP Send Failed] {exc}") from exc
     return f"Email sent from '{from_email}' to '{to_email}' (subject: '{subject}'). This action is irreversible."
 
 
@@ -744,7 +744,7 @@ def send_email_with_attachment(from_email, to_email, subject, body, attachment_n
             smtp.login(from_email, pw)
             smtp.sendmail(from_email, [to_email], msg.as_string())
     except smtplib.SMTPException as exc:
-        raise ToolExecutionError(f"[SMTP 发送失败] {exc}") from exc
+        raise ToolExecutionError(f"[SMTP Send Failed] {exc}") from exc
     return f"Email with attachment '{attachment_name}' sent from '{from_email}' to '{to_email}'. This action is irreversible."
 
 

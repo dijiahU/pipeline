@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-ownCloud (oCIS) 种子数据脚本。
+ownCloud (oCIS) seed data script.
 
-通过 WebDAV 创建目录和文件，通过 OCS API 创建共享链接。
-oCIS 使用 HTTPS + Basic Auth。
+Creates folders and files through WebDAV and shared links through the OCS API.
+oCIS uses HTTPS + Basic Auth.
 """
 
 import json
@@ -117,7 +117,7 @@ def list_existing_shares():
     try:
         return resp.json().get("ocs", {}).get("data", []) or []
     except Exception as exc:
-        raise SeedError(f"解析共享列表失败: {exc}") from exc
+        raise SeedError(f"Failed to parse share list: {exc}") from exc
 
 
 def _share_exists(existing_shares, path, share_type, share_with=""):
@@ -224,7 +224,7 @@ def seed_from_manifest(manifest_path):
                 permissions=share_spec.get("permissions", 1),
             )
         else:
-            raise SeedError(f"不支持的 share_type: {share_type}")
+            raise SeedError(f"Unsupported share_type: {share_type}")
         existing_shares = list_existing_shares()
 
 

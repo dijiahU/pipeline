@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-NocoDB 种子数据脚本。
+NocoDB seed data script.
 
-读取 seed_manifest.json，通过 NocoDB REST API v2 创建 base、table 和 record。
-NocoDB v0.300+ 使用 workspace 层级：workspace → base → table → record。
+Reads seed_manifest.json and creates bases, tables, and records through the
+NocoDB REST API v2. NocoDB v0.300+ uses the workspace hierarchy:
+workspace -> base -> table -> record.
 """
 
 import json

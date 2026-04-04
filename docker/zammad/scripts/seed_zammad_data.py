@@ -8,7 +8,7 @@ try:
     import requests
     from requests.auth import HTTPBasicAuth
 except ModuleNotFoundError as exc:
-    raise SystemExit("requests 未安装，无法 seed Zammad 数据。") from exc
+    raise SystemExit("requests is not installed, so Zammad seed data cannot be created.") from exc
 
 
 BASE_URL = os.environ.get("ZAMMAD_BASE_URL", "http://localhost:8081").rstrip("/")
@@ -51,12 +51,12 @@ def wait_for_api():
         except Exception:
             pass
         time.sleep(5)
-    raise RuntimeError("等待 Zammad API 就绪超时")
+    raise RuntimeError("Timed out waiting for the Zammad API to become ready")
 
 
 def load_manifest():
     if not MANIFEST_PATH:
-        raise RuntimeError("未提供 ZAMMAD_SEED_MANIFEST")
+        raise RuntimeError("ZAMMAD_SEED_MANIFEST was not provided")
     with open(MANIFEST_PATH, "r", encoding="utf-8") as fh:
         return json.load(fh)
 
@@ -259,7 +259,7 @@ def ensure_ticket(ticket):
     if owner_email:
         owner = find_user_by_email(owner_email)
         if not owner:
-            raise RuntimeError(f"找不到工单负责人: {owner_email}")
+            raise RuntimeError(f"Ticket owner not found: {owner_email}")
         update_payload["owner_id"] = owner["id"]
     api("PUT", f"tickets/{ticket_id}", json=update_payload)
 

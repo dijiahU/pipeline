@@ -1053,7 +1053,7 @@ def action_cancel_invoice(payload):
         raise frappe.DoesNotExistError(f"Sales Invoice {invoice_name} does not exist")
     doc = frappe.get_doc("Sales Invoice", invoice_name)
     if doc.docstatus != 1:
-        raise ValueError(f"发票 {invoice_name} 尚未提交（docstatus={doc.docstatus}），无法取消")
+        raise ValueError(f"Invoice {invoice_name} has not been submitted yet (docstatus={doc.docstatus}) and cannot be canceled")
     doc.cancel()
     doc.reload()
     return {"invoice_name": invoice_name, "status": doc.status, "docstatus": doc.docstatus}
@@ -1065,7 +1065,7 @@ def action_cancel_purchase_invoice(payload):
         raise frappe.DoesNotExistError(f"Purchase Invoice {invoice_name} does not exist")
     doc = frappe.get_doc("Purchase Invoice", invoice_name)
     if doc.docstatus != 1:
-        raise ValueError(f"采购发票 {invoice_name} 尚未提交（docstatus={doc.docstatus}），无法取消")
+        raise ValueError(f"Purchase invoice {invoice_name} has not been submitted yet (docstatus={doc.docstatus}) and cannot be canceled")
     doc.cancel()
     doc.reload()
     return {"purchase_invoice_name": invoice_name, "status": doc.status, "docstatus": doc.docstatus}

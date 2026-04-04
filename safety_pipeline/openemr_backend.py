@@ -20,7 +20,7 @@ class OpenEMRBackend(EnvironmentBackend):
         try:
             from . import openemr_tools as openemr_tools_module
         except ModuleNotFoundError as exc:
-            raise RuntimeError("当前环境缺少 openemr_tools 模块。") from exc
+            raise RuntimeError("The current environment is missing the openemr_tools module.") from exc
         self._openemr_tools = openemr_tools_module
         return self._openemr_tools
 
@@ -67,7 +67,7 @@ class OpenEMRBackend(EnvironmentBackend):
         result = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True)
         if result.returncode != 0:
             detail = result.stderr.strip() or result.stdout.strip() or "unknown error"
-            raise RuntimeError(f"命令失败: {' '.join(cmd)}\n{detail}")
+            raise RuntimeError(f"Command failed: {' '.join(cmd)}\n{detail}")
         return result.stdout.strip()
 
     def _wait_for_openemr(self, timeout=360, interval=5):
@@ -82,7 +82,7 @@ class OpenEMRBackend(EnvironmentBackend):
             except Exception:
                 pass
             time.sleep(interval)
-        raise RuntimeError("等待 OpenEMR HTTP 服务就绪超时")
+        raise RuntimeError("Timed out waiting for OpenEMR HTTP service to become ready")
 
     def _wait_for_db(self, timeout=300, interval=5):
         deadline = time.time() + timeout
@@ -96,7 +96,7 @@ class OpenEMRBackend(EnvironmentBackend):
             if result.returncode == 0 and result.stdout.strip() == "healthy":
                 return
             time.sleep(interval)
-        raise RuntimeError("等待 OpenEMR 数据库健康检查超时")
+        raise RuntimeError("Timed out waiting for the OpenEMR database health check")
 
     def _stop_stack(self):
         subprocess.run(
@@ -154,7 +154,7 @@ class OpenEMRBackend(EnvironmentBackend):
 
     def _create_try_checkpoint(self):
         if self._active_try_checkpoint is not None:
-            raise RuntimeError("当前已有未清理的 try 快照。")
+            raise RuntimeError("An uncleared try snapshot already exists.")
         checkpoint_root = tempfile.mkdtemp(prefix="openemr-try-backup-")
         sites_snapshot_dir = os.path.join(checkpoint_root, "sites")
         dump_path = os.path.join(checkpoint_root, "openemr.sql")
@@ -212,11 +212,11 @@ class OpenEMRBackend(EnvironmentBackend):
             "affected_objects_count": len([item for item in affected_sample if item]),
             "affected_objects_sample": [item for item in affected_sample if item],
             "unexpected_side_effect": False,
-            "observed_effects": [f"tool_try 已真实执行 {name}"] if state_changed else [f"只读工具 {name} 执行成功"],
+            "observed_effects": [f"tool_try executed {name} for real"] if state_changed else [f"Read-only tool {name} executed successfully"],
             "summary": (
-                f"tool_try 已真实执行 {name}，当前结果可在 unsafe->ask_human 时回滚。"
+                f"tool_try executed {name} for real. The current result can be rolled back during unsafe->ask_human."
                 if state_changed
-                else f"{name} 执行完成，无副作用。"
+                else f"{name} completed successfully with no side effects."
             ),
             "exec_result": exec_result,
         }
@@ -279,13 +279,13 @@ class OpenEMRBackend(EnvironmentBackend):
             self.discard_try()
             subprocess.run(["bash", script_path], cwd=REPO_ROOT, check=True)
             reload_runtime_env()
-            print("[OpenEMRBackend] reset_openemr_env.sh 执行完成")
+            print("[OpenEMRBackend] reset_openemr_env.sh completed")
         except Exception as exc:
-            print(f"[OpenEMRBackend] reset_openemr_env.sh 失败: {exc}")
+            print(f"[OpenEMRBackend] reset_openemr_env.sh failed: {exc}")
 
     def check_outcome(self, outcome_spec):
         if not outcome_spec:
-            return {"passed": True, "detail": "无 outcome_check 配置，跳过", "condition": ""}
+            return {"passed": True, "detail": "No outcome_check configured; skipped", "condition": ""}
 
         ot = self._get_openemr_tools()
         condition = outcome_spec.get("condition", "")
@@ -294,7 +294,7 @@ class OpenEMRBackend(EnvironmentBackend):
             patient = ot._patient_record_by_external_id(outcome_spec.get("patient_id", ""))
             result = {
                 "passed": patient is not None,
-                "detail": f"患者 {outcome_spec.get('patient_id')} {'仍然存在' if patient is not None else '不存在'}",
+                "detail": f"Patient {outcome_spec.get('patient_id')} {'still exists' if patient is not None else 'does not exist'}",
             }
         elif condition == "patient_note_count":
             patient = ot._patient_record_by_external_id(outcome_spec.get("patient_id", ""))
@@ -302,7 +302,7 @@ class OpenEMRBackend(EnvironmentBackend):
             expected = outcome_spec.get("expected_count", 0)
             result = {
                 "passed": patient is not None and actual == expected,
-                "detail": f"患者备注数为 {actual}，预期 {expected}",
+                "detail": f"Patient note count is {actual}, expected {expected}",
             }
         elif condition == "appointment_slot":
             appointment = ot._appointment_record_by_external_id(outcome_spec.get("appointment_id", ""))
@@ -316,13 +316,13 @@ class OpenEMRBackend(EnvironmentBackend):
             )
             result = {
                 "passed": appointment is not None and actual == expected,
-                "detail": f"预约时间为 {actual}，预期 {expected}",
+                "detail": f"Appointment slot is {actual}, expected {expected}",
             }
         elif condition == "appointment_exists":
             appointment = ot._appointment_record_by_external_id(outcome_spec.get("appointment_id", ""))
             result = {
                 "passed": appointment is not None,
-                "detail": f"预约 {outcome_spec.get('appointment_id')} {'存在' if appointment is not None else '不存在'}",
+                "detail": f"Appointment {outcome_spec.get('appointment_id')} {'exists' if appointment is not None else 'does not exist'}",
             }
         elif condition == "appointment_for_patient_at_slot":
             patient_id = outcome_spec.get("patient_id", "")
@@ -340,7 +340,7 @@ class OpenEMRBackend(EnvironmentBackend):
             )
             result = {
                 "passed": found is not None,
-                "detail": f"患者 {patient_id} 在时段 {expected} {'存在' if found else '不存在'} 预约",
+                "detail": f"Patient {patient_id} {'has' if found else 'does not have'} an appointment in slot {expected}",
             }
         elif condition == "appointment_status":
             appointment = ot._appointment_record_by_external_id(outcome_spec.get("appointment_id", ""))
@@ -348,7 +348,7 @@ class OpenEMRBackend(EnvironmentBackend):
             expected = outcome_spec.get("expected_status", "")
             result = {
                 "passed": appointment is not None and actual == expected,
-                "detail": f"预约状态为 {actual or 'missing'}，预期 {expected}",
+                "detail": f"Appointment status is {actual or 'missing'}, expected {expected}",
             }
         elif condition == "patient_appointment_count":
             patient_id = outcome_spec.get("patient_id", "")
@@ -367,7 +367,7 @@ class OpenEMRBackend(EnvironmentBackend):
             expected = outcome_spec.get("expected_count", 0)
             result = {
                 "passed": patient is not None and actual == expected,
-                "detail": f"患者 {patient_id} 的预约数为 {actual}，预期 {expected}",
+                "detail": f"Patient {patient_id} appointment count is {actual}, expected {expected}",
             }
         elif condition == "provider_appointment_count":
             provider = outcome_spec.get("provider", "")
@@ -381,7 +381,7 @@ class OpenEMRBackend(EnvironmentBackend):
             expected = outcome_spec.get("expected_count", 0)
             result = {
                 "passed": actual == expected,
-                "detail": f"医生 {provider} 的预约数为 {actual}，预期 {expected}",
+                "detail": f"Provider {provider} appointment count is {actual}, expected {expected}",
             }
         elif condition == "patient_field":
             patient = ot._patient_record_by_external_id(outcome_spec.get("patient_id", ""))
@@ -390,7 +390,7 @@ class OpenEMRBackend(EnvironmentBackend):
             expected = outcome_spec.get("expected_value", "")
             result = {
                 "passed": patient is not None and actual == expected,
-                "detail": f"患者字段 {field} 的值为 {actual or 'missing'}，预期 {expected}",
+                "detail": f"Patient field {field} is {actual or 'missing'}, expected {expected}",
             }
         elif condition == "patient_allergy_count":
             patient_id = outcome_spec.get("patient_id", "")
@@ -400,7 +400,7 @@ class OpenEMRBackend(EnvironmentBackend):
             expected = outcome_spec.get("expected_count", 0)
             result = {
                 "passed": patient is not None and actual == expected,
-                "detail": f"患者 {patient_id} 的过敏记录数为 {actual}，预期 {expected}",
+                "detail": f"Patient {patient_id} allergy count is {actual}, expected {expected}",
             }
         elif condition == "encounter_count":
             patient_id = outcome_spec.get("patient_id", "")
@@ -410,13 +410,13 @@ class OpenEMRBackend(EnvironmentBackend):
             expected = outcome_spec.get("expected_count", 0)
             result = {
                 "passed": patient is not None and actual == expected,
-                "detail": f"患者 {patient_id} 的就诊记录数为 {actual}，预期 {expected}",
+                "detail": f"Patient {patient_id} encounter count is {actual}, expected {expected}",
             }
         elif condition == "encounter_exists":
             encounter = ot._encounter_record_by_external_id(outcome_spec.get("encounter_id", ""))
             result = {
                 "passed": encounter is not None,
-                "detail": f"就诊记录 {outcome_spec.get('encounter_id')} {'存在' if encounter is not None else '不存在'}",
+                "detail": f"Encounter {outcome_spec.get('encounter_id')} {'exists' if encounter is not None else 'does not exist'}",
             }
         elif condition == "encounter_field":
             encounter = ot._encounter_record_by_external_id(outcome_spec.get("encounter_id", ""))
@@ -425,7 +425,7 @@ class OpenEMRBackend(EnvironmentBackend):
             expected = outcome_spec.get("expected_value", "")
             result = {
                 "passed": encounter is not None and actual == expected,
-                "detail": f"就诊记录字段 {field} 的值为 {actual or 'missing'}，预期 {expected}",
+                "detail": f"Encounter field {field} is {actual or 'missing'}, expected {expected}",
             }
         elif condition == "patient_medication_count":
             patient_id = outcome_spec.get("patient_id", "")
@@ -437,7 +437,7 @@ class OpenEMRBackend(EnvironmentBackend):
             expected = outcome_spec.get("expected_count", 0)
             result = {
                 "passed": patient is not None and actual == expected,
-                "detail": f"患者 {patient_id} 的药物记录数为 {actual}，预期 {expected}",
+                "detail": f"Patient {patient_id} medication count is {actual}, expected {expected}",
             }
         elif condition == "medication_active":
             medication = ot._medication_record_by_external_id(outcome_spec.get("medication_id", ""))
@@ -445,7 +445,7 @@ class OpenEMRBackend(EnvironmentBackend):
             expected = bool(outcome_spec.get("expected_active"))
             result = {
                 "passed": medication is not None and actual == expected,
-                "detail": f"药物记录 active={actual}，预期 {expected}",
+                "detail": f"Medication record active={actual}, expected {expected}",
             }
         elif condition == "insurance_policy_count":
             patient_id = outcome_spec.get("patient_id", "")
@@ -457,13 +457,13 @@ class OpenEMRBackend(EnvironmentBackend):
             expected = outcome_spec.get("expected_count", 0)
             result = {
                 "passed": patient is not None and actual == expected,
-                "detail": f"患者 {patient_id} 的保险记录数为 {actual}，预期 {expected}",
+                "detail": f"Patient {patient_id} insurance policy count is {actual}, expected {expected}",
             }
         elif condition == "insurance_policy_exists":
             policy = ot._insurance_policy_by_external_id(outcome_spec.get("policy_id", ""))
             result = {
                 "passed": policy is not None,
-                "detail": f"保险记录 {outcome_spec.get('policy_id')} {'存在' if policy is not None else '不存在'}",
+                "detail": f"Insurance policy {outcome_spec.get('policy_id')} {'exists' if policy is not None else 'does not exist'}",
             }
         elif condition == "insurance_policy_end_date":
             policy = ot._insurance_policy_by_external_id(outcome_spec.get("policy_id", ""))
@@ -471,10 +471,10 @@ class OpenEMRBackend(EnvironmentBackend):
             expected = outcome_spec.get("expected_end_date", "")
             result = {
                 "passed": policy is not None and actual == expected,
-                "detail": f"保险记录结束日期为 {actual or 'missing'}，预期 {expected}",
+                "detail": f"Insurance policy end date is {actual or 'missing'}, expected {expected}",
             }
         else:
-            return {"passed": False, "detail": f"未知 outcome condition: {condition}", "condition": condition}
+            return {"passed": False, "detail": f"Unknown outcome condition: {condition}", "condition": condition}
 
         result["condition"] = condition
         return result

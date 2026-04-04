@@ -1,8 +1,9 @@
 """
-ownCloud (oCIS) WebDAV + OCS 工具注册。
+ownCloud (oCIS) WebDAV + OCS tool registration.
 
-通过 WebDAV 进行文件/文件夹操作，通过 OCS API 管理共享链接。
-公共接口（给 environment.py 调用）:
+Uses WebDAV for file and folder operations, and the OCS API for managing
+share links.
+Public interface exposed to environment.py:
   get_all_schemas() -> list
   call_tool(name, args) -> str
   get_tool_names() -> list
@@ -78,7 +79,7 @@ def get_tool_summary():
 
 def _require_requests():
     if requests is None:
-        raise ToolExecutionError("requests 库未安装，无法调用 ownCloud API。pip install requests")
+        raise ToolExecutionError("requests is not installed, so the ownCloud API cannot be called. Run: pip install requests")
 
 
 def _auth():
@@ -135,7 +136,7 @@ def _api(method, url, **kwargs):
     try:
         return requests.request(method, url, **kwargs)
     except requests.RequestException as exc:
-        raise ToolExecutionError(f"[ownCloud 请求失败] {type(exc).__name__}: {exc}") from exc
+        raise ToolExecutionError(f"[ownCloud Request Failed] {type(exc).__name__}: {exc}") from exc
 
 
 def _format_json(data):
@@ -272,7 +273,7 @@ def _extract_ocs_data(resp, action_label):
     try:
         root = ET.fromstring(resp.text)
     except ET.ParseError as exc:
-        raise ToolExecutionError(f"[错误] {action_label} 返回了无效响应: {resp.text[:300]}") from exc
+        raise ToolExecutionError(f"[Error] {action_label} returned an invalid response: {resp.text[:300]}") from exc
 
     data_node = None
     for child in root.iter():
@@ -280,7 +281,7 @@ def _extract_ocs_data(resp, action_label):
             data_node = child
             break
     if data_node is None:
-        raise ToolExecutionError(f"[错误] {action_label} 返回中缺少 data 节点: {resp.text[:300]}")
+        raise ToolExecutionError(f"[Error] {action_label} response is missing the data node: {resp.text[:300]}")
     return _xml_node_to_value(data_node)
 
 
@@ -292,8 +293,8 @@ def _list_shares_data(path=""):
         params["path"] = f"/{normalized}"
     resp = _api("GET", url, params=params, headers=_ocs_headers())
     if resp.status_code != 200:
-        raise ToolExecutionError(f"[错误] 获取共享列表失败: {resp.status_code}: {resp.text[:300]}")
-    data = _extract_ocs_data(resp, "获取共享列表")
+        raise ToolExecutionError(f"[Error] Failed to list shares: {resp.status_code}: {resp.text[:300]}")
+    data = _extract_ocs_data(resp, "list_shares")
     if isinstance(data, dict):
         data = [data]
     return [_normalize_share(item) for item in (data or [])]
@@ -303,13 +304,13 @@ def _get_share_data(share_id):
     url = _ocs_url(f"ocs/v2.php/apps/files_sharing/api/v1/shares/{share_id}")
     resp = _api("GET", url, params={"format": "json"}, headers=_ocs_headers())
     if resp.status_code == 404:
-        raise ToolExecutionError(f"[错误] 共享链接不存在: {share_id}")
+        raise ToolExecutionError(f"[Error] Share link does not exist: {share_id}")
     if resp.status_code != 200:
-        raise ToolExecutionError(f"[错误] 获取共享详情失败: {resp.status_code}: {resp.text[:300]}")
-    data = _extract_ocs_data(resp, "获取共享详情")
+        raise ToolExecutionError(f"[Error] Failed to fetch share details: {resp.status_code}: {resp.text[:300]}")
+    data = _extract_ocs_data(resp, "get_share")
     if isinstance(data, list):
         if not data:
-            raise ToolExecutionError(f"[错误] 未找到共享详情: {share_id}")
+            raise ToolExecutionError(f"[Error] Share details not found: {share_id}")
         data = data[0]
     return _normalize_share(data)
 
@@ -338,15 +339,15 @@ def _create_share_payload(path, share_type, name="", permissions=1, password="",
 
 @owncloud_tool(
     "list_files",
-    "列出指定目录下的文件和子目录。",
+    "List files and subdirectories under a specific directory.",
     {
         "path": {
             "type": "string",
-            "description": "目录路径，如 'Documents'。空字符串或 '/' 表示根目录。",
+            "description": "Directory path, for example 'Documents'. Empty string or '/' means the root directory.",
         },
         "depth": {
             "type": "string",
-            "description": "列出深度：'1' 仅当前层，'infinity' 递归列出所有。",
+            "description": "Listing depth: '1' for the current level only, 'infinity' for recursive listing.",
         },
     },
     group="file_browse",
@@ -357,20 +358,20 @@ def list_files(path="", depth="1"):
     url = _webdav_url(normalized)
     resp = _api("PROPFIND", url, headers={"Depth": depth})
     if resp.status_code == 404:
-        raise ToolExecutionError(f"[错误] 路径不存在: {normalized or '/'}")
+        raise ToolExecutionError(f"[Error] Path does not exist: {normalized or '/'}")
     if resp.status_code != 207:
-        raise ToolExecutionError(f"[错误] PROPFIND {normalized or '/'} -> {resp.status_code}: {resp.text[:300]}")
+        raise ToolExecutionError(f"[Error] PROPFIND {normalized or '/'} -> {resp.status_code}: {resp.text[:300]}")
     entries = _child_entries(normalized, _parse_propfind_entries(resp.text))
     return _format_json(entries)
 
 
 @owncloud_tool(
     "list_directory_tree",
-    "递归列出目录树中的所有文件和子目录。",
+    "Recursively list all files and subdirectories in a directory tree.",
     {
         "path": {
             "type": "string",
-            "description": "目录路径，如 'Projects/Website-Redesign'。",
+            "description": "Directory path, for example 'Projects/Website-Redesign'.",
         },
     },
     group="file_browse",
@@ -382,11 +383,11 @@ def list_directory_tree(path):
 
 @owncloud_tool(
     "read_file",
-    "读取指定文件的内容。",
+    "Read the contents of a specific file.",
     {
         "path": {
             "type": "string",
-            "description": "文件路径，如 'Documents/README.md'。",
+            "description": "File path, for example 'Documents/README.md'.",
         },
     },
     required=["path"],
@@ -398,19 +399,19 @@ def read_file(path):
     url = _webdav_url(normalized)
     resp = _api("GET", url)
     if resp.status_code == 404:
-        raise ToolExecutionError(f"[错误] 文件不存在: {normalized}")
+        raise ToolExecutionError(f"[Error] File does not exist: {normalized}")
     if resp.status_code != 200:
-        raise ToolExecutionError(f"[错误] GET {normalized} -> {resp.status_code}: {resp.text[:300]}")
+        raise ToolExecutionError(f"[Error] GET {normalized} -> {resp.status_code}: {resp.text[:300]}")
     return resp.text
 
 
 @owncloud_tool(
     "file_info",
-    "获取文件或目录的详细属性信息。",
+    "Get detailed metadata for a file or directory.",
     {
         "path": {
             "type": "string",
-            "description": "文件或目录路径。",
+            "description": "File or directory path.",
         },
     },
     required=["path"],
@@ -422,26 +423,26 @@ def file_info(path):
     url = _webdav_url(normalized)
     resp = _api("PROPFIND", url, headers={"Depth": "0"})
     if resp.status_code == 404:
-        raise ToolExecutionError(f"[错误] 路径不存在: {normalized}")
+        raise ToolExecutionError(f"[Error] Path does not exist: {normalized}")
     if resp.status_code != 207:
-        raise ToolExecutionError(f"[错误] PROPFIND {normalized} -> {resp.status_code}: {resp.text[:300]}")
+        raise ToolExecutionError(f"[Error] PROPFIND {normalized} -> {resp.status_code}: {resp.text[:300]}")
     entries = _parse_propfind_entries(resp.text)
     if entries:
         return _format_json(entries[0])
-    return _format_json({"error": "无法解析属性"})
+    return _format_json({"error": "Unable to parse properties"})
 
 
 @owncloud_tool(
     "search_files",
-    "按名称或路径关键字搜索文件和目录。",
+    "Search files and directories by name or path keyword.",
     {
         "query": {
             "type": "string",
-            "description": "搜索关键字，会匹配文件名和相对路径。",
+            "description": "Search keyword matched against file names and relative paths.",
         },
         "path": {
             "type": "string",
-            "description": "可选，限定搜索目录。空字符串表示全盘搜索。",
+            "description": "Optional directory scope. Empty string means search everywhere.",
         },
     },
     required=["query"],
@@ -451,7 +452,7 @@ def file_info(path):
 def search_files(query, path=""):
     keyword = (query or "").strip().casefold()
     if not keyword:
-        raise ToolExecutionError("[错误] query 不能为空")
+        raise ToolExecutionError("[Error] query cannot be empty")
     entries = json.loads(list_files(path=path, depth="infinity"))
     matches = []
     for entry in entries:
@@ -463,11 +464,11 @@ def search_files(query, path=""):
 
 @owncloud_tool(
     "list_shares",
-    "列出当前用户可见的共享记录。",
+    "List share records visible to the current user.",
     {
         "path": {
             "type": "string",
-            "description": "可选，筛选指定路径的共享。空字符串表示列出全部。",
+            "description": "Optional path filter. Empty string lists all shares.",
         },
     },
     group="sharing",
@@ -479,11 +480,11 @@ def list_shares(path=""):
 
 @owncloud_tool(
     "get_share",
-    "获取单个共享链接或共享记录的详情。",
+    "Get details for a single share link or share record.",
     {
         "share_id": {
             "type": "string",
-            "description": "共享记录 ID。",
+            "description": "Share record ID.",
         },
     },
     required=["share_id"],
@@ -496,11 +497,11 @@ def get_share(share_id):
 
 @owncloud_tool(
     "list_public_links",
-    "列出所有公开分享链接。",
+    "List all public share links.",
     {
         "path": {
             "type": "string",
-            "description": "可选，筛选指定路径下的公开链接。",
+            "description": "Optional path filter for public links under a specific path.",
         },
     },
     group="sharing",
@@ -513,11 +514,11 @@ def list_public_links(path=""):
 
 @owncloud_tool(
     "list_user_shares",
-    "列出共享给内部用户的共享记录。",
+    "List share records shared with internal users.",
     {
         "path": {
             "type": "string",
-            "description": "可选，筛选指定路径下的内部共享。",
+            "description": "Optional path filter for internal shares.",
         },
     },
     group="sharing",
@@ -535,11 +536,11 @@ def list_user_shares(path=""):
 
 @owncloud_tool(
     "create_folder",
-    "创建新目录。",
+    "Create a new directory.",
     {
         "path": {
             "type": "string",
-            "description": "目录路径，如 'Documents/NewFolder'。",
+            "description": "Directory path, for example 'Documents/NewFolder'.",
         },
     },
     required=["path"],
@@ -552,29 +553,29 @@ def create_folder(path):
     url = _webdav_url(normalized)
     resp = _api("MKCOL", url)
     if resp.status_code == 201:
-        return f"目录 {normalized} 创建成功。"
+        return f"Directory {normalized} was created successfully."
     if resp.status_code == 405:
-        return f"目录 {normalized} 已存在。"
+        return f"Directory {normalized} already exists."
     if resp.status_code == 409:
-        raise ToolExecutionError(f"[错误] 创建目录 {normalized} 失败: 父目录不存在 (409)")
-    raise ToolExecutionError(f"[错误] MKCOL {normalized} -> {resp.status_code}: {resp.text[:300]}")
+        raise ToolExecutionError(f"[Error] Failed to create directory {normalized}: parent directory does not exist (409)")
+    raise ToolExecutionError(f"[Error] MKCOL {normalized} -> {resp.status_code}: {resp.text[:300]}")
 
 
 @owncloud_tool(
     "upload_file",
-    "上传或覆盖一个文件。",
+    "Upload or overwrite a file.",
     {
         "path": {
             "type": "string",
-            "description": "文件路径，如 'Documents/report.txt'。",
+            "description": "File path, for example 'Documents/report.txt'.",
         },
         "content": {
             "type": "string",
-            "description": "文件内容（文本）。",
+            "description": "File content as text.",
         },
         "overwrite": {
             "type": "boolean",
-            "description": "是否允许覆盖已存在的文件，默认 true。",
+            "description": "Whether overwriting an existing file is allowed. Default: true.",
         },
     },
     required=["path", "content"],
@@ -587,7 +588,7 @@ def upload_file(path, content, overwrite=True):
     if not overwrite:
         probe = _api("PROPFIND", _webdav_url(normalized), headers={"Depth": "0"})
         if probe.status_code == 207:
-            raise ToolExecutionError(f"[错误] 文件已存在，且 overwrite=false: {normalized}")
+            raise ToolExecutionError(f"[Error] File already exists and overwrite=false: {normalized}")
     url = _webdav_url(normalized)
     resp = _api(
         "PUT",
@@ -596,17 +597,17 @@ def upload_file(path, content, overwrite=True):
         headers={"Content-Type": "application/octet-stream"},
     )
     if resp.status_code in (201, 204):
-        return f"文件 {normalized} 上传成功。"
-    raise ToolExecutionError(f"[错误] PUT {normalized} -> {resp.status_code}: {resp.text[:300]}")
+        return f"File {normalized} was uploaded successfully."
+    raise ToolExecutionError(f"[Error] PUT {normalized} -> {resp.status_code}: {resp.text[:300]}")
 
 
 @owncloud_tool(
     "delete_path",
-    "删除文件或目录（包含所有子内容）。危险操作，不可逆。",
+    "Delete a file or directory, including all child contents. This is destructive and irreversible.",
     {
         "path": {
             "type": "string",
-            "description": "要删除的文件或目录路径。",
+            "description": "Path of the file or directory to delete.",
         },
     },
     required=["path"],
@@ -619,27 +620,27 @@ def delete_path(path):
     url = _webdav_url(normalized)
     resp = _api("DELETE", url)
     if resp.status_code == 204:
-        return f"路径 {normalized} 已删除。"
+        return f"Path {normalized} has been deleted."
     if resp.status_code == 404:
-        raise ToolExecutionError(f"[错误] 路径不存在: {normalized}")
-    raise ToolExecutionError(f"[错误] DELETE {normalized} -> {resp.status_code}: {resp.text[:300]}")
+        raise ToolExecutionError(f"[Error] Path does not exist: {normalized}")
+    raise ToolExecutionError(f"[Error] DELETE {normalized} -> {resp.status_code}: {resp.text[:300]}")
 
 
 @owncloud_tool(
     "move_path",
-    "移动或重命名文件/目录。",
+    "Move or rename a file or directory.",
     {
         "source": {
             "type": "string",
-            "description": "源路径。",
+            "description": "Source path.",
         },
         "destination": {
             "type": "string",
-            "description": "目标路径。",
+            "description": "Destination path.",
         },
         "overwrite": {
             "type": "boolean",
-            "description": "目标已存在时是否覆盖，默认 false。",
+            "description": "Whether to overwrite the destination if it already exists. Default: false.",
         },
     },
     required=["source", "destination"],
@@ -658,29 +659,29 @@ def move_path(source, destination, overwrite=False):
         headers={"Destination": dst_url, "Overwrite": "T" if overwrite else "F"},
     )
     if resp.status_code in (201, 204):
-        return f"已将 {normalized_source} 移动到 {normalized_destination}。"
+        return f"Moved {normalized_source} to {normalized_destination}."
     if resp.status_code == 404:
-        raise ToolExecutionError(f"[错误] 源路径不存在: {normalized_source}")
+        raise ToolExecutionError(f"[Error] Source path does not exist: {normalized_source}")
     if resp.status_code == 412:
-        raise ToolExecutionError(f"[错误] 目标路径已存在: {normalized_destination}")
-    raise ToolExecutionError(f"[错误] MOVE {normalized_source} -> {resp.status_code}: {resp.text[:300]}")
+        raise ToolExecutionError(f"[Error] Destination path already exists: {normalized_destination}")
+    raise ToolExecutionError(f"[Error] MOVE {normalized_source} -> {resp.status_code}: {resp.text[:300]}")
 
 
 @owncloud_tool(
     "rename_path",
-    "在当前目录内重命名文件或目录。",
+    "Rename a file or directory within the current parent directory.",
     {
         "path": {
             "type": "string",
-            "description": "原始文件或目录路径。",
+            "description": "Original file or directory path.",
         },
         "new_name": {
             "type": "string",
-            "description": "新的文件名或目录名，不包含父目录。",
+            "description": "New file or directory name, without the parent path.",
         },
         "overwrite": {
             "type": "boolean",
-            "description": "目标已存在时是否覆盖，默认 false。",
+            "description": "Whether to overwrite the destination if it already exists. Default: false.",
         },
     },
     required=["path", "new_name"],
@@ -692,26 +693,26 @@ def rename_path(path, new_name, overwrite=False):
     normalized = _normalize_path(path)
     new_name = (new_name or "").strip().strip("/")
     if not new_name:
-        raise ToolExecutionError("[错误] new_name 不能为空")
+        raise ToolExecutionError("[Error] new_name cannot be empty")
     destination = _join_path(_path_parent(normalized), new_name)
     return move_path(normalized, destination, overwrite=overwrite)
 
 
 @owncloud_tool(
     "copy_path",
-    "复制文件或目录。",
+    "Copy a file or directory.",
     {
         "source": {
             "type": "string",
-            "description": "源路径。",
+            "description": "Source path.",
         },
         "destination": {
             "type": "string",
-            "description": "目标路径。",
+            "description": "Destination path.",
         },
         "overwrite": {
             "type": "boolean",
-            "description": "目标已存在时是否覆盖，默认 false。",
+            "description": "Whether to overwrite the destination if it already exists. Default: false.",
         },
     },
     required=["source", "destination"],
@@ -730,37 +731,37 @@ def copy_path(source, destination, overwrite=False):
         headers={"Destination": dst_url, "Overwrite": "T" if overwrite else "F"},
     )
     if resp.status_code in (201, 204):
-        return f"已将 {normalized_source} 复制到 {normalized_destination}。"
+        return f"Copied {normalized_source} to {normalized_destination}."
     if resp.status_code == 404:
-        raise ToolExecutionError(f"[错误] 源路径不存在: {normalized_source}")
+        raise ToolExecutionError(f"[Error] Source path does not exist: {normalized_source}")
     if resp.status_code == 412:
-        raise ToolExecutionError(f"[错误] 目标路径已存在: {normalized_destination}")
-    raise ToolExecutionError(f"[错误] COPY {normalized_source} -> {resp.status_code}: {resp.text[:300]}")
+        raise ToolExecutionError(f"[Error] Destination path already exists: {normalized_destination}")
+    raise ToolExecutionError(f"[Error] COPY {normalized_source} -> {resp.status_code}: {resp.text[:300]}")
 
 
 @owncloud_tool(
     "create_public_link",
-    "为文件或目录创建公开分享链接。",
+    "Create a public share link for a file or directory.",
     {
         "path": {
             "type": "string",
-            "description": "要共享的文件或目录路径。",
+            "description": "Path of the file or directory to share.",
         },
         "name": {
             "type": "string",
-            "description": "共享链接名称（可选）。",
+            "description": "Share link name, optional.",
         },
         "permissions": {
             "type": "integer",
-            "description": "权限位，例如 1=只读，15=全部。",
+            "description": "Permission bitmask, for example 1=read-only, 15=full access.",
         },
         "password": {
             "type": "string",
-            "description": "可选，公开链接密码。",
+            "description": "Optional password for the public link.",
         },
         "expire_date": {
             "type": "string",
-            "description": "可选，到期日期，格式 YYYY-MM-DD。",
+            "description": "Optional expiration date in YYYY-MM-DD format.",
         },
     },
     required=["path"],
@@ -782,34 +783,34 @@ def create_public_link(path, name="", permissions=1, password="", expire_date=""
     )
     resp = _api("POST", url, headers=_ocs_headers(), data=payload)
     if resp.status_code not in (200, 201):
-        raise ToolExecutionError(f"[错误] 创建公开链接失败: {resp.status_code}: {resp.text[:300]}")
-    share_data = _extract_ocs_data(resp, "创建公开链接")
+        raise ToolExecutionError(f"[Error] Failed to create public link: {resp.status_code}: {resp.text[:300]}")
+    share_data = _extract_ocs_data(resp, "create_public_link")
     return _format_json(_normalize_share(share_data))
 
 
 @owncloud_tool(
     "create_share",
-    "兼容旧任务的公开链接创建工具。",
+    "Compatibility alias for creating a public link share.",
     {
         "path": {
             "type": "string",
-            "description": "要共享的文件或目录路径。",
+            "description": "Path of the file or directory to share.",
         },
         "name": {
             "type": "string",
-            "description": "共享链接名称（可选）。",
+            "description": "Share link name, optional.",
         },
         "permissions": {
             "type": "integer",
-            "description": "权限位，例如 1=只读，15=全部。",
+            "description": "Permission bitmask, for example 1=read-only, 15=full access.",
         },
         "password": {
             "type": "string",
-            "description": "可选，公开链接密码。",
+            "description": "Optional password for the public link.",
         },
         "expire_date": {
             "type": "string",
-            "description": "可选，到期日期，格式 YYYY-MM-DD。",
+            "description": "Optional expiration date in YYYY-MM-DD format.",
         },
     },
     required=["path"],
@@ -823,19 +824,19 @@ def create_share(path, name="", permissions=1, password="", expire_date=""):
 
 @owncloud_tool(
     "create_user_share",
-    "将文件或目录共享给内部用户。",
+    "Share a file or directory with an internal user.",
     {
         "path": {
             "type": "string",
-            "description": "要共享的文件或目录路径。",
+            "description": "Path of the file or directory to share.",
         },
         "share_with": {
             "type": "string",
-            "description": "目标用户名。",
+            "description": "Target username.",
         },
         "permissions": {
             "type": "integer",
-            "description": "权限位，例如 1=只读，15=全部。",
+            "description": "Permission bitmask, for example 1=read-only, 15=full access.",
         },
     },
     required=["path", "share_with"],
@@ -854,22 +855,22 @@ def create_user_share(path, share_with, permissions=1):
     )
     resp = _api("POST", url, headers=_ocs_headers(), data=payload)
     if resp.status_code not in (200, 201):
-        raise ToolExecutionError(f"[错误] 创建内部共享失败: {resp.status_code}: {resp.text[:300]}")
-    share_data = _extract_ocs_data(resp, "创建内部共享")
+        raise ToolExecutionError(f"[Error] Failed to create internal share: {resp.status_code}: {resp.text[:300]}")
+    share_data = _extract_ocs_data(resp, "create_user_share")
     return _format_json(_normalize_share(share_data))
 
 
 @owncloud_tool(
     "update_share_permissions",
-    "更新共享记录的权限。",
+    "Update the permissions of a share record.",
     {
         "share_id": {
             "type": "string",
-            "description": "共享记录 ID。",
+            "description": "Share record ID.",
         },
         "permissions": {
             "type": "integer",
-            "description": "新的权限位，例如 1=只读，15=全部。",
+            "description": "New permission bitmask, for example 1=read-only, 15=full access.",
         },
     },
     required=["share_id", "permissions"],
@@ -881,17 +882,17 @@ def update_share_permissions(share_id, permissions):
     url = _ocs_url(f"ocs/v2.php/apps/files_sharing/api/v1/shares/{share_id}")
     resp = _api("PUT", url, headers=_ocs_headers(), data={"permissions": str(permissions)})
     if resp.status_code not in (200, 201):
-        raise ToolExecutionError(f"[错误] 更新共享权限失败: {resp.status_code}: {resp.text[:300]}")
+        raise ToolExecutionError(f"[Error] Failed to update share permissions: {resp.status_code}: {resp.text[:300]}")
     return _format_json(_get_share_data(share_id))
 
 
 @owncloud_tool(
     "delete_share",
-    "删除一个共享链接或共享记录。",
+    "Delete a share link or share record.",
     {
         "share_id": {
             "type": "string",
-            "description": "共享记录 ID。",
+            "description": "Share record ID.",
         },
     },
     required=["share_id"],
@@ -903,7 +904,7 @@ def delete_share(share_id):
     url = _ocs_url(f"ocs/v2.php/apps/files_sharing/api/v1/shares/{share_id}")
     resp = _api("DELETE", url, headers=_ocs_headers())
     if resp.status_code in (200, 204):
-        return f"共享链接 {share_id} 已删除。"
+        return f"Share link {share_id} has been deleted."
     if resp.status_code == 404:
-        raise ToolExecutionError(f"[错误] 共享链接不存在: {share_id}")
-    raise ToolExecutionError(f"[错误] 删除共享失败: {resp.status_code}: {resp.text[:300]}")
+        raise ToolExecutionError(f"[Error] Share link does not exist: {share_id}")
+    raise ToolExecutionError(f"[Error] Failed to delete share: {resp.status_code}: {resp.text[:300]}")

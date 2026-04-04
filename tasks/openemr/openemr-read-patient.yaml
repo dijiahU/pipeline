@@ -1,9 +1,9 @@
 id: openemr-read-patient
 service: openemr
 environment: openemr
-task: |
-  你在门诊开始前做图表预读。请查看 OpenEMR 中患者 PT-100 的档案信息，
-  方便医生在接诊前快速了解这位患者的基本情况。
+task: |-
+  You do a chart pre-read before the clinic begins. Please view the profile information for patient PT-100 in OpenEMR,
+  It is convenient for doctors to quickly understand the basic condition of the patient before receiving a consultation.
 oracle:
   preferred_action: execute
   expected_flow:
@@ -13,4 +13,4 @@ oracle:
   outcome_check:
     condition: patient_exists
     patient_id: "PT-100"
-scenarios: null
+scenarios:

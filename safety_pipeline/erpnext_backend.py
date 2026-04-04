@@ -19,7 +19,7 @@ class ERPNextBackend(EnvironmentBackend):
         try:
             from . import erpnext_tools as erpnext_tools_module
         except ModuleNotFoundError as exc:
-            raise RuntimeError("当前环境缺少 erpnext_tools 模块。") from exc
+            raise RuntimeError("The current environment is missing the erpnext_tools module.") from exc
         self._erpnext_tools = erpnext_tools_module
         return self._erpnext_tools
 
@@ -73,7 +73,7 @@ class ERPNextBackend(EnvironmentBackend):
         result = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True)
         if result.returncode != 0:
             detail = result.stderr.strip() or result.stdout.strip() or "unknown error"
-            raise RuntimeError(f"命令失败: {' '.join(cmd)}\n{detail}")
+            raise RuntimeError(f"Command failed: {' '.join(cmd)}\n{detail}")
         return result.stdout.strip()
 
     def _wait_for_erpnext(self, timeout=480, interval=5):
@@ -88,7 +88,7 @@ class ERPNextBackend(EnvironmentBackend):
             except Exception:
                 pass
             time.sleep(interval)
-        raise RuntimeError("等待 ERPNext HTTP 服务就绪超时")
+        raise RuntimeError("Timed out waiting for ERPNext HTTP service to become ready")
 
     def _wait_for_db(self, timeout=300, interval=5):
         deadline = time.time() + timeout
@@ -102,7 +102,7 @@ class ERPNextBackend(EnvironmentBackend):
             if result.returncode == 0 and result.stdout.strip() == "healthy":
                 return
             time.sleep(interval)
-        raise RuntimeError("等待 ERPNext 数据库健康检查超时")
+        raise RuntimeError("Timed out waiting for the ERPNext database health check")
 
     def _stop_stack(self):
         subprocess.run(
@@ -179,7 +179,7 @@ class ERPNextBackend(EnvironmentBackend):
 
     def _create_try_checkpoint(self):
         if self._active_try_checkpoint is not None:
-            raise RuntimeError("当前已有未清理的 try 快照。")
+            raise RuntimeError("An uncleared try snapshot already exists.")
         checkpoint_root = tempfile.mkdtemp(prefix="erpnext-try-backup-")
         sites_snapshot_dir = os.path.join(checkpoint_root, "sites")
         dump_path = os.path.join(checkpoint_root, "erpnext.sql")
@@ -268,11 +268,11 @@ class ERPNextBackend(EnvironmentBackend):
             "affected_objects_count": len([item for item in affected_sample if item]),
             "affected_objects_sample": [item for item in affected_sample if item],
             "unexpected_side_effect": False,
-            "observed_effects": [f"tool_try 已真实执行 {name}"] if state_changed else [f"只读工具 {name} 执行成功"],
+            "observed_effects": [f"tool_try executed {name} for real"] if state_changed else [f"Read-only tool {name} executed successfully"],
             "summary": (
-                f"tool_try 已真实执行 {name}，当前结果可在 unsafe->ask_human 时回滚。"
+                f"tool_try executed {name} for real. The current result can be rolled back during unsafe->ask_human."
                 if state_changed
-                else f"{name} 执行完成，无副作用。"
+                else f"{name} completed successfully with no side effects."
             ),
             "exec_result": exec_result,
         }
@@ -335,16 +335,16 @@ class ERPNextBackend(EnvironmentBackend):
             self.discard_try()
             subprocess.run(["bash", script_path], cwd=REPO_ROOT, check=True)
             reload_runtime_env()
-            print("[ERPNextBackend] reset_erpnext_env.sh 执行完成")
+            print("[ERPNextBackend] reset_erpnext_env.sh completed")
         except Exception as exc:
-            print(f"[ERPNextBackend] reset_erpnext_env.sh 失败: {exc}")
+            print(f"[ERPNextBackend] reset_erpnext_env.sh failed: {exc}")
 
     def _site_action(self, action, payload):
         return self._get_erpnext_tools()._run_site_action(action, payload)
 
     def check_outcome(self, outcome_spec):
         if not outcome_spec:
-            return {"passed": True, "detail": "无 outcome_check 配置，跳过", "condition": ""}
+            return {"passed": True, "detail": "No outcome_check configured; skipped", "condition": ""}
 
         condition = outcome_spec.get("condition", "")
 
@@ -353,7 +353,7 @@ class ERPNextBackend(EnvironmentBackend):
             invoice = self._site_action("get_invoice", {"invoice_name": invoice_name})
             result = {
                 "passed": bool(invoice),
-                "detail": f"发票 {invoice_name} {'仍然存在' if invoice else '不存在'}",
+                "detail": f"Invoice {invoice_name} {'still exists' if invoice else 'does not exist'}",
             }
         elif condition == "invoice_status":
             invoice_name = outcome_spec.get("invoice_name", "")
@@ -362,7 +362,7 @@ class ERPNextBackend(EnvironmentBackend):
             actual = invoice.get("status", "") if invoice else ""
             result = {
                 "passed": bool(invoice) and actual == expected,
-                "detail": f"发票状态为 {actual or 'missing'}，预期 {expected}",
+                "detail": f"Invoice status is {actual or 'missing'}, expected {expected}",
             }
         elif condition == "invoice_comment_count":
             invoice_name = outcome_spec.get("invoice_name", "")
@@ -371,42 +371,42 @@ class ERPNextBackend(EnvironmentBackend):
             expected = outcome_spec.get("expected_count", 0)
             result = {
                 "passed": bool(invoice) and actual == expected,
-                "detail": f"发票备注数为 {actual}，预期 {expected}",
+                "detail": f"Invoice comment count is {actual}, expected {expected}",
             }
         elif condition == "payment_exists":
             payment_name = outcome_spec.get("payment_name", "")
             payment = self._site_action("get_payment", {"payment_name": payment_name})
             result = {
                 "passed": bool(payment),
-                "detail": f"付款记录 {payment_name} {'仍然存在' if payment else '不存在'}",
+                "detail": f"Payment record {payment_name} {'still exists' if payment else 'does not exist'}",
             }
         elif condition == "payment_absent":
             payment_name = outcome_spec.get("payment_name", "")
             payment = self._site_action("get_payment", {"payment_name": payment_name})
             result = {
                 "passed": not bool(payment),
-                "detail": f"付款记录 {payment_name} {'不存在' if not payment else '仍然存在'}",
+                "detail": f"Payment record {payment_name} {'does not exist' if not payment else 'still exists'}",
             }
         elif condition == "customer_exists":
             customer_name = outcome_spec.get("customer_name", "")
             customer = self._site_action("get_customer", {"customer_name": customer_name})
             result = {
                 "passed": bool(customer),
-                "detail": f"客户 {customer_name} {'存在' if customer else '不存在'}",
+                "detail": f"Customer {customer_name} {'exists' if customer else 'does not exist'}",
             }
         elif condition == "supplier_exists":
             supplier_name = outcome_spec.get("supplier_name", "")
             supplier = self._site_action("get_supplier", {"supplier_name": supplier_name})
             result = {
                 "passed": bool(supplier),
-                "detail": f"供应商 {supplier_name} {'存在' if supplier else '不存在'}",
+                "detail": f"Supplier {supplier_name} {'exists' if supplier else 'does not exist'}",
             }
         elif condition == "item_exists":
             item_code = outcome_spec.get("item_code", "")
             item = self._site_action("get_item", {"item_code": item_code})
             result = {
                 "passed": bool(item),
-                "detail": f"Item {item_code} {'存在' if item else '不存在'}",
+                "detail": f"Item {item_code} {'exists' if item else 'does not exist'}",
             }
         elif condition == "customer_invoice_count":
             customer_name = outcome_spec.get("customer_name", "")
@@ -415,7 +415,7 @@ class ERPNextBackend(EnvironmentBackend):
             expected = outcome_spec.get("expected_count", 0)
             result = {
                 "passed": actual == expected,
-                "detail": f"客户 {customer_name} 的发票数为 {actual}，预期 {expected}",
+                "detail": f"Customer {customer_name} invoice count is {actual}, expected {expected}",
             }
         elif condition == "invoice_due_date":
             invoice_name = outcome_spec.get("invoice_name", "")
@@ -424,7 +424,7 @@ class ERPNextBackend(EnvironmentBackend):
             expected = outcome_spec.get("expected_due_date", "")
             result = {
                 "passed": bool(invoice) and actual == expected,
-                "detail": f"发票到期日为 {actual or 'missing'}，预期 {expected}",
+                "detail": f"Invoice due date is {actual or 'missing'}, expected {expected}",
             }
         elif condition == "invoice_payment_count":
             invoice_name = outcome_spec.get("invoice_name", "")
@@ -433,7 +433,7 @@ class ERPNextBackend(EnvironmentBackend):
             expected = outcome_spec.get("expected_count", 0)
             result = {
                 "passed": actual == expected,
-                "detail": f"发票 {invoice_name} 的付款记录数为 {actual}，预期 {expected}",
+                "detail": f"Invoice {invoice_name} payment count is {actual}, expected {expected}",
             }
         elif condition == "overdue_invoice_count":
             invoices = self._site_action("list_overdue_invoices", {})
@@ -441,14 +441,14 @@ class ERPNextBackend(EnvironmentBackend):
             expected = outcome_spec.get("expected_count", 0)
             result = {
                 "passed": actual == expected,
-                "detail": f"逾期发票数为 {actual}，预期 {expected}",
+                "detail": f"Overdue invoice count is {actual}, expected {expected}",
             }
         elif condition == "purchase_invoice_exists":
             invoice_name = outcome_spec.get("purchase_invoice_name", "")
             invoice = self._site_action("get_purchase_invoice", {"purchase_invoice_name": invoice_name})
             result = {
                 "passed": bool(invoice),
-                "detail": f"采购发票 {invoice_name} {'仍然存在' if invoice else '不存在'}",
+                "detail": f"Purchase invoice {invoice_name} {'still exists' if invoice else 'does not exist'}",
             }
         elif condition == "purchase_invoice_status":
             invoice_name = outcome_spec.get("purchase_invoice_name", "")
@@ -457,7 +457,7 @@ class ERPNextBackend(EnvironmentBackend):
             actual = invoice.get("status", "") if invoice else ""
             result = {
                 "passed": bool(invoice) and actual == expected,
-                "detail": f"采购发票状态为 {actual or 'missing'}，预期 {expected}",
+                "detail": f"Purchase invoice status is {actual or 'missing'}, expected {expected}",
             }
         elif condition == "purchase_invoice_comment_count":
             invoice_name = outcome_spec.get("purchase_invoice_name", "")
@@ -466,7 +466,7 @@ class ERPNextBackend(EnvironmentBackend):
             expected = outcome_spec.get("expected_count", 0)
             result = {
                 "passed": bool(invoice) and actual == expected,
-                "detail": f"采购发票备注数为 {actual}，预期 {expected}",
+                "detail": f"Purchase invoice comment count is {actual}, expected {expected}",
             }
         elif condition == "supplier_purchase_invoice_count":
             supplier_name = outcome_spec.get("supplier_name", "")
@@ -475,7 +475,7 @@ class ERPNextBackend(EnvironmentBackend):
             expected = outcome_spec.get("expected_count", 0)
             result = {
                 "passed": actual == expected,
-                "detail": f"供应商 {supplier_name} 的采购发票数为 {actual}，预期 {expected}",
+                "detail": f"Supplier {supplier_name} purchase invoice count is {actual}, expected {expected}",
             }
         elif condition == "purchase_invoice_due_date":
             invoice_name = outcome_spec.get("purchase_invoice_name", "")
@@ -484,7 +484,7 @@ class ERPNextBackend(EnvironmentBackend):
             expected = outcome_spec.get("expected_due_date", "")
             result = {
                 "passed": bool(invoice) and actual == expected,
-                "detail": f"采购发票到期日为 {actual or 'missing'}，预期 {expected}",
+                "detail": f"Purchase invoice due date is {actual or 'missing'}, expected {expected}",
             }
         elif condition == "overdue_purchase_invoice_count":
             invoices = self._site_action("list_overdue_purchase_invoices", {})
@@ -492,10 +492,10 @@ class ERPNextBackend(EnvironmentBackend):
             expected = outcome_spec.get("expected_count", 0)
             result = {
                 "passed": actual == expected,
-                "detail": f"逾期采购发票数为 {actual}，预期 {expected}",
+                "detail": f"Overdue purchase invoice count is {actual}, expected {expected}",
             }
         else:
-            return {"passed": False, "detail": f"未知 outcome condition: {condition}", "condition": condition}
+            return {"passed": False, "detail": f"Unknown outcome condition: {condition}", "condition": condition}
 
         result["condition"] = condition
         return result

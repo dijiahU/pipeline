@@ -1,7 +1,7 @@
 """
-Rocket.Chat REST API 工具注册。
+Rocket.Chat REST API tool registration.
 
-通过 REST API 进行公开频道、私有频道、消息、私聊、用户与 integration 的读写操作。
+Provides read and write operations for public channels, private channels, messages, direct messages, users, and integrations through the REST API.
 """
 
 import json
@@ -61,7 +61,7 @@ def get_tool_summary():
 
 def _require_requests():
     if requests is None:
-        raise ToolExecutionError("requests 库未安装。pip install requests")
+        raise ToolExecutionError("The requests package is not installed. Run: pip install requests")
 
 
 def _ensure_auth():
@@ -74,12 +74,12 @@ def _ensure_auth():
         timeout=30,
     )
     if resp.status_code != 200:
-        raise ToolExecutionError(f"Rocket.Chat 登录失败: {resp.status_code} {resp.text[:300]}")
+        raise ToolExecutionError(f"Rocket.Chat login failed: {resp.status_code} {resp.text[:300]}")
     data = resp.json().get("data", {})
     _auth_cache["user_id"] = data.get("userId", "")
     _auth_cache["token"] = data.get("authToken", "")
     if not _auth_cache["token"]:
-        raise ToolExecutionError("Rocket.Chat 登录响应中无 authToken")
+        raise ToolExecutionError("Rocket.Chat login response did not include authToken")
 
 
 def _headers():
@@ -97,13 +97,13 @@ def _api(method, endpoint, **kwargs):
     try:
         return requests.request(method, url, headers=_headers(), timeout=30, **kwargs)
     except requests.RequestException as exc:
-        raise ToolExecutionError(f"[Rocket.Chat 请求失败] {type(exc).__name__}: {exc}") from exc
+        raise ToolExecutionError(f"[Rocket.Chat Request Failed] {type(exc).__name__}: {exc}") from exc
 
 
 def _api_json(method, endpoint, **kwargs):
     resp = _api(method, endpoint, **kwargs)
     if resp.status_code >= 400:
-        raise ToolExecutionError(f"[Rocket.Chat API 错误] {resp.status_code}: {resp.text[:500]}")
+        raise ToolExecutionError(f"[Rocket.Chat API Error] {resp.status_code}: {resp.text[:500]}")
     try:
         return resp.json()
     except Exception:
@@ -177,7 +177,7 @@ def _public_room_info(channel_name):
     data = _api_json("GET", "channels.info", params={"roomName": channel_name})
     channel = data.get("channel") or {}
     if not channel.get("_id"):
-        raise ToolExecutionError(f"[错误] 找不到公开频道: {channel_name}")
+        raise ToolExecutionError(f"[Error] Public channel not found: {channel_name}")
     return channel
 
 
@@ -185,7 +185,7 @@ def _private_room_info(room_name):
     data = _api_json("GET", "groups.info", params={"roomName": room_name})
     group = data.get("group") or {}
     if not group.get("_id"):
-        raise ToolExecutionError(f"[错误] 找不到私有频道: {room_name}")
+        raise ToolExecutionError(f"[Error] Private channel not found: {room_name}")
     return group
 
 
@@ -216,7 +216,7 @@ def _user_info(username):
     data = _api_json("GET", "users.info", params={"username": username})
     user = data.get("user") or {}
     if not user.get("_id"):
-        raise ToolExecutionError(f"[错误] 找不到用户: {username}")
+        raise ToolExecutionError(f"[Error] User not found: {username}")
     return user
 
 
@@ -228,7 +228,7 @@ def _message_info(message_id):
     data = _api_json("GET", "chat.getMessage", params={"msgId": message_id})
     message = data.get("message") or {}
     if not message.get("_id"):
-        raise ToolExecutionError(f"[错误] 找不到消息: {message_id}")
+        raise ToolExecutionError(f"[Error] Message not found: {message_id}")
     return message
 
 
@@ -237,7 +237,7 @@ def _find_integration(name="", integration_type="", integration_id=""):
         data = _api_json("GET", "integrations.get", params={"integrationId": integration_id})
         integration = data.get("integration") or {}
         if not integration.get("_id"):
-            raise ToolExecutionError(f"[错误] 找不到 integration: {integration_id}")
+            raise ToolExecutionError(f"[Error] Integration not found: {integration_id}")
         return integration
 
     params = {"count": 100, "offset": 0}
@@ -251,7 +251,7 @@ def _find_integration(name="", integration_type="", integration_id=""):
         if integration_type and integration.get("type") != integration_type:
             continue
         return integration
-    raise ToolExecutionError(f"[错误] 找不到 integration: {name or integration_id}")
+    raise ToolExecutionError(f"[Error] Integration not found: {name or integration_id}")
 
 
 # ---------------------------------------------------------------------------
@@ -260,10 +260,10 @@ def _find_integration(name="", integration_type="", integration_id=""):
 
 @rocketchat_tool(
     "list_channels",
-    "列出公开频道。",
+    "List public channels.",
     {
-        "count": {"type": "integer", "description": "返回数量，默认 50"},
-        "offset": {"type": "integer", "description": "偏移量，默认 0"},
+        "count": {"type": "integer", "description": "Number of results to return. Default 50."},
+        "offset": {"type": "integer", "description": "Offset. Default 0."},
     },
     group="channels",
     short_description="List public channels with topic and description.",
@@ -275,9 +275,9 @@ def list_channels(count=50, offset=0):
 
 @rocketchat_tool(
     "get_channel_info",
-    "获取公开频道的详细信息。",
+    "Get detailed information for a public channel.",
     {
-        "channel_name": {"type": "string", "description": "公开频道名称（不含 #）"},
+        "channel_name": {"type": "string", "description": "Public channel name without #."},
     },
     group="channels",
     short_description="Read a public channel's metadata and current settings.",
@@ -288,11 +288,11 @@ def get_channel_info(channel_name):
 
 @rocketchat_tool(
     "list_channel_members",
-    "列出公开频道成员。",
+    "List members of a public channel.",
     {
-        "channel_name": {"type": "string", "description": "公开频道名称（不含 #）"},
-        "count": {"type": "integer", "description": "返回数量，默认 100"},
-        "offset": {"type": "integer", "description": "偏移量，默认 0"},
+        "channel_name": {"type": "string", "description": "Public channel name without #."},
+        "count": {"type": "integer", "description": "Number of results to return. Default 100."},
+        "offset": {"type": "integer", "description": "Offset. Default 0."},
     },
     group="channels",
     short_description="List members of a public channel.",
@@ -309,10 +309,10 @@ def list_channel_members(channel_name, count=100, offset=0):
 
 @rocketchat_tool(
     "list_private_channels",
-    "列出私有频道。",
+    "List private channels.",
     {
-        "count": {"type": "integer", "description": "返回数量，默认 50"},
-        "offset": {"type": "integer", "description": "偏移量，默认 0"},
+        "count": {"type": "integer", "description": "Number of results to return. Default 50."},
+        "offset": {"type": "integer", "description": "Offset. Default 0."},
     },
     group="private_channels",
     short_description="List private channels visible to the admin user.",
@@ -324,9 +324,9 @@ def list_private_channels(count=50, offset=0):
 
 @rocketchat_tool(
     "get_private_channel_info",
-    "获取私有频道的详细信息。",
+    "Get detailed information for a private channel.",
     {
-        "room_name": {"type": "string", "description": "私有频道名称（不含 #）"},
+        "room_name": {"type": "string", "description": "Private channel name without #."},
     },
     group="private_channels",
     short_description="Read a private channel's metadata and settings.",
@@ -337,11 +337,11 @@ def get_private_channel_info(room_name):
 
 @rocketchat_tool(
     "list_private_channel_members",
-    "列出私有频道成员。",
+    "List members of a private channel.",
     {
-        "room_name": {"type": "string", "description": "私有频道名称（不含 #）"},
-        "count": {"type": "integer", "description": "返回数量，默认 100"},
-        "offset": {"type": "integer", "description": "偏移量，默认 0"},
+        "room_name": {"type": "string", "description": "Private channel name without #."},
+        "count": {"type": "integer", "description": "Number of results to return. Default 100."},
+        "offset": {"type": "integer", "description": "Offset. Default 0."},
     },
     group="private_channels",
     short_description="List members of a private channel.",
@@ -358,11 +358,11 @@ def list_private_channel_members(room_name, count=100, offset=0):
 
 @rocketchat_tool(
     "list_channel_messages",
-    "列出公开频道或私有频道中的消息。",
+    "List messages in a public or private channel.",
     {
-        "room_name": {"type": "string", "description": "公开频道或私有频道名称（不含 #）"},
-        "count": {"type": "integer", "description": "返回消息数量，默认 20"},
-        "offset": {"type": "integer", "description": "偏移量，默认 0"},
+        "room_name": {"type": "string", "description": "Public or private channel name without #."},
+        "count": {"type": "integer", "description": "Number of messages to return. Default 20."},
+        "offset": {"type": "integer", "description": "Offset. Default 0."},
     },
     group="messages",
     short_description="Read recent messages from a room.",
@@ -374,9 +374,9 @@ def list_channel_messages(room_name, count=20, offset=0):
 
 @rocketchat_tool(
     "get_message",
-    "读取单条消息详情。",
+    "Read the details of a single message.",
     {
-        "message_id": {"type": "string", "description": "消息 ID"},
+        "message_id": {"type": "string", "description": "Message ID."},
     },
     group="messages",
     short_description="Inspect one message by ID.",
@@ -387,10 +387,10 @@ def get_message(message_id):
 
 @rocketchat_tool(
     "list_thread_messages",
-    "读取线程中的回复消息。",
+    "Read replies in a thread.",
     {
-        "message_id": {"type": "string", "description": "线程根消息 ID"},
-        "count": {"type": "integer", "description": "返回消息数量，默认 20"},
+        "message_id": {"type": "string", "description": "Thread root message ID."},
+        "count": {"type": "integer", "description": "Number of messages to return. Default 20."},
     },
     group="messages",
     short_description="Read replies under a thread root message.",
@@ -406,10 +406,10 @@ def list_thread_messages(message_id, count=20):
 
 @rocketchat_tool(
     "list_direct_messages",
-    "列出当前管理员可见的私聊会话。",
+    "List direct-message conversations visible to the current admin user.",
     {
-        "count": {"type": "integer", "description": "返回数量，默认 50"},
-        "offset": {"type": "integer", "description": "偏移量，默认 0"},
+        "count": {"type": "integer", "description": "Number of results to return. Default 50."},
+        "offset": {"type": "integer", "description": "Offset. Default 0."},
     },
     group="direct_messages",
     short_description="List DM rooms visible to the current admin user.",
@@ -429,11 +429,11 @@ def list_direct_messages(count=50, offset=0):
 
 @rocketchat_tool(
     "list_direct_message_messages",
-    "读取指定私聊会话中的消息。",
+    "Read messages in the direct-message conversation with the specified user.",
     {
-        "username": {"type": "string", "description": "对方用户名"},
-        "count": {"type": "integer", "description": "返回消息数量，默认 20"},
-        "offset": {"type": "integer", "description": "偏移量，默认 0"},
+        "username": {"type": "string", "description": "The other user's username."},
+        "count": {"type": "integer", "description": "Number of messages to return. Default 20."},
+        "offset": {"type": "integer", "description": "Offset. Default 0."},
     },
     group="direct_messages",
     short_description="Read messages from the DM room with a given user.",
@@ -442,7 +442,7 @@ def list_direct_message_messages(username, count=20, offset=0):
     room = _api_json("POST", "dm.create", json={"username": username}).get("room", {})
     room_id = room.get("_id", "")
     if not room_id:
-        raise ToolExecutionError(f"[错误] 无法创建或定位与 {username} 的私聊")
+        raise ToolExecutionError(f"[Error] Could not create or locate the direct message room with {username}")
     data = _api_json(
         "GET",
         "dm.messages",
@@ -453,10 +453,10 @@ def list_direct_message_messages(username, count=20, offset=0):
 
 @rocketchat_tool(
     "list_users",
-    "列出系统中的用户。",
+    "List users in the workspace.",
     {
-        "count": {"type": "integer", "description": "返回数量，默认 50"},
-        "offset": {"type": "integer", "description": "偏移量，默认 0"},
+        "count": {"type": "integer", "description": "Number of results to return. Default 50."},
+        "offset": {"type": "integer", "description": "Offset. Default 0."},
     },
     group="users",
     short_description="List workspace users and their current status.",
@@ -468,9 +468,9 @@ def list_users(count=50, offset=0):
 
 @rocketchat_tool(
     "get_user_info",
-    "获取指定用户的详细信息。",
+    "Get detailed information for a specific user.",
     {
-        "username": {"type": "string", "description": "用户名"},
+        "username": {"type": "string", "description": "Username."},
     },
     group="users",
     short_description="Read a user's profile, roles, and status.",
@@ -481,11 +481,11 @@ def get_user_info(username):
 
 @rocketchat_tool(
     "list_integrations",
-    "列出当前工作区中的 integration。",
+    "List integrations in the current workspace.",
     {
-        "count": {"type": "integer", "description": "返回数量，默认 50"},
-        "offset": {"type": "integer", "description": "偏移量，默认 0"},
-        "name_filter": {"type": "string", "description": "按 integration 名称过滤（可选）"},
+        "count": {"type": "integer", "description": "Number of results to return. Default 50."},
+        "offset": {"type": "integer", "description": "Offset. Default 0."},
+        "name_filter": {"type": "string", "description": "Filter by integration name (optional)."},
     },
     group="integrations",
     short_description="List incoming and outgoing integrations.",
@@ -500,10 +500,10 @@ def list_integrations(count=50, offset=0, name_filter=""):
 
 @rocketchat_tool(
     "get_integration",
-    "读取单个 integration 的详细信息。",
+    "Read detailed information for a single integration.",
     {
-        "name": {"type": "string", "description": "integration 名称"},
-        "integration_type": {"type": "string", "description": "integration 类型，例如 webhook-incoming 或 webhook-outgoing"},
+        "name": {"type": "string", "description": "Integration name."},
+        "integration_type": {"type": "string", "description": "Integration type, for example webhook-incoming or webhook-outgoing."},
     },
     group="integrations",
     short_description="Inspect one integration by name and type.",
@@ -518,10 +518,10 @@ def get_integration(name, integration_type=""):
 
 @rocketchat_tool(
     "send_message",
-    "向公开频道或私有频道发送消息。",
+    "Send a message to a public or private channel.",
     {
-        "room_name": {"type": "string", "description": "公开频道或私有频道名称（不含 #）"},
-        "text": {"type": "string", "description": "消息内容"},
+        "room_name": {"type": "string", "description": "Public or private channel name without #."},
+        "text": {"type": "string", "description": "Message content."},
     },
     is_write=True,
     group="messages",
@@ -532,16 +532,16 @@ def send_message(room_name, text):
     data = _api_json("POST", "chat.sendMessage", json={"message": {"rid": room.get("_id", ""), "msg": text}})
     if data.get("success"):
         return _format_json(_normalize_message(data.get("message", {})))
-    raise ToolExecutionError(f"[错误] 发送消息失败: {_format_json(data)}")
+    raise ToolExecutionError(f"[Error] Failed to send message: {_format_json(data)}")
 
 
 @rocketchat_tool(
     "send_thread_reply",
-    "向现有线程回复消息。",
+    "Reply inside an existing thread.",
     {
-        "message_id": {"type": "string", "description": "线程根消息 ID"},
-        "text": {"type": "string", "description": "回复内容"},
-        "show_in_room": {"type": "boolean", "description": "是否同时在主房间显示回复，默认 false"},
+        "message_id": {"type": "string", "description": "Thread root message ID."},
+        "text": {"type": "string", "description": "Reply content."},
+        "show_in_room": {"type": "boolean", "description": "Whether to also show the reply in the main room. Default false."},
     },
     is_write=True,
     group="messages",
@@ -563,14 +563,14 @@ def send_thread_reply(message_id, text, show_in_room=False):
     )
     if data.get("success"):
         return _format_json(_normalize_message(data.get("message", {})))
-    raise ToolExecutionError(f"[错误] 发送线程回复失败: {_format_json(data)}")
+    raise ToolExecutionError(f"[Error] Failed to send thread reply: {_format_json(data)}")
 
 
 @rocketchat_tool(
     "pin_message",
-    "置顶一条消息。",
+    "Pin a message.",
     {
-        "message_id": {"type": "string", "description": "消息 ID"},
+        "message_id": {"type": "string", "description": "Message ID."},
     },
     is_write=True,
     group="messages",
@@ -579,15 +579,15 @@ def send_thread_reply(message_id, text, show_in_room=False):
 def pin_message(message_id):
     data = _api_json("POST", "chat.pinMessage", json={"messageId": message_id})
     if data.get("success"):
-        return f"消息 {message_id} 已置顶。"
-    raise ToolExecutionError(f"[错误] 置顶消息失败: {_format_json(data)}")
+        return f"Message {message_id} was pinned."
+    raise ToolExecutionError(f"[Error] Failed to pin message: {_format_json(data)}")
 
 
 @rocketchat_tool(
     "unpin_message",
-    "取消置顶一条消息。",
+    "Unpin a message.",
     {
-        "message_id": {"type": "string", "description": "消息 ID"},
+        "message_id": {"type": "string", "description": "Message ID."},
     },
     is_write=True,
     group="messages",
@@ -596,15 +596,15 @@ def pin_message(message_id):
 def unpin_message(message_id):
     data = _api_json("POST", "chat.unPinMessage", json={"messageId": message_id})
     if data.get("success"):
-        return f"消息 {message_id} 已取消置顶。"
-    raise ToolExecutionError(f"[错误] 取消置顶失败: {_format_json(data)}")
+        return f"Message {message_id} was unpinned."
+    raise ToolExecutionError(f"[Error] Failed to unpin message: {_format_json(data)}")
 
 
 @rocketchat_tool(
     "delete_message",
-    "删除一条消息。危险操作，不可逆。",
+    "Delete a message. Dangerous operation; irreversible.",
     {
-        "message_id": {"type": "string", "description": "消息 ID"},
+        "message_id": {"type": "string", "description": "Message ID."},
     },
     is_write=True,
     group="messages",
@@ -614,18 +614,18 @@ def delete_message(message_id):
     message = _message_info(message_id)
     data = _api_json("POST", "chat.delete", json={"roomId": message.get("rid", ""), "msgId": message_id})
     if data.get("success"):
-        return f"消息 {message_id} 已删除。"
-    raise ToolExecutionError(f"[错误] 删除消息失败: {_format_json(data)}")
+        return f"Message {message_id} was deleted."
+    raise ToolExecutionError(f"[Error] Failed to delete message: {_format_json(data)}")
 
 
 @rocketchat_tool(
     "create_channel",
-    "创建新的公开频道。",
+    "Create a new public channel.",
     {
-        "name": {"type": "string", "description": "频道名称（不含 #，不含空格）"},
-        "members": {"type": "array", "items": {"type": "string"}, "description": "初始成员用户名列表（可选）"},
-        "topic": {"type": "string", "description": "频道主题（可选）"},
-        "description": {"type": "string", "description": "频道描述（可选）"},
+        "name": {"type": "string", "description": "Channel name without # and without spaces."},
+        "members": {"type": "array", "items": {"type": "string"}, "description": "Initial member username list (optional)."},
+        "topic": {"type": "string", "description": "Channel topic (optional)."},
+        "description": {"type": "string", "description": "Channel description (optional)."},
     },
     is_write=True,
     group="channels",
@@ -636,20 +636,20 @@ def create_channel(name, members=None, topic="", description=""):
     channel = data.get("channel") or {}
     room_id = channel.get("_id", "")
     if not room_id:
-        raise ToolExecutionError(f"[错误] 创建公开频道失败: {_format_json(data)}")
+        raise ToolExecutionError(f"[Error] Failed to create public channel: {_format_json(data)}")
     if topic:
         _api_json("POST", "channels.setTopic", json={"roomId": room_id, "topic": topic})
     if description:
         _api_json("POST", "channels.setDescription", json={"roomId": room_id, "description": description})
-    return f"公开频道 #{name} 创建成功。"
+    return f"Public channel #{name} was created successfully."
 
 
 @rocketchat_tool(
     "invite_user_to_channel",
-    "邀请用户加入公开频道。",
+    "Invite a user to a public channel.",
     {
-        "channel_name": {"type": "string", "description": "公开频道名称（不含 #）"},
-        "username": {"type": "string", "description": "要邀请的用户名"},
+        "channel_name": {"type": "string", "description": "Public channel name without #."},
+        "username": {"type": "string", "description": "Username to invite."},
     },
     is_write=True,
     group="channels",
@@ -663,16 +663,16 @@ def invite_user_to_channel(channel_name, username):
         json={"roomId": channel.get("_id", ""), "userId": _user_id(username)},
     )
     if data.get("success"):
-        return f"已邀请 {username} 加入 #{channel_name}。"
-    raise ToolExecutionError(f"[错误] 邀请用户加入公开频道失败: {_format_json(data)}")
+        return f"Invited {username} to join #{channel_name}."
+    raise ToolExecutionError(f"[Error] Failed to invite user to public channel: {_format_json(data)}")
 
 
 @rocketchat_tool(
     "remove_user_from_channel",
-    "将用户移出公开频道。",
+    "Remove a user from a public channel.",
     {
-        "channel_name": {"type": "string", "description": "公开频道名称（不含 #）"},
-        "username": {"type": "string", "description": "要移出的用户名"},
+        "channel_name": {"type": "string", "description": "Public channel name without #."},
+        "username": {"type": "string", "description": "Username to remove."},
     },
     is_write=True,
     group="moderation",
@@ -686,16 +686,16 @@ def remove_user_from_channel(channel_name, username):
         json={"roomId": channel.get("_id", ""), "userId": _user_id(username)},
     )
     if data.get("success"):
-        return f"已将 {username} 移出 #{channel_name}。"
-    raise ToolExecutionError(f"[错误] 移出公开频道成员失败: {_format_json(data)}")
+        return f"Removed {username} from #{channel_name}."
+    raise ToolExecutionError(f"[Error] Failed to remove user from public channel: {_format_json(data)}")
 
 
 @rocketchat_tool(
     "set_channel_topic",
-    "设置公开频道主题。",
+    "Set the topic of a public channel.",
     {
-        "channel_name": {"type": "string", "description": "公开频道名称（不含 #）"},
-        "topic": {"type": "string", "description": "新主题内容"},
+        "channel_name": {"type": "string", "description": "Public channel name without #."},
+        "topic": {"type": "string", "description": "New topic content."},
     },
     is_write=True,
     group="channels",
@@ -705,16 +705,16 @@ def set_channel_topic(channel_name, topic):
     channel = _public_room_info(channel_name)
     data = _api_json("POST", "channels.setTopic", json={"roomId": channel.get("_id", ""), "topic": topic})
     if data.get("success"):
-        return f"频道 #{channel_name} 主题已更新。"
-    raise ToolExecutionError(f"[错误] 设置公开频道主题失败: {_format_json(data)}")
+        return f"Topic for channel #{channel_name} was updated."
+    raise ToolExecutionError(f"[Error] Failed to set public channel topic: {_format_json(data)}")
 
 
 @rocketchat_tool(
     "set_channel_description",
-    "设置公开频道描述。",
+    "Set the description of a public channel.",
     {
-        "channel_name": {"type": "string", "description": "公开频道名称（不含 #）"},
-        "description": {"type": "string", "description": "新描述内容"},
+        "channel_name": {"type": "string", "description": "Public channel name without #."},
+        "description": {"type": "string", "description": "New description content."},
     },
     is_write=True,
     group="channels",
@@ -728,15 +728,15 @@ def set_channel_description(channel_name, description):
         json={"roomId": channel.get("_id", ""), "description": description},
     )
     if data.get("success"):
-        return f"频道 #{channel_name} 描述已更新。"
-    raise ToolExecutionError(f"[错误] 设置公开频道描述失败: {_format_json(data)}")
+        return f"Description for channel #{channel_name} was updated."
+    raise ToolExecutionError(f"[Error] Failed to set public channel description: {_format_json(data)}")
 
 
 @rocketchat_tool(
     "archive_channel",
-    "归档公开频道，使其变为只读。",
+    "Archive a public channel and make it read-only.",
     {
-        "channel_name": {"type": "string", "description": "公开频道名称（不含 #）"},
+        "channel_name": {"type": "string", "description": "Public channel name without #."},
     },
     is_write=True,
     group="moderation",
@@ -746,15 +746,15 @@ def archive_channel(channel_name):
     channel = _public_room_info(channel_name)
     data = _api_json("POST", "channels.archive", json={"roomId": channel.get("_id", "")})
     if data.get("success"):
-        return f"频道 #{channel_name} 已归档。"
-    raise ToolExecutionError(f"[错误] 归档公开频道失败: {_format_json(data)}")
+        return f"Channel #{channel_name} was archived."
+    raise ToolExecutionError(f"[Error] Failed to archive public channel: {_format_json(data)}")
 
 
 @rocketchat_tool(
     "delete_channel",
-    "删除公开频道及其所有消息。危险操作，不可逆。",
+    "Delete a public channel and all its messages. Dangerous operation; irreversible.",
     {
-        "channel_name": {"type": "string", "description": "要删除的公开频道名称（不含 #）"},
+        "channel_name": {"type": "string", "description": "Public channel name to delete, without #."},
     },
     is_write=True,
     group="moderation",
@@ -764,18 +764,18 @@ def delete_channel(channel_name):
     channel = _public_room_info(channel_name)
     data = _api_json("POST", "rooms.delete", json={"roomId": channel.get("_id", "")})
     if data.get("success"):
-        return f"公开频道 #{channel_name} 已删除。"
-    raise ToolExecutionError(f"[错误] 删除公开频道失败: {_format_json(data)}")
+        return f"Public channel #{channel_name} was deleted."
+    raise ToolExecutionError(f"[Error] Failed to delete public channel: {_format_json(data)}")
 
 
 @rocketchat_tool(
     "create_private_channel",
-    "创建新的私有频道。",
+    "Create a new private channel.",
     {
-        "name": {"type": "string", "description": "私有频道名称（不含 #，不含空格）"},
-        "members": {"type": "array", "items": {"type": "string"}, "description": "初始成员用户名列表（可选）"},
-        "topic": {"type": "string", "description": "频道主题（可选）"},
-        "description": {"type": "string", "description": "频道描述（可选）"},
+        "name": {"type": "string", "description": "Private channel name without # and without spaces."},
+        "members": {"type": "array", "items": {"type": "string"}, "description": "Initial member username list (optional)."},
+        "topic": {"type": "string", "description": "Channel topic (optional)."},
+        "description": {"type": "string", "description": "Channel description (optional)."},
     },
     is_write=True,
     group="private_channels",
@@ -786,20 +786,20 @@ def create_private_channel(name, members=None, topic="", description=""):
     group = data.get("group") or {}
     room_id = group.get("_id", "")
     if not room_id:
-        raise ToolExecutionError(f"[错误] 创建私有频道失败: {_format_json(data)}")
+        raise ToolExecutionError(f"[Error] Failed to create private channel: {_format_json(data)}")
     if topic:
         _api_json("POST", "groups.setTopic", json={"roomId": room_id, "topic": topic})
     if description:
         _api_json("POST", "groups.setDescription", json={"roomId": room_id, "description": description})
-    return f"私有频道 #{name} 创建成功。"
+    return f"Private channel #{name} was created successfully."
 
 
 @rocketchat_tool(
     "invite_user_to_private_channel",
-    "邀请用户加入私有频道。",
+    "Invite a user to a private channel.",
     {
-        "room_name": {"type": "string", "description": "私有频道名称（不含 #）"},
-        "username": {"type": "string", "description": "要邀请的用户名"},
+        "room_name": {"type": "string", "description": "Private channel name without #."},
+        "username": {"type": "string", "description": "Username to invite."},
     },
     is_write=True,
     group="private_channels",
@@ -813,16 +813,16 @@ def invite_user_to_private_channel(room_name, username):
         json={"roomId": group.get("_id", ""), "userId": _user_id(username)},
     )
     if data.get("success"):
-        return f"已邀请 {username} 加入私有频道 #{room_name}。"
-    raise ToolExecutionError(f"[错误] 邀请用户加入私有频道失败: {_format_json(data)}")
+        return f"Invited {username} to join private channel #{room_name}."
+    raise ToolExecutionError(f"[Error] Failed to invite user to private channel: {_format_json(data)}")
 
 
 @rocketchat_tool(
     "remove_user_from_private_channel",
-    "将用户移出私有频道。",
+    "Remove a user from a private channel.",
     {
-        "room_name": {"type": "string", "description": "私有频道名称（不含 #）"},
-        "username": {"type": "string", "description": "要移出的用户名"},
+        "room_name": {"type": "string", "description": "Private channel name without #."},
+        "username": {"type": "string", "description": "Username to remove."},
     },
     is_write=True,
     group="moderation",
@@ -836,16 +836,16 @@ def remove_user_from_private_channel(room_name, username):
         json={"roomId": group.get("_id", ""), "userId": _user_id(username)},
     )
     if data.get("success"):
-        return f"已将 {username} 移出私有频道 #{room_name}。"
-    raise ToolExecutionError(f"[错误] 移出私有频道成员失败: {_format_json(data)}")
+        return f"Removed {username} from private channel #{room_name}."
+    raise ToolExecutionError(f"[Error] Failed to remove user from private channel: {_format_json(data)}")
 
 
 @rocketchat_tool(
     "set_private_channel_topic",
-    "设置私有频道主题。",
+    "Set the topic of a private channel.",
     {
-        "room_name": {"type": "string", "description": "私有频道名称（不含 #）"},
-        "topic": {"type": "string", "description": "新主题内容"},
+        "room_name": {"type": "string", "description": "Private channel name without #."},
+        "topic": {"type": "string", "description": "New topic content."},
     },
     is_write=True,
     group="private_channels",
@@ -855,16 +855,16 @@ def set_private_channel_topic(room_name, topic):
     group = _private_room_info(room_name)
     data = _api_json("POST", "groups.setTopic", json={"roomId": group.get("_id", ""), "topic": topic})
     if data.get("success"):
-        return f"私有频道 #{room_name} 主题已更新。"
-    raise ToolExecutionError(f"[错误] 设置私有频道主题失败: {_format_json(data)}")
+        return f"Topic for private channel #{room_name} was updated."
+    raise ToolExecutionError(f"[Error] Failed to set private channel topic: {_format_json(data)}")
 
 
 @rocketchat_tool(
     "set_private_channel_description",
-    "设置私有频道描述。",
+    "Set the description of a private channel.",
     {
-        "room_name": {"type": "string", "description": "私有频道名称（不含 #）"},
-        "description": {"type": "string", "description": "新描述内容"},
+        "room_name": {"type": "string", "description": "Private channel name without #."},
+        "description": {"type": "string", "description": "New description content."},
     },
     is_write=True,
     group="private_channels",
@@ -878,15 +878,15 @@ def set_private_channel_description(room_name, description):
         json={"roomId": group.get("_id", ""), "description": description},
     )
     if data.get("success"):
-        return f"私有频道 #{room_name} 描述已更新。"
-    raise ToolExecutionError(f"[错误] 设置私有频道描述失败: {_format_json(data)}")
+        return f"Description for private channel #{room_name} was updated."
+    raise ToolExecutionError(f"[Error] Failed to set private channel description: {_format_json(data)}")
 
 
 @rocketchat_tool(
     "archive_private_channel",
-    "归档私有频道，使其变为只读。",
+    "Archive a private channel and make it read-only.",
     {
-        "room_name": {"type": "string", "description": "私有频道名称（不含 #）"},
+        "room_name": {"type": "string", "description": "Private channel name without #."},
     },
     is_write=True,
     group="moderation",
@@ -896,15 +896,15 @@ def archive_private_channel(room_name):
     group = _private_room_info(room_name)
     data = _api_json("POST", "groups.archive", json={"roomId": group.get("_id", "")})
     if data.get("success"):
-        return f"私有频道 #{room_name} 已归档。"
-    raise ToolExecutionError(f"[错误] 归档私有频道失败: {_format_json(data)}")
+        return f"Private channel #{room_name} was archived."
+    raise ToolExecutionError(f"[Error] Failed to archive private channel: {_format_json(data)}")
 
 
 @rocketchat_tool(
     "delete_private_channel",
-    "删除私有频道及其所有消息。危险操作，不可逆。",
+    "Delete a private channel and all its messages. Dangerous operation; irreversible.",
     {
-        "room_name": {"type": "string", "description": "要删除的私有频道名称（不含 #）"},
+        "room_name": {"type": "string", "description": "Private channel name to delete, without #."},
     },
     is_write=True,
     group="moderation",
@@ -914,15 +914,15 @@ def delete_private_channel(room_name):
     group = _private_room_info(room_name)
     data = _api_json("POST", "rooms.delete", json={"roomId": group.get("_id", "")})
     if data.get("success"):
-        return f"私有频道 #{room_name} 已删除。"
-    raise ToolExecutionError(f"[错误] 删除私有频道失败: {_format_json(data)}")
+        return f"Private channel #{room_name} was deleted."
+    raise ToolExecutionError(f"[Error] Failed to delete private channel: {_format_json(data)}")
 
 
 @rocketchat_tool(
     "create_direct_message",
-    "创建或打开与指定用户的私聊会话。",
+    "Create or open a direct-message conversation with the specified user.",
     {
-        "username": {"type": "string", "description": "对方用户名"},
+        "username": {"type": "string", "description": "The other user's username."},
     },
     is_write=True,
     group="direct_messages",
@@ -932,7 +932,7 @@ def create_direct_message(username):
     data = _api_json("POST", "dm.create", json={"username": username})
     room = data.get("room") or {}
     if not room.get("_id"):
-        raise ToolExecutionError(f"[错误] 创建私聊会话失败: {_format_json(data)}")
+        raise ToolExecutionError(f"[Error] Failed to create direct-message room: {_format_json(data)}")
     return _format_json({
         "id": room.get("_id", ""),
         "name": room.get("name", room.get("fname", "")),
@@ -942,10 +942,10 @@ def create_direct_message(username):
 
 @rocketchat_tool(
     "send_direct_message",
-    "向指定用户发送私聊消息。",
+    "Send a direct message to the specified user.",
     {
-        "username": {"type": "string", "description": "对方用户名"},
-        "text": {"type": "string", "description": "私聊内容"},
+        "username": {"type": "string", "description": "The other user's username."},
+        "text": {"type": "string", "description": "Direct message content."},
     },
     is_write=True,
     group="direct_messages",
@@ -955,22 +955,22 @@ def send_direct_message(username, text):
     room = _api_json("POST", "dm.create", json={"username": username}).get("room", {})
     room_id = room.get("_id", "")
     if not room_id:
-        raise ToolExecutionError(f"[错误] 无法创建或定位与 {username} 的私聊")
+        raise ToolExecutionError(f"[Error] Could not create or locate the direct message room with {username}")
     data = _api_json("POST", "chat.sendMessage", json={"message": {"rid": room_id, "msg": text}})
     if data.get("success"):
         return _format_json(_normalize_message(data.get("message", {})))
-    raise ToolExecutionError(f"[错误] 发送私聊失败: {_format_json(data)}")
+    raise ToolExecutionError(f"[Error] Failed to send direct message: {_format_json(data)}")
 
 
 @rocketchat_tool(
     "create_user",
-    "创建新用户账号。",
+    "Create a new user account.",
     {
-        "username": {"type": "string", "description": "用户名"},
-        "email": {"type": "string", "description": "邮箱地址"},
-        "password": {"type": "string", "description": "初始密码"},
-        "name": {"type": "string", "description": "显示名称"},
-        "roles": {"type": "array", "items": {"type": "string"}, "description": "角色列表，默认 ['user']"},
+        "username": {"type": "string", "description": "Username."},
+        "email": {"type": "string", "description": "Email address."},
+        "password": {"type": "string", "description": "Initial password."},
+        "name": {"type": "string", "description": "Display name."},
+        "roles": {"type": "array", "items": {"type": "string"}, "description": "Role list. Default is ['user']."},
     },
     is_write=True,
     group="users",
@@ -992,15 +992,15 @@ def create_user(username, email, password, name, roles=None):
     user = data.get("user") or {}
     if user.get("_id"):
         return _format_json(_normalize_user(user))
-    raise ToolExecutionError(f"[错误] 创建用户失败: {_format_json(data)}")
+    raise ToolExecutionError(f"[Error] Failed to create user: {_format_json(data)}")
 
 
 @rocketchat_tool(
     "set_user_active_status",
-    "启用或停用用户账号。",
+    "Enable or disable a user account.",
     {
-        "username": {"type": "string", "description": "用户名"},
-        "active": {"type": "boolean", "description": "true 表示启用，false 表示停用"},
+        "username": {"type": "string", "description": "Username."},
+        "active": {"type": "boolean", "description": "true enables the account, false disables it."},
     },
     is_write=True,
     group="moderation",
@@ -1013,15 +1013,15 @@ def set_user_active_status(username, active):
         json={"userId": _user_id(username), "activeStatus": bool(active)},
     )
     if data.get("success"):
-        return f"用户 {username} 已{'启用' if active else '停用'}。"
-    raise ToolExecutionError(f"[错误] 更新用户状态失败: {_format_json(data)}")
+        return f"User {username} was {'enabled' if active else 'disabled'}."
+    raise ToolExecutionError(f"[Error] Failed to update user status: {_format_json(data)}")
 
 
 @rocketchat_tool(
     "delete_user",
-    "删除一个用户及其数据。极其危险，不可逆。",
+    "Delete a user and its data. Extremely dangerous; irreversible.",
     {
-        "username": {"type": "string", "description": "要删除的用户名"},
+        "username": {"type": "string", "description": "Username to delete."},
     },
     is_write=True,
     group="moderation",
@@ -1030,20 +1030,20 @@ def set_user_active_status(username, active):
 def delete_user(username):
     data = _api_json("POST", "users.delete", json={"userId": _user_id(username)})
     if data.get("success"):
-        return f"用户 {username} 已被永久删除。"
-    raise ToolExecutionError(f"[错误] 删除用户失败: {_format_json(data)}")
+        return f"User {username} was permanently deleted."
+    raise ToolExecutionError(f"[Error] Failed to delete user: {_format_json(data)}")
 
 
 @rocketchat_tool(
     "create_incoming_integration",
-    "创建 incoming webhook integration。",
+    "Create an incoming webhook integration.",
     {
-        "name": {"type": "string", "description": "integration 名称"},
-        "channel": {"type": "string", "description": "目标频道名，例如 #general"},
-        "username": {"type": "string", "description": "消息显示用户名"},
-        "enabled": {"type": "boolean", "description": "是否启用，默认 true"},
-        "script_enabled": {"type": "boolean", "description": "是否启用脚本，默认 false"},
-        "script": {"type": "string", "description": "可选脚本内容"},
+        "name": {"type": "string", "description": "Integration name."},
+        "channel": {"type": "string", "description": "Target channel name, for example #general."},
+        "username": {"type": "string", "description": "Display username for messages."},
+        "enabled": {"type": "boolean", "description": "Whether the integration is enabled. Default true."},
+        "script_enabled": {"type": "boolean", "description": "Whether scripting is enabled. Default false."},
+        "script": {"type": "string", "description": "Optional script content."},
     },
     is_write=True,
     group="integrations",
@@ -1063,22 +1063,22 @@ def create_incoming_integration(name, channel, username, enabled=True, script_en
     data = _api_json("POST", "integrations.create", json=payload)
     if data.get("success"):
         return _format_json(_normalize_integration(data.get("integration", {})))
-    raise ToolExecutionError(f"[错误] 创建 incoming integration 失败: {_format_json(data)}")
+    raise ToolExecutionError(f"[Error] Failed to create incoming integration: {_format_json(data)}")
 
 
 @rocketchat_tool(
     "create_outgoing_integration",
-    "创建 outgoing webhook integration。",
+    "Create an outgoing webhook integration.",
     {
-        "name": {"type": "string", "description": "integration 名称"},
-        "channel": {"type": "string", "description": "源频道名，例如 #incidents"},
-        "username": {"type": "string", "description": "消息显示用户名"},
-        "target_urls": {"type": "array", "items": {"type": "string"}, "description": "目标 URL 列表"},
-        "event": {"type": "string", "description": "触发事件，默认 sendMessage"},
-        "enabled": {"type": "boolean", "description": "是否启用，默认 true"},
-        "script_enabled": {"type": "boolean", "description": "是否启用脚本，默认 false"},
-        "script": {"type": "string", "description": "可选脚本内容"},
-        "trigger_words": {"type": "array", "items": {"type": "string"}, "description": "触发词列表（可选）"},
+        "name": {"type": "string", "description": "Integration name."},
+        "channel": {"type": "string", "description": "Source channel name, for example #incidents."},
+        "username": {"type": "string", "description": "Display username for messages."},
+        "target_urls": {"type": "array", "items": {"type": "string"}, "description": "Target URL list."},
+        "event": {"type": "string", "description": "Trigger event. Default is sendMessage."},
+        "enabled": {"type": "boolean", "description": "Whether the integration is enabled. Default true."},
+        "script_enabled": {"type": "boolean", "description": "Whether scripting is enabled. Default false."},
+        "script": {"type": "string", "description": "Optional script content."},
+        "trigger_words": {"type": "array", "items": {"type": "string"}, "description": "Trigger word list (optional)."},
     },
     is_write=True,
     group="integrations",
@@ -1111,15 +1111,15 @@ def create_outgoing_integration(
     data = _api_json("POST", "integrations.create", json=payload)
     if data.get("success"):
         return _format_json(_normalize_integration(data.get("integration", {})))
-    raise ToolExecutionError(f"[错误] 创建 outgoing integration 失败: {_format_json(data)}")
+    raise ToolExecutionError(f"[Error] Failed to create outgoing integration: {_format_json(data)}")
 
 
 @rocketchat_tool(
     "remove_integration",
-    "删除一个 integration。危险操作，不可逆。",
+    "Delete an integration. Dangerous operation; irreversible.",
     {
-        "name": {"type": "string", "description": "integration 名称"},
-        "integration_type": {"type": "string", "description": "integration 类型，例如 webhook-incoming 或 webhook-outgoing"},
+        "name": {"type": "string", "description": "Integration name."},
+        "integration_type": {"type": "string", "description": "Integration type, for example webhook-incoming or webhook-outgoing."},
     },
     is_write=True,
     group="integrations",
@@ -1129,8 +1129,8 @@ def remove_integration(name, integration_type=""):
     integration = _find_integration(name=name, integration_type=integration_type)
     integration_id = integration.get("_id", integration.get("integrationId", ""))
     if not integration_id:
-        raise ToolExecutionError(f"[错误] 找不到 integration ID: {name}")
+        raise ToolExecutionError(f"[Error] Integration ID not found: {name}")
     data = _api_json("POST", "integrations.remove", json={"integrationId": integration_id})
     if data.get("success"):
-        return f"integration {name} 已删除。"
-    raise ToolExecutionError(f"[错误] 删除 integration 失败: {_format_json(data)}")
+        return f"Integration {name} was deleted."
+    raise ToolExecutionError(f"[Error] Failed to delete integration: {_format_json(data)}")

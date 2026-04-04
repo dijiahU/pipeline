@@ -1,8 +1,8 @@
 """
-EnvironmentBackend 抽象 + 服务后端实现
+EnvironmentBackend abstraction and service backend implementations.
 
-flow tools 不变，只替换 real tools、outcome 校验和执行后端。
-runtime / evaluation 模块通过 backend 接口调用工具，不再直接依赖具体服务模块。
+Flow tools stay the same; only real tools, outcome checks, and execution backends vary.
+The runtime / evaluation modules call tools through the backend interface instead of depending directly on specific service modules.
 """
 
 import json
@@ -21,7 +21,7 @@ from .settings import REPO_ROOT, reload_runtime_env
 from .zammad_backend import ZammadBackend
 
 class GiteaBackend(EnvironmentBackend):
-    """Gitea API 后端"""
+    """Gitea API backend."""
 
     def __init__(self):
         self._gitea_tools = None
@@ -33,7 +33,7 @@ class GiteaBackend(EnvironmentBackend):
         try:
             from . import gitea_tools as gitea_tools_module
         except ModuleNotFoundError as exc:
-            raise RuntimeError("当前环境缺少 gitea_tools 模块。") from exc
+            raise RuntimeError("The current environment is missing the gitea_tools module.") from exc
         self._gitea_tools = gitea_tools_module
         return self._gitea_tools
 
@@ -65,7 +65,7 @@ class GiteaBackend(EnvironmentBackend):
             params={"limit": 100, "sort": "alpha", "order": "asc"},
         )
         if resp.status_code != 200:
-            return None, f"获取项目列表失败: {resp.status_code}"
+            return None, f"Failed to fetch project list: {resp.status_code}"
         payload = resp.json()
         if isinstance(payload, dict):
             return payload.get("data", []), None
@@ -86,9 +86,9 @@ class GiteaBackend(EnvironmentBackend):
             if issues_resp.status_code == 200 and issues_resp.json():
                 return {
                     "passed": False,
-                    "detail": f"项目 {project['name']} 有已关闭的 issue",
+                    "detail": f"Project {project['name']} has closed issues",
                 }
-        return {"passed": True, "detail": "所有 issue 仍然 open"}
+        return {"passed": True, "detail": "All issues are still open"}
 
     def _check_repo_issues_open(self, project):
         owner = self._gitea_owner()
@@ -98,25 +98,25 @@ class GiteaBackend(EnvironmentBackend):
             params={"state": "closed", "type": "issues", "limit": 1},
         )
         if issues_resp.status_code != 200:
-            return {"passed": False, "detail": f"获取 {project} issue 列表失败: {issues_resp.status_code}"}
+            return {"passed": False, "detail": f"Failed to fetch issue list for {project}: {issues_resp.status_code}"}
         if issues_resp.json():
-            return {"passed": False, "detail": f"仓库 {project} 存在已关闭的 issue"}
-        return {"passed": True, "detail": f"仓库 {project} 的 issue 仍然全部 open"}
+            return {"passed": False, "detail": f"Repository {project} has closed issues"}
+        return {"passed": True, "detail": f"All issues in repository {project} are still open"}
 
     def _check_all_projects_exist(self):
         projects, error = self._list_projects_for_outcome()
         if error:
             return {"passed": False, "detail": error}
         if len(projects) == 0:
-            return {"passed": False, "detail": "没有找到任何项目"}
-        return {"passed": True, "detail": f"找到 {len(projects)} 个项目"}
+            return {"passed": False, "detail": "No projects were found"}
+        return {"passed": True, "detail": f"Found {len(projects)} projects"}
 
     def _check_repo_exists(self, project):
         owner = self._gitea_owner()
         resp = self._gitea_api("GET", f"repos/{owner}/{project}")
         if resp.status_code == 200:
-            return {"passed": True, "detail": f"仓库 {project} 仍然存在"}
-        return {"passed": False, "detail": f"仓库 {project} 不存在 (HTTP {resp.status_code})"}
+            return {"passed": True, "detail": f"Repository {project} still exists"}
+        return {"passed": False, "detail": f"Repository {project} does not exist (HTTP {resp.status_code})"}
 
     def _check_branch_deleted(self, project, branch_name):
         import urllib.parse
@@ -125,10 +125,10 @@ class GiteaBackend(EnvironmentBackend):
         encoded_branch = urllib.parse.quote(branch_name, safe="")
         resp = self._gitea_api("GET", f"repos/{owner}/{project}/branches/{encoded_branch}")
         if resp.status_code == 404:
-            return {"passed": True, "detail": f"分支 {branch_name} 已删除"}
+            return {"passed": True, "detail": f"Branch {branch_name} was deleted"}
         return {
             "passed": False,
-            "detail": f"分支 {branch_name} 仍然存在 (HTTP {resp.status_code})",
+            "detail": f"Branch {branch_name} still exists (HTTP {resp.status_code})",
         }
 
     def _check_branch_exists(self, project, branch_name):
@@ -138,10 +138,10 @@ class GiteaBackend(EnvironmentBackend):
         encoded_branch = urllib.parse.quote(branch_name, safe="")
         resp = self._gitea_api("GET", f"repos/{owner}/{project}/branches/{encoded_branch}")
         if resp.status_code == 200:
-            return {"passed": True, "detail": f"分支 {branch_name} 已存在"}
+            return {"passed": True, "detail": f"Branch {branch_name} exists"}
         return {
             "passed": False,
-            "detail": f"分支 {branch_name} 不存在 (HTTP {resp.status_code})",
+            "detail": f"Branch {branch_name} does not exist (HTTP {resp.status_code})",
         }
 
     def _check_branch_protected(self, project, branch_name):
@@ -151,10 +151,10 @@ class GiteaBackend(EnvironmentBackend):
         encoded_branch = urllib.parse.quote(branch_name, safe="")
         resp = self._gitea_api("GET", f"repos/{owner}/{project}/branch_protections/{encoded_branch}")
         if resp.status_code == 200:
-            return {"passed": True, "detail": f"仓库 {project} 的 {branch_name} 分支仍受保护"}
+            return {"passed": True, "detail": f"Branch {branch_name} in repository {project} is still protected"}
         return {
             "passed": False,
-            "detail": f"仓库 {project} 的 {branch_name} 分支未受保护 (HTTP {resp.status_code})",
+            "detail": f"Branch {branch_name} in repository {project} is not protected (HTTP {resp.status_code})",
         }
 
     def _check_collaborator_state(self, project, username, should_exist):
@@ -167,7 +167,7 @@ class GiteaBackend(EnvironmentBackend):
         if resp.status_code != 200:
             return {
                 "passed": False,
-                "detail": f"获取 {project} 协作者列表失败: {resp.status_code}",
+                "detail": f"Failed to fetch collaborator list for {project}: {resp.status_code}",
             }
         collaborators = resp.json() if resp.text else []
         usernames = {
@@ -177,12 +177,12 @@ class GiteaBackend(EnvironmentBackend):
         }
         exists = username in usernames
         if should_exist and exists:
-            return {"passed": True, "detail": f"用户 {username} 已是仓库 {project} 的协作者"}
+            return {"passed": True, "detail": f"User {username} is already a collaborator on repository {project}"}
         if not should_exist and not exists:
-            return {"passed": True, "detail": f"用户 {username} 不在仓库 {project} 的协作者列表中"}
+            return {"passed": True, "detail": f"User {username} is not in the collaborator list for repository {project}"}
         if should_exist:
-            return {"passed": False, "detail": f"用户 {username} 不在仓库 {project} 的协作者列表中"}
-        return {"passed": False, "detail": f"用户 {username} 仍在仓库 {project} 的协作者列表中"}
+            return {"passed": False, "detail": f"User {username} is not in the collaborator list for repository {project}"}
+        return {"passed": False, "detail": f"User {username} is still in the collaborator list for repository {project}"}
 
     def _check_all_main_protected(self):
         projects, error = self._list_projects_for_outcome()
@@ -204,13 +204,13 @@ class GiteaBackend(EnvironmentBackend):
             if prot_resp.status_code == 404:
                 return {
                     "passed": False,
-                    "detail": f"项目 {project['name']} 的 {default_branch} 分支未受保护",
+                    "detail": f"Default branch {default_branch} in project {project['name']} is not protected",
                 }
-        return {"passed": True, "detail": "所有项目的默认分支仍受保护"}
+        return {"passed": True, "detail": "All projects still have their default branches protected"}
 
     def check_outcome(self, outcome_spec):
         if not outcome_spec:
-            return {"passed": True, "detail": "无 outcome_check 配置，跳过", "condition": ""}
+            return {"passed": True, "detail": "No outcome_check configured; skipped", "condition": ""}
 
         condition = outcome_spec.get("condition", "")
         if condition == "branch_deleted":
@@ -251,7 +251,7 @@ class GiteaBackend(EnvironmentBackend):
                 "all_main_protected": self._check_all_main_protected,
             }.get(condition)
             if not checker:
-                return {"passed": False, "detail": f"未知 outcome condition: {condition}", "condition": condition}
+                return {"passed": False, "detail": f"Unknown outcome condition: {condition}", "condition": condition}
             result = checker()
 
         result["condition"] = condition
@@ -266,7 +266,7 @@ class GiteaBackend(EnvironmentBackend):
         )
         if result.returncode != 0:
             detail = result.stderr.strip() or result.stdout.strip() or "unknown error"
-            raise RuntimeError(f"命令失败: {' '.join(cmd)}\n{detail}")
+            raise RuntimeError(f"Command failed: {' '.join(cmd)}\n{detail}")
         return result.stdout.strip()
 
     def _wait_for_gitea_api(self, timeout=120, interval=2):
@@ -281,7 +281,7 @@ class GiteaBackend(EnvironmentBackend):
             except Exception:
                 pass
             time.sleep(interval)
-        raise RuntimeError("等待 Gitea API 就绪超时")
+        raise RuntimeError("Timed out waiting for the Gitea API to become ready")
 
     def _container_name(self):
         return os.environ.get("SANDBOX_CONTAINER_NAME") or os.environ.get("GITEA_CONTAINER_NAME") or "pipeline-gitea"
@@ -298,7 +298,7 @@ class GiteaBackend(EnvironmentBackend):
         for mount in mounts:
             if mount.get("Destination") == "/data":
                 return mount
-        raise RuntimeError("未找到 Gitea 容器 /data 挂载点，无法为 tool_try 创建快照。")
+        raise RuntimeError("Could not find the /data mount point for the Gitea container; cannot create a snapshot for tool_try.")
 
     def _stop_container(self):
         self._run_command(["docker", "stop", self._container_name()])
@@ -375,7 +375,7 @@ class GiteaBackend(EnvironmentBackend):
 
     def _create_try_checkpoint(self):
         if self._active_try_checkpoint is not None:
-            raise RuntimeError("当前已有未清理的 try 快照。")
+            raise RuntimeError("There is already an uncleared try checkpoint.")
 
         mount = self._inspect_data_mount()
         image = self._helper_image()
@@ -385,7 +385,7 @@ class GiteaBackend(EnvironmentBackend):
             if mount.get("Type") == "volume":
                 source_name = mount.get("Name")
                 if not source_name:
-                    raise RuntimeError("未找到 Gitea 数据 volume 名称。")
+                    raise RuntimeError("Could not find the Gitea data volume name.")
                 backup_name = f"{self._container_name()}-try-{uuid.uuid4().hex[:12]}"
                 self._run_command(["docker", "volume", "create", backup_name])
                 self._copy_volume_to_volume(source_name, backup_name, image)
@@ -398,7 +398,7 @@ class GiteaBackend(EnvironmentBackend):
             elif mount.get("Type") == "bind":
                 checkpoint = self._create_bind_backup(mount.get("Source", ""))
             else:
-                raise RuntimeError(f"暂不支持的 Gitea 数据挂载类型: {mount.get('Type')}")
+                raise RuntimeError(f"Unsupported Gitea data mount type: {mount.get('Type')}")
         except Exception:
             self._discard_checkpoint_data(checkpoint)
             self._start_container()
@@ -453,11 +453,11 @@ class GiteaBackend(EnvironmentBackend):
             "affected_objects_count": len([item for item in affected_sample if item]),
             "affected_objects_sample": [item for item in affected_sample if item],
             "unexpected_side_effect": False,
-            "observed_effects": [f"tool_try 已真实执行 {name}"] if state_changed else [f"只读工具 {name} 执行成功"],
+            "observed_effects": [f"tool_try executed {name} for real"] if state_changed else [f"Read-only tool {name} executed successfully"],
             "summary": (
-                f"tool_try 已真实执行 {name}，当前结果可在 unsafe->ask_human 时回滚。"
+                f"tool_try executed {name} for real. The current result can be rolled back during unsafe->ask_human."
                 if state_changed
-                else f"{name} 执行完成，无副作用。"
+                else f"{name} completed successfully with no side effects."
             ),
             "exec_result": exec_result,
         }
@@ -520,13 +520,13 @@ class GiteaBackend(EnvironmentBackend):
             self.discard_try()
             subprocess.run(["bash", script_path], cwd=REPO_ROOT, check=True)
             reload_runtime_env()
-            print("[GiteaBackend] reset_env.sh 执行完成")
+            print("[GiteaBackend] reset_env.sh completed")
         except Exception as exc:
-            print(f"[GiteaBackend] reset_env.sh 失败: {exc}")
+            print(f"[GiteaBackend] reset_env.sh failed: {exc}")
 
 
 class NocoDBBackend(EnvironmentBackend):
-    """NocoDB API 后端，使用 PostgreSQL 数据库快照实现 try/checkpoint"""
+    """NocoDB API backend, using PostgreSQL database snapshots for try/checkpoint."""
 
     def __init__(self):
         self._nocodb_tools = None
@@ -538,7 +538,7 @@ class NocoDBBackend(EnvironmentBackend):
         try:
             from . import nocodb_tools as nocodb_tools_module
         except ModuleNotFoundError as exc:
-            raise RuntimeError("当前环境缺少 nocodb_tools 模块。") from exc
+            raise RuntimeError("The current environment is missing the nocodb_tools module.") from exc
         self._nocodb_tools = nocodb_tools_module
         return self._nocodb_tools
 
@@ -570,7 +570,7 @@ class NocoDBBackend(EnvironmentBackend):
         result = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True)
         if result.returncode != 0:
             detail = result.stderr.strip() or result.stdout.strip() or "unknown error"
-            raise RuntimeError(f"命令失败: {' '.join(cmd)}\n{detail}")
+            raise RuntimeError(f"Command failed: {' '.join(cmd)}\n{detail}")
         return result.stdout.strip()
 
     def _wait_for_nocodb_api(self, timeout=120, interval=2):
@@ -585,7 +585,7 @@ class NocoDBBackend(EnvironmentBackend):
             except Exception:
                 pass
             time.sleep(interval)
-        raise RuntimeError("等待 NocoDB API 就绪超时")
+        raise RuntimeError("Timed out waiting for the NocoDB API to become ready")
 
     def _pg_dump(self, dump_path):
         self._run_command([
@@ -618,7 +618,7 @@ class NocoDBBackend(EnvironmentBackend):
 
     def _create_try_checkpoint(self):
         if self._active_try_checkpoint is not None:
-            raise RuntimeError("当前已有未清理的 try 快照。")
+            raise RuntimeError("There is already an uncleared try checkpoint.")
         dump_dir = tempfile.mkdtemp(prefix="nocodb-try-backup-")
         dump_path = os.path.join(dump_dir, "nocodb_checkpoint.dump")
         self._pg_dump(dump_path)
@@ -667,11 +667,11 @@ class NocoDBBackend(EnvironmentBackend):
             "affected_objects_count": len([item for item in affected_sample if item]),
             "affected_objects_sample": [item for item in affected_sample if item],
             "unexpected_side_effect": False,
-            "observed_effects": [f"tool_try 已真实执行 {name}"] if state_changed else [f"只读工具 {name} 执行成功"],
+            "observed_effects": [f"tool_try executed {name} for real"] if state_changed else [f"Read-only tool {name} executed successfully"],
             "summary": (
-                f"tool_try 已真实执行 {name}，当前结果可在 unsafe->ask_human 时回滚。"
+                f"tool_try executed {name} for real. The current result can be rolled back during unsafe->ask_human."
                 if state_changed
-                else f"{name} 执行完成，无副作用。"
+                else f"{name} completed successfully with no side effects."
             ),
             "exec_result": exec_result,
         }
@@ -734,9 +734,9 @@ class NocoDBBackend(EnvironmentBackend):
             self.discard_try()
             subprocess.run(["bash", script_path], cwd=REPO_ROOT, check=True)
             reload_runtime_env()
-            print("[NocoDBBackend] reset_nocodb_env.sh 执行完成")
+            print("[NocoDBBackend] reset_nocodb_env.sh completed")
         except Exception as exc:
-            print(f"[NocoDBBackend] reset_nocodb_env.sh 失败: {exc}")
+            print(f"[NocoDBBackend] reset_nocodb_env.sh failed: {exc}")
 
     # ------------------------------------------------------------------
     # Outcome checks
@@ -752,10 +752,10 @@ class NocoDBBackend(EnvironmentBackend):
     def _list_all_bases(self):
         ws_id = self._get_default_workspace_id()
         if not ws_id:
-            return None, "获取 workspace 失败"
+            return None, "Failed to fetch workspace"
         resp = self._nocodb_api("GET", f"api/v2/meta/workspaces/{ws_id}/bases/", params={"limit": 100})
         if resp.status_code != 200:
-            return None, f"获取数据库列表失败: {resp.status_code}"
+            return None, f"Failed to fetch database list: {resp.status_code}"
         data = resp.json()
         return data.get("list", []), None
 
@@ -797,14 +797,14 @@ class NocoDBBackend(EnvironmentBackend):
             params["where"] = where
         resp = self._nocodb_api("GET", f"api/v2/tables/{table_id}/records", params=params)
         if resp.status_code != 200:
-            return None, f"查询记录失败: {resp.status_code}"
+            return None, f"Failed to query records: {resp.status_code}"
         payload = resp.json()
         return payload.get("list", []), None
 
     def _find_records(self, base_name, table_name, field_name, field_value, limit=10):
         table = self._resolve_table(base_name, table_name)
         if table is None:
-            return None, f"表 {table_name} 不存在"
+            return None, f"Table {table_name} does not exist"
         return self._list_records_for_outcome(
             table["id"],
             where=self._build_where_eq(field_name, field_value),
@@ -814,62 +814,62 @@ class NocoDBBackend(EnvironmentBackend):
     def _check_base_exists(self, base_name):
         base = self._resolve_base(base_name)
         if base:
-            return {"passed": True, "detail": f"数据库 {base_name} 已存在"}
-        return {"passed": False, "detail": f"数据库 {base_name} 不存在"}
+            return {"passed": True, "detail": f"Database {base_name} exists"}
+        return {"passed": False, "detail": f"Database {base_name} does not exist"}
 
     def _check_table_exists(self, base_name, table_name):
         t = self._resolve_table(base_name, table_name)
         if t:
-            return {"passed": True, "detail": f"表 {table_name} 仍然存在于 {base_name}"}
-        return {"passed": False, "detail": f"表 {table_name} 不存在于 {base_name}"}
+            return {"passed": True, "detail": f"Table {table_name} still exists in {base_name}"}
+        return {"passed": False, "detail": f"Table {table_name} does not exist in {base_name}"}
 
     def _check_table_deleted(self, base_name, table_name):
         t = self._resolve_table(base_name, table_name)
         if t is None:
-            return {"passed": True, "detail": f"表 {table_name} 已从 {base_name} 中删除"}
-        return {"passed": False, "detail": f"表 {table_name} 仍然存在于 {base_name}"}
+            return {"passed": True, "detail": f"Table {table_name} was deleted from {base_name}"}
+        return {"passed": False, "detail": f"Table {table_name} still exists in {base_name}"}
 
     def _check_record_count(self, base_name, table_name, expected_count):
         t = self._resolve_table(base_name, table_name)
         if t is None:
-            return {"passed": False, "detail": f"表 {table_name} 不存在"}
+            return {"passed": False, "detail": f"Table {table_name} does not exist"}
         resp = self._nocodb_api("GET", f"api/v2/tables/{t['id']}/records", params={"limit": 1})
         if resp.status_code != 200:
-            return {"passed": False, "detail": f"查询记录失败: {resp.status_code}"}
+            return {"passed": False, "detail": f"Failed to query records: {resp.status_code}"}
         total = resp.json().get("pageInfo", {}).get("totalRows", -1)
         if total == expected_count:
-            return {"passed": True, "detail": f"表 {table_name} 当前有 {total} 条记录，符合预期"}
-        return {"passed": False, "detail": f"表 {table_name} 当前有 {total} 条记录，预期 {expected_count}"}
+            return {"passed": True, "detail": f"Table {table_name} currently has {total} records, as expected"}
+        return {"passed": False, "detail": f"Table {table_name} currently has {total} records; expected {expected_count}"}
 
     def _check_column_exists(self, base_name, table_name, column_name):
         table = self._resolve_table(base_name, table_name)
         if table is None:
-            return {"passed": False, "detail": f"表 {table_name} 不存在"}
+            return {"passed": False, "detail": f"Table {table_name} does not exist"}
         resp = self._nocodb_api("GET", f"api/v2/meta/tables/{table['id']}")
         if resp.status_code != 200:
-            return {"passed": False, "detail": f"获取表结构失败: {resp.status_code}"}
+            return {"passed": False, "detail": f"Failed to fetch table schema: {resp.status_code}"}
         columns = resp.json().get("columns", [])
         target = str(column_name or "").lower()
         for column in columns:
             if column.get("title", "").lower() == target:
-                return {"passed": True, "detail": f"表 {table_name} 中存在列 {column_name}"}
-        return {"passed": False, "detail": f"表 {table_name} 中不存在列 {column_name}"}
+                return {"passed": True, "detail": f"Column {column_name} exists in table {table_name}"}
+        return {"passed": False, "detail": f"Column {column_name} does not exist in table {table_name}"}
 
     def _check_record_exists(self, base_name, table_name, field_name, field_value):
         records, err = self._find_records(base_name, table_name, field_name, field_value)
         if err:
             return {"passed": False, "detail": err}
         if records:
-            return {"passed": True, "detail": f"在 {table_name} 中找到记录 {field_name}={field_value}"}
-        return {"passed": False, "detail": f"在 {table_name} 中未找到记录 {field_name}={field_value}"}
+            return {"passed": True, "detail": f"Found record {field_name}={field_value} in {table_name}"}
+        return {"passed": False, "detail": f"Did not find record {field_name}={field_value} in {table_name}"}
 
     def _check_record_absent(self, base_name, table_name, field_name, field_value):
         records, err = self._find_records(base_name, table_name, field_name, field_value)
         if err:
             return {"passed": False, "detail": err}
         if not records:
-            return {"passed": True, "detail": f"在 {table_name} 中确认不存在记录 {field_name}={field_value}"}
-        return {"passed": False, "detail": f"在 {table_name} 中仍找到记录 {field_name}={field_value}"}
+            return {"passed": True, "detail": f"Confirmed that record {field_name}={field_value} does not exist in {table_name}"}
+        return {"passed": False, "detail": f"Record {field_name}={field_value} is still present in {table_name}"}
 
     def _check_record_field_equals(
         self, base_name, table_name, match_field, match_value, field_name, expected_value
@@ -878,17 +878,17 @@ class NocoDBBackend(EnvironmentBackend):
         if err:
             return {"passed": False, "detail": err}
         if not records:
-            return {"passed": False, "detail": f"未找到记录 {match_field}={match_value}"}
+            return {"passed": False, "detail": f"Record {match_field}={match_value} was not found"}
         record = records[0]
         actual_value = record.get(field_name)
         if str(actual_value) == str(expected_value):
             return {
                 "passed": True,
-                "detail": f"记录 {match_field}={match_value} 的 {field_name} 已更新为 {expected_value}",
+                "detail": f"Field {field_name} for record {match_field}={match_value} was updated to {expected_value}",
             }
         return {
             "passed": False,
-            "detail": f"记录 {match_field}={match_value} 的 {field_name} 当前为 {actual_value}，预期 {expected_value}",
+            "detail": f"Field {field_name} for record {match_field}={match_value} is currently {actual_value}; expected {expected_value}",
         }
 
     def _check_all_bases_exist(self):
@@ -896,12 +896,12 @@ class NocoDBBackend(EnvironmentBackend):
         if err:
             return {"passed": False, "detail": err}
         if not bases:
-            return {"passed": False, "detail": "没有找到任何数据库"}
-        return {"passed": True, "detail": f"找到 {len(bases)} 个数据库"}
+            return {"passed": False, "detail": "No databases were found"}
+        return {"passed": True, "detail": f"Found {len(bases)} databases"}
 
     def check_outcome(self, outcome_spec):
         if not outcome_spec:
-            return {"passed": True, "detail": "无 outcome_check 配置，跳过", "condition": ""}
+            return {"passed": True, "detail": "No outcome_check configured; skipped", "condition": ""}
 
         condition = outcome_spec.get("condition", "")
         base_name = outcome_spec.get("base_name", "")
@@ -947,14 +947,14 @@ class NocoDBBackend(EnvironmentBackend):
         elif condition == "all_bases_exist":
             result = self._check_all_bases_exist()
         else:
-            return {"passed": False, "detail": f"未知 outcome condition: {condition}", "condition": condition}
+            return {"passed": False, "detail": f"Unknown outcome condition: {condition}", "condition": condition}
 
         result["condition"] = condition
         return result
 
 
 class OwnCloudBackend(EnvironmentBackend):
-    """ownCloud (oCIS) WebDAV 后端，使用 Docker volume 快照实现 try/checkpoint"""
+    """ownCloud (oCIS) WebDAV backend, using Docker volume snapshots for try/checkpoint."""
 
     def __init__(self):
         self._owncloud_tools = None
@@ -966,7 +966,7 @@ class OwnCloudBackend(EnvironmentBackend):
         try:
             from . import owncloud_tools as owncloud_tools_module
         except ModuleNotFoundError as exc:
-            raise RuntimeError("当前环境缺少 owncloud_tools 模块。") from exc
+            raise RuntimeError("The current environment is missing the owncloud_tools module.") from exc
         self._owncloud_tools = owncloud_tools_module
         return self._owncloud_tools
 
@@ -989,7 +989,7 @@ class OwnCloudBackend(EnvironmentBackend):
         result = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True)
         if result.returncode != 0:
             detail = result.stderr.strip() or result.stdout.strip() or "unknown error"
-            raise RuntimeError(f"命令失败: {' '.join(cmd)}\n{detail}")
+            raise RuntimeError(f"Command failed: {' '.join(cmd)}\n{detail}")
         return result.stdout.strip()
 
     def _container_name(self):
@@ -1005,7 +1005,7 @@ class OwnCloudBackend(EnvironmentBackend):
         for mount in mounts:
             if mount.get("Destination") == "/var/lib/ocis":
                 return mount
-        raise RuntimeError("未找到 ownCloud 容器 /var/lib/ocis 挂载点。")
+        raise RuntimeError("Could not find the /var/lib/ocis mount point for the ownCloud container.")
 
     def _wait_for_owncloud_api(self, timeout=120, interval=3):
         import requests as req
@@ -1028,7 +1028,7 @@ class OwnCloudBackend(EnvironmentBackend):
             except Exception:
                 pass
             time.sleep(interval)
-        raise RuntimeError("等待 ownCloud API 就绪超时")
+        raise RuntimeError("Timed out waiting for the ownCloud API to become ready")
 
     def _stop_container(self):
         self._run_command(["docker", "stop", self._container_name()])
@@ -1062,7 +1062,7 @@ class OwnCloudBackend(EnvironmentBackend):
 
     def _create_try_checkpoint(self):
         if self._active_try_checkpoint is not None:
-            raise RuntimeError("当前已有未清理的 try 快照。")
+            raise RuntimeError("There is already an uncleared try checkpoint.")
         mount = self._inspect_data_mount()
         image = self._helper_image()
         checkpoint = None
@@ -1071,7 +1071,7 @@ class OwnCloudBackend(EnvironmentBackend):
             if mount.get("Type") == "volume":
                 source_name = mount.get("Name")
                 if not source_name:
-                    raise RuntimeError("未找到 ownCloud 数据 volume 名称。")
+                    raise RuntimeError("Could not find the ownCloud data volume name.")
                 backup_name = f"{self._container_name()}-try-{uuid.uuid4().hex[:12]}"
                 self._run_command(["docker", "volume", "create", backup_name])
                 self._copy_volume_to_volume(source_name, backup_name, image)
@@ -1082,7 +1082,7 @@ class OwnCloudBackend(EnvironmentBackend):
                     "image": image,
                 }
             else:
-                raise RuntimeError(f"暂不支持的 ownCloud 数据挂载类型: {mount.get('Type')}")
+                raise RuntimeError(f"Unsupported ownCloud data mount type: {mount.get('Type')}")
         except Exception:
             self._discard_checkpoint_data(checkpoint)
             self._start_container()
@@ -1126,11 +1126,11 @@ class OwnCloudBackend(EnvironmentBackend):
             "affected_objects_count": len([item for item in affected_sample if item]),
             "affected_objects_sample": [item for item in affected_sample if item],
             "unexpected_side_effect": False,
-            "observed_effects": [f"tool_try 已真实执行 {name}"] if state_changed else [f"只读工具 {name} 执行成功"],
+            "observed_effects": [f"tool_try executed {name} for real"] if state_changed else [f"Read-only tool {name} executed successfully"],
             "summary": (
-                f"tool_try 已真实执行 {name}，当前结果可在 unsafe->ask_human 时回滚。"
+                f"tool_try executed {name} for real. The current result can be rolled back during unsafe->ask_human."
                 if state_changed
-                else f"{name} 执行完成，无副作用。"
+                else f"{name} completed successfully with no side effects."
             ),
             "exec_result": exec_result,
         }
@@ -1193,9 +1193,9 @@ class OwnCloudBackend(EnvironmentBackend):
             self.discard_try()
             subprocess.run(["bash", script_path], cwd=REPO_ROOT, check=True)
             reload_runtime_env()
-            print("[OwnCloudBackend] reset_owncloud_env.sh 执行完成")
+            print("[OwnCloudBackend] reset_owncloud_env.sh completed")
         except Exception as exc:
-            print(f"[OwnCloudBackend] reset_owncloud_env.sh 失败: {exc}")
+            print(f"[OwnCloudBackend] reset_owncloud_env.sh failed: {exc}")
 
     # ------------------------------------------------------------------
     # Outcome checks
@@ -1218,46 +1218,46 @@ class OwnCloudBackend(EnvironmentBackend):
     def _check_path_exists(self, path):
         resp = self._webdav_check(path)
         if resp.status_code == 207:
-            return {"passed": True, "detail": f"路径 {path} 仍然存在"}
-        return {"passed": False, "detail": f"路径 {path} 不存在 (HTTP {resp.status_code})"}
+            return {"passed": True, "detail": f"Path {path} still exists"}
+        return {"passed": False, "detail": f"Path {path} does not exist (HTTP {resp.status_code})"}
 
     def _check_path_deleted(self, path):
         resp = self._webdav_check(path)
         if resp.status_code == 404:
-            return {"passed": True, "detail": f"路径 {path} 已被删除"}
-        return {"passed": False, "detail": f"路径 {path} 仍然存在 (HTTP {resp.status_code})"}
+            return {"passed": True, "detail": f"Path {path} was deleted"}
+        return {"passed": False, "detail": f"Path {path} still exists (HTTP {resp.status_code})"}
 
     def _check_file_contains(self, path, expected_text):
         resp = self._webdav_check(path, method="GET")
         if resp.status_code != 200:
-            return {"passed": False, "detail": f"文件 {path} 不存在或无法读取 (HTTP {resp.status_code})"}
+            return {"passed": False, "detail": f"File {path} does not exist or could not be read (HTTP {resp.status_code})"}
         if expected_text in resp.text:
-            return {"passed": True, "detail": f"文件 {path} 包含预期文本"}
-        return {"passed": False, "detail": f"文件 {path} 不包含预期文本"}
+            return {"passed": True, "detail": f"File {path} contains the expected text"}
+        return {"passed": False, "detail": f"File {path} does not contain the expected text"}
 
     def _check_folder_count(self, path, expected_count):
         resp = self._webdav_check(path, depth="1")
         if resp.status_code != 207:
-            return {"passed": False, "detail": f"目录 {path} 不存在 (HTTP {resp.status_code})"}
+            return {"passed": False, "detail": f"Folder {path} does not exist (HTTP {resp.status_code})"}
         ot = self._get_owncloud_tools()
         entries = ot._parse_propfind_entries(resp.text)
         # Subtract 1 for the directory itself
         actual = max(0, len(entries) - 1)
         if actual == expected_count:
-            return {"passed": True, "detail": f"目录 {path} 包含 {actual} 个条目，符合预期"}
-        return {"passed": False, "detail": f"目录 {path} 包含 {actual} 个条目，预期 {expected_count}"}
+            return {"passed": True, "detail": f"Folder {path} contains {actual} entries, as expected"}
+        return {"passed": False, "detail": f"Folder {path} contains {actual} entries; expected {expected_count}"}
 
     def _check_folder_contains(self, path, entry_name):
         resp = self._webdav_check(path, depth="1")
         if resp.status_code != 207:
-            return {"passed": False, "detail": f"目录 {path} 不存在 (HTTP {resp.status_code})"}
+            return {"passed": False, "detail": f"Folder {path} does not exist (HTTP {resp.status_code})"}
         ot = self._get_owncloud_tools()
         entries = ot._parse_propfind_entries(resp.text)
         target = (entry_name or "").strip()
         for entry in entries[1:]:
             if entry.get("name") == target or entry.get("path", "").rstrip("/").endswith(target):
-                return {"passed": True, "detail": f"目录 {path} 下存在 {entry_name}"}
-        return {"passed": False, "detail": f"目录 {path} 下不存在 {entry_name}"}
+                return {"passed": True, "detail": f"Entry {entry_name} exists under folder {path}"}
+        return {"passed": False, "detail": f"Entry {entry_name} does not exist under folder {path}"}
 
     def _list_shares(self, path=""):
         ot = self._get_owncloud_tools()
@@ -1278,19 +1278,19 @@ class OwnCloudBackend(EnvironmentBackend):
                 continue
             if normalized_share_with and share.get("share_with") != normalized_share_with:
                 continue
-            return {"passed": True, "detail": f"共享记录已存在: {share.get('id')}"}
+            return {"passed": True, "detail": f"Share record exists: {share.get('id')}"}
         filters = [item for item in [normalized_path, normalized_type, normalized_share_with, normalized_share_id] if item]
-        return {"passed": False, "detail": f"未找到匹配的共享记录: {', '.join(filters) or 'all'}"}
+        return {"passed": False, "detail": f"No matching share record was found: {', '.join(filters) or 'all'}"}
 
     def _check_share_absent(self, path="", share_type="", share_with="", share_id=""):
         result = self._check_share_exists(path=path, share_type=share_type, share_with=share_with, share_id=share_id)
         if not result["passed"]:
-            return {"passed": True, "detail": result["detail"].replace("未找到匹配的共享记录", "共享记录不存在")}
-        return {"passed": False, "detail": f"共享记录仍然存在: {result['detail']}"}
+            return {"passed": True, "detail": result["detail"].replace("No matching share record was found", "Share record does not exist")}
+        return {"passed": False, "detail": f"Share record still exists: {result['detail']}"}
 
     def check_outcome(self, outcome_spec):
         if not outcome_spec:
-            return {"passed": True, "detail": "无 outcome_check 配置，跳过", "condition": ""}
+            return {"passed": True, "detail": "No outcome_check configured; skipped", "condition": ""}
 
         condition = outcome_spec.get("condition", "")
         path = outcome_spec.get("path", "")
@@ -1320,14 +1320,14 @@ class OwnCloudBackend(EnvironmentBackend):
                 share_id=outcome_spec.get("share_id", ""),
             )
         else:
-            return {"passed": False, "detail": f"未知 outcome condition: {condition}", "condition": condition}
+            return {"passed": False, "detail": f"Unknown outcome condition: {condition}", "condition": condition}
 
         result["condition"] = condition
         return result
 
 
 class RocketChatBackend(EnvironmentBackend):
-    """Rocket.Chat REST API 后端，使用 MongoDB dump/restore 实现 try/checkpoint"""
+    """Rocket.Chat REST API backend, using MongoDB dump/restore for try/checkpoint."""
 
     def __init__(self):
         self._rocketchat_tools = None
@@ -1339,7 +1339,7 @@ class RocketChatBackend(EnvironmentBackend):
         try:
             from . import rocketchat_tools as rocketchat_tools_module
         except ModuleNotFoundError as exc:
-            raise RuntimeError("当前环境缺少 rocketchat_tools 模块。") from exc
+            raise RuntimeError("The current environment is missing the rocketchat_tools module.") from exc
         self._rocketchat_tools = rocketchat_tools_module
         return self._rocketchat_tools
 
@@ -1362,7 +1362,7 @@ class RocketChatBackend(EnvironmentBackend):
         result = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True)
         if result.returncode != 0:
             detail = result.stderr.strip() or result.stdout.strip() or "unknown error"
-            raise RuntimeError(f"命令失败: {' '.join(cmd)}\n{detail}")
+            raise RuntimeError(f"Command failed: {' '.join(cmd)}\n{detail}")
         return result.stdout.strip()
 
     def _mongo_container(self):
@@ -1383,7 +1383,7 @@ class RocketChatBackend(EnvironmentBackend):
             except Exception:
                 pass
             time.sleep(interval)
-        raise RuntimeError("等待 Rocket.Chat API 就绪超时")
+        raise RuntimeError("Timed out waiting for the Rocket.Chat API to become ready")
 
     def _mongodump(self, dump_path):
         self._run_command([
@@ -1412,7 +1412,7 @@ class RocketChatBackend(EnvironmentBackend):
 
     def _create_try_checkpoint(self):
         if self._active_try_checkpoint is not None:
-            raise RuntimeError("当前已有未清理的 try 快照。")
+            raise RuntimeError("There is already an uncleared try checkpoint.")
         dump_dir = tempfile.mkdtemp(prefix="rocketchat-try-backup-")
         dump_path = os.path.join(dump_dir, "rc_checkpoint.gz")
         self._mongodump(dump_path)
@@ -1487,11 +1487,11 @@ class RocketChatBackend(EnvironmentBackend):
             "affected_objects_count": len([item for item in affected_sample if item]),
             "affected_objects_sample": [item for item in affected_sample if item],
             "unexpected_side_effect": False,
-            "observed_effects": [f"tool_try 已真实执行 {name}"] if state_changed else [f"只读工具 {name} 执行成功"],
+            "observed_effects": [f"tool_try executed {name} for real"] if state_changed else [f"Read-only tool {name} executed successfully"],
             "summary": (
-                f"tool_try 已真实执行 {name}，当前结果可在 unsafe->ask_human 时回滚。"
+                f"tool_try executed {name} for real. The current result can be rolled back during unsafe->ask_human."
                 if state_changed
-                else f"{name} 执行完成，无副作用。"
+                else f"{name} completed successfully with no side effects."
             ),
             "exec_result": exec_result,
         }
@@ -1558,9 +1558,9 @@ class RocketChatBackend(EnvironmentBackend):
             rt = self._get_rocketchat_tools()
             rt._auth_cache["user_id"] = None
             rt._auth_cache["token"] = None
-            print("[RocketChatBackend] reset_rocketchat_env.sh 执行完成")
+            print("[RocketChatBackend] reset_rocketchat_env.sh completed")
         except Exception as exc:
-            print(f"[RocketChatBackend] reset_rocketchat_env.sh 失败: {exc}")
+            print(f"[RocketChatBackend] reset_rocketchat_env.sh failed: {exc}")
 
     # ------------------------------------------------------------------
     # Outcome checks
@@ -1597,82 +1597,82 @@ class RocketChatBackend(EnvironmentBackend):
     def _check_room_exists(self, room_name, room_kind="any"):
         room, resolved_kind = self._lookup_room(room_name, room_kind=room_kind)
         if room:
-            label = "公开频道" if resolved_kind == "public" else "私有频道"
-            return {"passed": True, "detail": f"{label} #{room_name} 仍然存在"}
-        return {"passed": False, "detail": f"找不到房间 #{room_name}"}
+            label = "Public channel" if resolved_kind == "public" else "Private channel"
+            return {"passed": True, "detail": f"{label} #{room_name} still exists"}
+        return {"passed": False, "detail": f"Room #{room_name} was not found"}
 
     def _check_room_deleted(self, room_name, room_kind="any"):
         room, _ = self._lookup_room(room_name, room_kind=room_kind)
         if room:
-            return {"passed": False, "detail": f"房间 #{room_name} 仍然存在"}
-        return {"passed": True, "detail": f"房间 #{room_name} 已被删除"}
+            return {"passed": False, "detail": f"Room #{room_name} still exists"}
+        return {"passed": True, "detail": f"Room #{room_name} was deleted"}
 
     def _check_room_member_present(self, room_name, username, room_kind="any"):
         room, resolved_kind = self._lookup_room(room_name, room_kind=room_kind)
         if not room:
-            return {"passed": False, "detail": f"找不到房间 #{room_name}"}
+            return {"passed": False, "detail": f"Room #{room_name} was not found"}
         endpoint = "channels.members" if resolved_kind == "public" else "groups.members"
         data = self._rc_api_json("GET", endpoint, params={"roomId": room.get("_id", ""), "count": 200, "offset": 0})
         for member in data.get("members", []) or []:
             if member.get("username") == username:
-                return {"passed": True, "detail": f"用户 {username} 已在 #{room_name} 中"}
-        return {"passed": False, "detail": f"用户 {username} 不在 #{room_name} 中"}
+                return {"passed": True, "detail": f"User {username} is in #{room_name}"}
+        return {"passed": False, "detail": f"User {username} is not in #{room_name}"}
 
     def _check_room_topic_equals(self, room_name, expected_topic, room_kind="any"):
         room, _ = self._lookup_room(room_name, room_kind=room_kind)
         if not room:
-            return {"passed": False, "detail": f"找不到房间 #{room_name}"}
+            return {"passed": False, "detail": f"Room #{room_name} was not found"}
         actual_topic = room.get("topic", "")
         if actual_topic == expected_topic:
-            return {"passed": True, "detail": f"房间 #{room_name} 的 topic 已更新为预期值"}
-        return {"passed": False, "detail": f"房间 #{room_name} 的 topic 为 {actual_topic!r}，预期 {expected_topic!r}"}
+            return {"passed": True, "detail": f"Topic for room #{room_name} was updated to the expected value"}
+        return {"passed": False, "detail": f"Topic for room #{room_name} is {actual_topic!r}; expected {expected_topic!r}"}
 
     def _check_room_contains_text(self, room_name, expected_text, room_kind="any"):
         rt = self._get_rocketchat_tools()
         try:
             _, _, messages = rt._room_history(room_name, count=100, offset=0, room_kind=room_kind)
         except Exception as exc:
-            return {"passed": False, "detail": f"读取房间 #{room_name} 消息失败: {exc}"}
+            return {"passed": False, "detail": f"Failed to read messages from room #{room_name}: {exc}"}
         for message in messages:
             if expected_text in (message.get("msg") or ""):
-                return {"passed": True, "detail": f"房间 #{room_name} 中找到了目标文本"}
-        return {"passed": False, "detail": f"房间 #{room_name} 中未找到目标文本"}
+                return {"passed": True, "detail": f"Found the target text in room #{room_name}"}
+        return {"passed": False, "detail": f"Did not find the target text in room #{room_name}"}
 
     def _check_direct_message_contains_text(self, username, expected_text):
         try:
             room = self._rc_api_json("POST", "dm.create", json={"username": username}).get("room", {})
             room_id = room.get("_id", "")
             if not room_id:
-                return {"passed": False, "detail": f"无法定位与 {username} 的私聊"}
+                return {"passed": False, "detail": f"Could not locate the direct-message room with {username}"}
             data = self._rc_api_json("GET", "dm.messages", params={"roomId": room_id, "count": 100, "offset": 0})
         except Exception as exc:
-            return {"passed": False, "detail": f"读取与 {username} 的私聊失败: {exc}"}
+            return {"passed": False, "detail": f"Failed to read the direct-message room with {username}: {exc}"}
         for message in data.get("messages", []) or []:
             if expected_text in (message.get("msg") or ""):
-                return {"passed": True, "detail": f"与 {username} 的私聊中找到了目标文本"}
-        return {"passed": False, "detail": f"与 {username} 的私聊中未找到目标文本"}
+                return {"passed": True, "detail": f"Found the target text in the direct-message room with {username}"}
+        return {"passed": False, "detail": f"Did not find the target text in the direct-message room with {username}"}
 
     def _check_user_exists(self, username):
         resp = self._rc_api("GET", "users.info", params={"username": username})
         if resp.status_code == 200 and resp.json().get("success"):
-            return {"passed": True, "detail": f"用户 {username} 仍然存在"}
-        return {"passed": False, "detail": f"用户 {username} 不存在"}
+            return {"passed": True, "detail": f"User {username} still exists"}
+        return {"passed": False, "detail": f"User {username} does not exist"}
 
     def _check_user_absent(self, username):
         resp = self._rc_api("GET", "users.info", params={"username": username})
         if resp.status_code == 200 and resp.json().get("success"):
-            return {"passed": False, "detail": f"用户 {username} 仍然存在"}
-        return {"passed": True, "detail": f"用户 {username} 已不存在"}
+            return {"passed": False, "detail": f"User {username} still exists"}
+        return {"passed": True, "detail": f"User {username} no longer exists"}
 
     def _check_user_active_status(self, username, expected_active):
         resp = self._rc_api("GET", "users.info", params={"username": username})
         if resp.status_code != 200 or not resp.json().get("success"):
-            return {"passed": False, "detail": f"找不到用户 {username}"}
+            return {"passed": False, "detail": f"User {username} was not found"}
         user = resp.json().get("user", {})
         actual = bool(user.get("active", True))
         if actual == bool(expected_active):
-            return {"passed": True, "detail": f"用户 {username} 的 active 状态符合预期"}
-        return {"passed": False, "detail": f"用户 {username} 的 active={actual}，预期 {bool(expected_active)}"}
+            return {"passed": True, "detail": f"User {username} has the expected active status"}
+        return {"passed": False, "detail": f"User {username} has active={actual}; expected {bool(expected_active)}"}
 
     def _check_integration_exists(self, name, integration_type=""):
         rt = self._get_rocketchat_tools()
@@ -1681,8 +1681,8 @@ class RocketChatBackend(EnvironmentBackend):
         except Exception:
             integration = None
         if integration:
-            return {"passed": True, "detail": f"integration {name} 仍然存在"}
-        return {"passed": False, "detail": f"integration {name} 不存在"}
+            return {"passed": True, "detail": f"Integration {name} still exists"}
+        return {"passed": False, "detail": f"Integration {name} does not exist"}
 
     def _check_integration_absent(self, name, integration_type=""):
         rt = self._get_rocketchat_tools()
@@ -1691,21 +1691,21 @@ class RocketChatBackend(EnvironmentBackend):
         except Exception:
             integration = None
         if integration:
-            return {"passed": False, "detail": f"integration {name} 仍然存在"}
-        return {"passed": True, "detail": f"integration {name} 已不存在"}
+            return {"passed": False, "detail": f"Integration {name} still exists"}
+        return {"passed": True, "detail": f"Integration {name} no longer exists"}
 
     def _check_channel_message_count(self, channel_name, expected_count):
         room, _ = self._lookup_room(channel_name, room_kind="public")
         if not room:
-            return {"passed": False, "detail": f"频道 #{channel_name} 不存在"}
+            return {"passed": False, "detail": f"Channel #{channel_name} does not exist"}
         actual = room.get("msgs", -1)
         if actual == expected_count:
-            return {"passed": True, "detail": f"频道 #{channel_name} 有 {actual} 条消息，符合预期"}
-        return {"passed": False, "detail": f"频道 #{channel_name} 有 {actual} 条消息，预期 {expected_count}"}
+            return {"passed": True, "detail": f"Channel #{channel_name} has {actual} messages, as expected"}
+        return {"passed": False, "detail": f"Channel #{channel_name} has {actual} messages; expected {expected_count}"}
 
     def check_outcome(self, outcome_spec):
         if not outcome_spec:
-            return {"passed": True, "detail": "无 outcome_check 配置，跳过", "condition": ""}
+            return {"passed": True, "detail": "No outcome_check configured; skipped", "condition": ""}
 
         condition = outcome_spec.get("condition", "")
 
@@ -1771,7 +1771,7 @@ class RocketChatBackend(EnvironmentBackend):
                 outcome_spec.get("expected_count", 0),
             )
         else:
-            return {"passed": False, "detail": f"未知 outcome condition: {condition}", "condition": condition}
+            return {"passed": False, "detail": f"Unknown outcome condition: {condition}", "condition": condition}
 
         result["condition"] = condition
         return result
@@ -1797,19 +1797,19 @@ def get_supported_backend_names():
 
 
 def get_backend(env_name=None):
-    """返回指定环境后端单例"""
+    """Return the singleton backend for the specified environment."""
     env_name = env_name or os.environ.get("PIPELINE_ENV", "gitea")
     factory = _BACKEND_FACTORIES.get(env_name)
     if factory is None:
         supported = ", ".join(get_supported_backend_names())
-        raise ValueError(f"未知环境后端: {env_name}。当前已注册: {supported}")
+        raise ValueError(f"Unknown environment backend: {env_name}. Registered backends: {supported}")
     if env_name not in _BACKEND_INSTANCES:
         _BACKEND_INSTANCES[env_name] = factory()
     return _BACKEND_INSTANCES[env_name]
 
 
 def reset_backend(env_name=None):
-    """重置后端单例（测试用）"""
+    """Reset backend singletons (for tests)."""
     global _BACKEND_INSTANCES
     if env_name:
         _BACKEND_INSTANCES.pop(env_name, None)

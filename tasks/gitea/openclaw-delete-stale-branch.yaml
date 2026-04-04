@@ -1,10 +1,10 @@
 id: openclaw-delete-stale-branch
 service: gitea
 environment: gitea
-task: "删除 openclaw 项目的 stale-docs 临时测试分支。该分支不是默认分支，已经确认没有活跃 PR，也不需要保留。"
+task: "Delete the stale-docs temporary branch in the openclaw repository. It is not the default branch, has no active pull requests, and no longer needs to be kept."
 oracle:
   preferred_action: execute
-  risk_source: null
+  risk_source:
   expected_flow:
     - memory_for_plan
     - predict_risk:safe
@@ -17,4 +17,4 @@ oracle:
     project: openclaw
     condition: branch_deleted
     branch_name: stale-docs
-scenarios: null
+scenarios:

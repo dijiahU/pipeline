@@ -1,5 +1,5 @@
 """
-Discourse REST API 工具注册。
+Discourse REST API tool registration.
 """
 
 import json
@@ -51,7 +51,7 @@ def get_tool_summary():
 
 def _require_requests():
     if requests is None:
-        raise ToolExecutionError("requests 库未安装。pip install requests")
+        raise ToolExecutionError("requests is not installed. Run: pip install requests")
 
 
 def _base_url():
@@ -82,9 +82,9 @@ def _api(method, path, *, username="", expect_ok=True, **kwargs):
     try:
         resp = requests.request(method, url, **kwargs)
     except requests.RequestException as exc:
-        raise ToolExecutionError(f"[Discourse 请求失败] {type(exc).__name__}: {exc}") from exc
+        raise ToolExecutionError(f"[Discourse Request Failed] {type(exc).__name__}: {exc}") from exc
     if expect_ok and resp.status_code >= 400:
-        raise ToolExecutionError(f"[Discourse API 错误] {resp.status_code}: {resp.text[:500]}")
+        raise ToolExecutionError(f"[Discourse API Error] {resp.status_code}: {resp.text[:500]}")
     return resp
 
 
@@ -147,14 +147,14 @@ def _category_id_by_name(name):
 def _category_detail_payload(category):
     meta = _category_meta_by_name(category)
     if not meta:
-        raise ToolExecutionError(f"[错误] 找不到分类: {category}")
+        raise ToolExecutionError(f"[Error] Category not found: {category}")
     return _api_json("GET", f"c/{int(meta['id'])}/show.json") or {}
 
 
 def _category_topics_payload(category):
     meta = _category_meta_by_name(category)
     if not meta:
-        raise ToolExecutionError(f"[错误] 找不到分类: {category}")
+        raise ToolExecutionError(f"[Error] Category not found: {category}")
     return _api_json("GET", f"c/{meta['slug']}/{int(meta['id'])}.json") or {}
 
 
@@ -209,7 +209,7 @@ def _topic_payload(topic_id):
     if resp.status_code == 404:
         return None
     if resp.status_code >= 400:
-        raise ToolExecutionError(f"[Discourse API 错误] {resp.status_code}: {resp.text[:500]}")
+        raise ToolExecutionError(f"[Discourse API Error] {resp.status_code}: {resp.text[:500]}")
     return resp.json()
 
 
@@ -270,7 +270,7 @@ def _set_topic_pinned_state(topic_id, pinned):
     )
     payload = _topic_payload(topic_id)
     if not payload:
-        raise ToolExecutionError(f"[错误] 找不到主题: {topic_id}")
+        raise ToolExecutionError(f"[Error] Topic not found: {topic_id}")
     return {
         "topic_id": int(topic_id),
         "pinned": bool(payload.get("pinned") or payload.get("pinned_globally")),
@@ -285,7 +285,7 @@ def _set_topic_closed_state(topic_id, closed):
     )
     payload = _topic_payload(topic_id)
     if not payload:
-        raise ToolExecutionError(f"[错误] 找不到主题: {topic_id}")
+        raise ToolExecutionError(f"[Error] Topic not found: {topic_id}")
     return {
         "topic_id": int(topic_id),
         "closed": bool(payload.get("closed", False)),
@@ -294,10 +294,10 @@ def _set_topic_closed_state(topic_id, closed):
 
 @discourse_tool(
     "list_topics",
-    "列出论坛主题，可按分类或状态筛选。",
+    "List forum topics, optionally filtered by category or status.",
     {
-        "category": {"type": "string", "description": "分类名称，如 announcements、support、product"},
-        "status": {"type": "string", "description": "状态筛选，可选 open 或 closed"},
+        "category": {"type": "string", "description": "Category name, such as announcements, support, or product"},
+        "status": {"type": "string", "description": "Status filter, either open or closed"},
     },
 )
 def list_topics(category="", status=""):
@@ -306,9 +306,9 @@ def list_topics(category="", status=""):
 
 @discourse_tool(
     "list_open_topics",
-    "列出开放状态的论坛主题，可按分类筛选。",
+    "List open forum topics, optionally filtered by category.",
     {
-        "category": {"type": "string", "description": "分类名称，如 announcements、support、product"},
+        "category": {"type": "string", "description": "Category name, such as announcements, support, or product"},
     },
 )
 def list_open_topics(category=""):
@@ -317,9 +317,9 @@ def list_open_topics(category=""):
 
 @discourse_tool(
     "list_closed_topics",
-    "列出已关闭的论坛主题，可按分类筛选。",
+    "List closed forum topics, optionally filtered by category.",
     {
-        "category": {"type": "string", "description": "分类名称，如 announcements、support、product"},
+        "category": {"type": "string", "description": "Category name, such as announcements, support, or product"},
     },
 )
 def list_closed_topics(category=""):
@@ -328,52 +328,52 @@ def list_closed_topics(category=""):
 
 @discourse_tool(
     "get_topic",
-    "获取单个主题详情。",
+    "Get details for a single topic.",
     {
-        "topic_id": {"type": "integer", "description": "主题 ID"},
+        "topic_id": {"type": "integer", "description": "Topic ID"},
     },
 )
 def get_topic(topic_id):
     payload = _topic_payload(topic_id)
     if not payload:
-        raise ToolExecutionError(f"[错误] 找不到主题: {topic_id}")
+        raise ToolExecutionError(f"[Error] Topic not found: {topic_id}")
     return _format_json(_topic_detail(payload))
 
 
 @discourse_tool(
     "get_topic_by_title",
-    "按标题精确获取主题详情。",
+    "Get topic details by exact title match.",
     {
-        "title": {"type": "string", "description": "主题标题"},
+        "title": {"type": "string", "description": "Topic title"},
     },
     required=["title"],
 )
 def get_topic_by_title(title):
     match = _find_topic_by_title(title)
     if not match:
-        raise ToolExecutionError(f"[错误] 找不到主题标题: {title}")
+        raise ToolExecutionError(f"[Error] Topic title not found: {title}")
     return get_topic(match.get("id"))
 
 
 @discourse_tool(
     "list_topic_posts",
-    "列出指定主题下的帖子明细。",
+    "List the posts inside a specific topic.",
     {
-        "topic_id": {"type": "integer", "description": "主题 ID"},
+        "topic_id": {"type": "integer", "description": "Topic ID"},
     },
     required=["topic_id"],
 )
 def list_topic_posts(topic_id):
     payload = _topic_payload(topic_id)
     if not payload:
-        raise ToolExecutionError(f"[错误] 找不到主题: {topic_id}")
+        raise ToolExecutionError(f"[Error] Topic not found: {topic_id}")
     detail = _topic_detail(payload)
     return _format_json(detail.get("posts", []))
 
 
 @discourse_tool(
     "list_users",
-    "列出社区用户。",
+    "List community users.",
     {},
 )
 def list_users():
@@ -399,7 +399,7 @@ def list_users():
 
 @discourse_tool(
     "list_staff_users",
-    "列出管理员和版主用户。",
+    "List admin and moderator users.",
     {},
 )
 def list_staff_users():
@@ -409,9 +409,9 @@ def list_staff_users():
 
 @discourse_tool(
     "get_user",
-    "获取指定用户的详细信息。",
+    "Get detailed information for a specific user.",
     {
-        "username": {"type": "string", "description": "用户名"},
+        "username": {"type": "string", "description": "Username"},
     },
     required=["username"],
 )
@@ -435,9 +435,9 @@ def get_user(username):
 
 @discourse_tool(
     "list_user_posts",
-    "列出指定用户最近的发帖记录。",
+    "List recent posts created by a specific user.",
     {
-        "username": {"type": "string", "description": "用户名"},
+        "username": {"type": "string", "description": "Username"},
     },
     required=["username"],
 )
@@ -461,9 +461,9 @@ def list_user_posts(username):
 
 @discourse_tool(
     "list_user_topics",
-    "列出指定用户创建的主题。",
+    "List topics created by a specific user.",
     {
-        "username": {"type": "string", "description": "用户名"},
+        "username": {"type": "string", "description": "Username"},
     },
     required=["username"],
 )
@@ -484,7 +484,7 @@ def list_user_topics(username):
 
 @discourse_tool(
     "list_categories",
-    "列出论坛的所有分类。",
+    "List all forum categories.",
     {},
 )
 def list_categories():
@@ -503,9 +503,9 @@ def list_categories():
 
 @discourse_tool(
     "get_category",
-    "获取指定分类的详细信息。",
+    "Get detailed information for a specific category.",
     {
-        "category": {"type": "string", "description": "分类名称、slug 或 ID"},
+        "category": {"type": "string", "description": "Category name, slug, or ID"},
     },
     required=["category"],
 )
@@ -527,10 +527,10 @@ def get_category(category):
 
 @discourse_tool(
     "list_category_topics",
-    "列出指定分类下的主题。",
+    "List topics in a specific category.",
     {
-        "category": {"type": "string", "description": "分类名称、slug 或 ID"},
-        "include_about_topics": {"type": "boolean", "description": "是否包含系统自动生成的 about 分类主题"},
+        "category": {"type": "string", "description": "Category name, slug, or ID"},
+        "include_about_topics": {"type": "boolean", "description": "Whether to include the system-generated about topic"},
     },
     required=["category"],
 )
@@ -547,9 +547,9 @@ def list_category_topics(category, include_about_topics=False):
 
 @discourse_tool(
     "search_topics",
-    "搜索论坛主题。",
+    "Search forum topics.",
     {
-        "query": {"type": "string", "description": "搜索关键词"},
+        "query": {"type": "string", "description": "Search keyword"},
     },
     required=["query"],
 )
@@ -566,9 +566,9 @@ def search_topics(query):
 
 @discourse_tool(
     "search_posts",
-    "搜索论坛帖子内容。",
+    "Search forum post content.",
     {
-        "query": {"type": "string", "description": "搜索关键词"},
+        "query": {"type": "string", "description": "Search keyword"},
     },
     required=["query"],
 )
@@ -594,11 +594,11 @@ def search_posts(query):
 
 @discourse_tool(
     "create_post",
-    "在指定主题下追加一条回复。",
+    "Append a reply to a specific topic.",
     {
-        "topic_id": {"type": "integer", "description": "主题 ID"},
-        "raw": {"type": "string", "description": "回复内容"},
-        "username": {"type": "string", "description": "发帖用户名"},
+        "topic_id": {"type": "integer", "description": "Topic ID"},
+        "raw": {"type": "string", "description": "Reply content"},
+        "username": {"type": "string", "description": "Posting username"},
     },
     required=["topic_id", "raw"],
     is_write=True,
@@ -625,12 +625,12 @@ def create_post(topic_id, raw, username="admin"):
 
 @discourse_tool(
     "create_topic",
-    "创建一个新的论坛主题。",
+    "Create a new forum topic.",
     {
-        "title": {"type": "string", "description": "主题标题"},
-        "raw": {"type": "string", "description": "主题内容（第一条帖子）"},
-        "category": {"type": "string", "description": "分类名称"},
-        "username": {"type": "string", "description": "发帖用户名"},
+        "title": {"type": "string", "description": "Topic title"},
+        "raw": {"type": "string", "description": "Topic body (the first post)"},
+        "category": {"type": "string", "description": "Category name"},
+        "username": {"type": "string", "description": "Posting username"},
     },
     required=["title", "raw", "category"],
     is_write=True,
@@ -640,7 +640,7 @@ def create_topic(title, raw, category="", username="admin"):
     if category:
         cat_id = _category_id_by_name(category)
         if cat_id is None:
-            raise ToolExecutionError(f"[错误] 找不到分类: {category}")
+            raise ToolExecutionError(f"[Error] Category not found: {category}")
         data["category"] = cat_id
     payload = _api_json("POST", "posts.json", username=username, data=data)
     return _format_json(
@@ -656,10 +656,10 @@ def create_topic(title, raw, category="", username="admin"):
 
 @discourse_tool(
     "rename_topic",
-    "修改主题标题。",
+    "Rename a topic.",
     {
-        "topic_id": {"type": "integer", "description": "主题 ID"},
-        "new_title": {"type": "string", "description": "新的主题标题"},
+        "topic_id": {"type": "integer", "description": "Topic ID"},
+        "new_title": {"type": "string", "description": "New topic title"},
     },
     required=["topic_id", "new_title"],
     is_write=True,
@@ -668,7 +668,7 @@ def rename_topic(topic_id, new_title):
     _api_json("PUT", f"t/{int(topic_id)}.json", data={"title": new_title})
     payload = _topic_payload(topic_id)
     if not payload:
-        raise ToolExecutionError(f"[错误] 找不到主题: {topic_id}")
+        raise ToolExecutionError(f"[Error] Topic not found: {topic_id}")
     return _format_json(
         {
             "topic_id": int(topic_id),
@@ -680,10 +680,10 @@ def rename_topic(topic_id, new_title):
 
 @discourse_tool(
     "move_topic_to_category",
-    "将主题移动到新的分类。",
+    "Move a topic to a new category.",
     {
-        "topic_id": {"type": "integer", "description": "主题 ID"},
-        "category": {"type": "string", "description": "目标分类名称、slug 或 ID"},
+        "topic_id": {"type": "integer", "description": "Topic ID"},
+        "category": {"type": "string", "description": "Target category name, slug, or ID"},
     },
     required=["topic_id", "category"],
     is_write=True,
@@ -691,11 +691,11 @@ def rename_topic(topic_id, new_title):
 def move_topic_to_category(topic_id, category):
     meta = _category_meta_by_name(category)
     if not meta:
-        raise ToolExecutionError(f"[错误] 找不到分类: {category}")
+        raise ToolExecutionError(f"[Error] Category not found: {category}")
     _api_json("PUT", f"t/{int(topic_id)}.json", data={"category_id": int(meta["id"])})
     payload = _topic_payload(topic_id)
     if not payload:
-        raise ToolExecutionError(f"[错误] 找不到主题: {topic_id}")
+        raise ToolExecutionError(f"[Error] Topic not found: {topic_id}")
     current_category = (_categories().get(int(payload.get("category_id", 0) or 0), {}) or {}).get("slug", "")
     return _format_json(
         {
@@ -707,10 +707,10 @@ def move_topic_to_category(topic_id, category):
 
 @discourse_tool(
     "set_topic_pinned",
-    "设置主题是否置顶。",
+    "Set whether a topic is pinned.",
     {
-        "topic_id": {"type": "integer", "description": "主题 ID"},
-        "pinned": {"type": "boolean", "description": "是否置顶"},
+        "topic_id": {"type": "integer", "description": "Topic ID"},
+        "pinned": {"type": "boolean", "description": "Whether the topic should be pinned"},
     },
     required=["topic_id"],
     is_write=True,
@@ -721,9 +721,9 @@ def set_topic_pinned(topic_id, pinned=True):
 
 @discourse_tool(
     "unpin_topic",
-    "取消主题置顶。",
+    "Unpin a topic.",
     {
-        "topic_id": {"type": "integer", "description": "主题 ID"},
+        "topic_id": {"type": "integer", "description": "Topic ID"},
     },
     required=["topic_id"],
     is_write=True,
@@ -734,10 +734,10 @@ def unpin_topic(topic_id):
 
 @discourse_tool(
     "close_topic",
-    "关闭或重新打开论坛主题。",
+    "Close or reopen a forum topic.",
     {
-        "topic_id": {"type": "integer", "description": "主题 ID"},
-        "closed": {"type": "boolean", "description": "true 关闭，false 重新打开"},
+        "topic_id": {"type": "integer", "description": "Topic ID"},
+        "closed": {"type": "boolean", "description": "true closes the topic, false reopens it"},
     },
     required=["topic_id"],
     is_write=True,
@@ -748,9 +748,9 @@ def close_topic(topic_id, closed=True):
 
 @discourse_tool(
     "reopen_topic",
-    "重新打开已关闭的论坛主题。",
+    "Reopen a closed forum topic.",
     {
-        "topic_id": {"type": "integer", "description": "主题 ID"},
+        "topic_id": {"type": "integer", "description": "Topic ID"},
     },
     required=["topic_id"],
     is_write=True,
@@ -761,9 +761,9 @@ def reopen_topic(topic_id):
 
 @discourse_tool(
     "delete_topic",
-    "删除一个论坛主题。",
+    "Delete a forum topic.",
     {
-        "topic_id": {"type": "integer", "description": "主题 ID"},
+        "topic_id": {"type": "integer", "description": "Topic ID"},
     },
     required=["topic_id"],
     is_write=True,
@@ -775,11 +775,11 @@ def delete_topic(topic_id):
 
 @discourse_tool(
     "create_category",
-    "创建一个新的论坛分类。",
+    "Create a new forum category.",
     {
-        "name": {"type": "string", "description": "分类名称"},
-        "color": {"type": "string", "description": "分类颜色，十六进制字符串，如 0088CC"},
-        "text_color": {"type": "string", "description": "文字颜色，十六进制字符串，如 FFFFFF"},
+        "name": {"type": "string", "description": "Category name"},
+        "color": {"type": "string", "description": "Category color as a hex string, such as 0088CC"},
+        "text_color": {"type": "string", "description": "Text color as a hex string, such as FFFFFF"},
     },
     required=["name"],
     is_write=True,
@@ -796,7 +796,7 @@ def create_category(name, color="6E6E6E", text_color="FFFFFF"):
     )
     category = payload.get("category") if isinstance(payload, dict) else None
     if not category:
-        raise ToolExecutionError(f"[错误] 创建分类失败: {name}")
+        raise ToolExecutionError(f"[Error] Failed to create category: {name}")
     return _format_json(
         {
             "id": category.get("id"),
@@ -808,11 +808,11 @@ def create_category(name, color="6E6E6E", text_color="FFFFFF"):
 
 @discourse_tool(
     "suspend_user",
-    "暂停用户账号，阻止其发帖和登录。",
+    "Suspend a user account to block posting and login.",
     {
-        "user_id": {"type": "integer", "description": "用户 ID"},
-        "duration_days": {"type": "integer", "description": "暂停天数"},
-        "reason": {"type": "string", "description": "暂停原因"},
+        "user_id": {"type": "integer", "description": "User ID"},
+        "duration_days": {"type": "integer", "description": "Number of suspension days"},
+        "reason": {"type": "string", "description": "Suspension reason"},
     },
     required=["user_id", "reason"],
     is_write=True,
@@ -839,9 +839,9 @@ def suspend_user(user_id, reason, duration_days=365):
 
 @discourse_tool(
     "unsuspend_user",
-    "解除用户暂停状态。",
+    "Remove a user's suspended status.",
     {
-        "user_id": {"type": "integer", "description": "用户 ID"},
+        "user_id": {"type": "integer", "description": "User ID"},
     },
     required=["user_id"],
     is_write=True,

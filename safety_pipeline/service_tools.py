@@ -1,13 +1,14 @@
 """
-服务工具注册抽象。
+Shared abstraction for service tool registration.
 
-每个服务的 tools 模块都应暴露统一接口：
+Each service tools module should expose a uniform interface:
 - get_all_schemas()
 - get_tool_names()
 - get_write_tool_names()
 - call_tool(name, args)
 
-这样 runtime / environment 只依赖通用 provider，不依赖具体服务的注册细节。
+This lets runtime and environment depend on a common provider surface instead
+of service-specific registration details.
 """
 
 from dataclasses import dataclass
@@ -485,7 +486,7 @@ def _normalize_short_text(text, limit=80):
     value = " ".join(str(text or "").replace("\n", " ").split()).strip()
     if not value:
         return ""
-    value = value.rstrip("。.;；")
+    value = value.rstrip("\u3002.;\uFF1B")
     if len(value) <= limit:
         return value
     return f"{value[:limit - 3].rstrip()}..."
@@ -644,10 +645,10 @@ class ServiceToolRegistry:
     def call_tool(self, name, args):
         tool = self._tools.get(name)
         if not tool:
-            raise ToolExecutionError(f"[错误] 未知 tool: {name}")
+            raise ToolExecutionError(f"[Error] Unknown tool: {name}")
         try:
             return tool.handler(**args)
         except ToolExecutionError:
             raise
         except Exception as exc:
-            raise ToolExecutionError(f"[执行出错] {type(exc).__name__}: {exc}") from exc
+            raise ToolExecutionError(f"[Execution Error] {type(exc).__name__}: {exc}") from exc

@@ -183,18 +183,19 @@ def build_memory_context_snapshot(state):
 
 
 def parse_user_reply_to_state_update(state, question, user_reply):
-    prompt = """你是会话状态解析助手。请提取这条用户回复中新增加的上下文事实和授权信息。
+    prompt = """You are a conversation state parsing assistant. Extract any newly provided
+context facts and authorization details from this user reply.
 
-输出严格 JSON：
+Output strict JSON:
 {
-  "new_context": ["新增事实1", "新增事实2"],
-  "new_authorization": ["新增授权1", "新增授权2"]
+  "new_context": ["new fact 1", "new fact 2"],
+  "new_authorization": ["new authorization 1", "new authorization 2"]
 }
 
-要求：
-1. 只提取新信息，不重复已有上下文。
-2. 如果没有新增授权，new_authorization 返回空数组。
-3. 不要臆造未被用户明确表达的信息。"""
+Requirements:
+1. Extract new information only. Do not repeat existing context.
+2. If there is no new authorization, return an empty array for new_authorization.
+3. Do not invent information the user did not explicitly provide."""
     payload = json.dumps(
         {
             "assistant_question": question,
@@ -225,7 +226,7 @@ def apply_user_reply_to_state(state, question, user_reply):
 
 def request_user_input_for_state(state, question, missing_context=None):
     append_assistant_message(state, question)
-    print(f"\n[HUMAN] 问题: {question}")
+    print(f"\n[HUMAN] Question: {question}")
     if os.environ.get("PIPELINE_NONINTERACTIVE") == "1":
         state["status"] = "aborted"
         return {
@@ -234,7 +235,7 @@ def request_user_input_for_state(state, question, missing_context=None):
             "state_update": {},
             "error": "non_interactive_ask_human",
         }
-    human_reply = input("[HUMAN] 请回复 (输入 'abort' 终止): ").strip()
+    human_reply = input("[HUMAN] Reply (enter 'abort' to stop): ").strip()
     if human_reply.lower() == "abort":
         state["status"] = "aborted"
         return {"status": "aborted", "human_reply": human_reply}

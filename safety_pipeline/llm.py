@@ -16,7 +16,7 @@ def get_openai_client():
     if client is not None:
         return client
     if openai is None:
-        raise RuntimeError("当前环境未安装 openai，无法运行 pipeline 决策流程。")
+        raise RuntimeError("openai is not installed in the current environment, so the pipeline cannot run.")
     kwargs = {"api_key": OPENAI_API_KEY}
     if OPENAI_BASE_URL:
         kwargs["base_url"] = OPENAI_BASE_URL
@@ -62,14 +62,14 @@ def call_required_tool_choice(system_prompt, snapshot, tools):
     )
     message = response.choices[0].message
     if not message.tool_calls:
-        raise RuntimeError("模型未返回任何 tool call。")
+        raise RuntimeError("The model did not return any tool call.")
     return message.tool_calls[0]
 
 
 def call_auto_tool_choice(system_prompt, snapshot, tools):
-    """tool_choice=auto: 模型可以选择调用工具，也可以直接回复文本。
+    """tool_choice=auto: the model may either call a tool or reply with text.
 
-    返回 (tool_call, None) 或 (None, text_content)。
+    Returns (tool_call, None) or (None, text_content).
     """
     llm_client = get_openai_client()
     response = llm_client.chat.completions.create(

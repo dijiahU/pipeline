@@ -29,7 +29,7 @@ def _load_env_file(path, skip_keys=None):
                 os.environ[key] = val.strip()
 
 
-# 自动加载项目根目录的环境文件
+# Automatically load environment files from the repository root.
 def reload_runtime_env():
     _load_env_file(os.path.join(REPO_ROOT, ".env"))
     for file_name in GENERATED_ENV_FILES:

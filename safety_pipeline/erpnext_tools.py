@@ -1,5 +1,5 @@
 """
-ERPNext 真实站点工具。
+ERPNext live-site tools.
 """
 
 import base64
@@ -83,11 +83,11 @@ def _run_site_action(action, payload=None):
     )
     if result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip() or "unknown error"
-        raise ToolExecutionError(f"[ERPNext 操作失败] {detail}")
+        raise ToolExecutionError(f"[ERPNext Action Failed] {detail}")
     try:
         return json.loads(result.stdout.strip() or "null")
     except json.JSONDecodeError as exc:
-        raise ToolExecutionError(f"[ERPNext 返回了非 JSON 输出] {result.stdout[:500]}") from exc
+        raise ToolExecutionError(f"[ERPNext Returned Non-JSON Output] {result.stdout[:500]}") from exc
 
 
 def _format_json(data):
@@ -98,10 +98,10 @@ def _format_json(data):
 
 @erpnext_tool(
     "list_invoices",
-    "列出销售发票，可按状态或客户筛选。",
+    "List sales invoices, optionally filtered by status or customer.",
     {
-        "status": {"type": "string", "description": "状态，如 Unpaid、Paid、Overdue"},
-        "customer": {"type": "string", "description": "客户名称"},
+        "status": {"type": "string", "description": "Status, such as Unpaid, Paid, or Overdue"},
+        "customer": {"type": "string", "description": "Customer name"},
     },
     group="invoices",
     short_description="List sales invoices with optional status or customer filters.",
@@ -112,10 +112,10 @@ def list_invoices(status="", customer=""):
 
 @erpnext_tool(
     "list_customer_invoices",
-    "列出某个客户的发票，可按状态筛选。",
+    "List invoices for a specific customer, optionally filtered by status.",
     {
-        "customer_name": {"type": "string", "description": "客户名称"},
-        "status": {"type": "string", "description": "状态，如 Unpaid、Paid、Overdue"},
+        "customer_name": {"type": "string", "description": "Customer name"},
+        "status": {"type": "string", "description": "Status, such as Unpaid, Paid, or Overdue"},
     },
     required=["customer_name"],
     group="invoices",
@@ -132,7 +132,7 @@ def list_customer_invoices(customer_name, status=""):
 
 @erpnext_tool(
     "list_overdue_invoices",
-    "列出当前已逾期且仍有未结清金额的发票。",
+    "List invoices that are overdue and still have an outstanding balance.",
     {},
     group="invoices",
     short_description="List overdue invoices that still have outstanding balance.",
@@ -143,9 +143,9 @@ def list_overdue_invoices():
 
 @erpnext_tool(
     "get_invoice",
-    "获取单个销售发票详情，包括明细行、备注和关联付款。",
+    "Get details for a single sales invoice, including line items, comments, and linked payments.",
     {
-        "invoice_name": {"type": "string", "description": "发票编号"},
+        "invoice_name": {"type": "string", "description": "Invoice number"},
     },
     required=["invoice_name"],
     group="invoices",
@@ -154,15 +154,15 @@ def list_overdue_invoices():
 def get_invoice(invoice_name):
     payload = _run_site_action("get_invoice", {"invoice_name": invoice_name})
     if not payload:
-        raise ToolExecutionError(f"[错误] 找不到发票: {invoice_name}")
+        raise ToolExecutionError(f"[Error] Invoice not found: {invoice_name}")
     return _format_json(payload)
 
 
 @erpnext_tool(
     "list_invoice_comments",
-    "列出某张发票的备注历史。",
+    "List comment history for a specific invoice.",
     {
-        "invoice_name": {"type": "string", "description": "发票编号"},
+        "invoice_name": {"type": "string", "description": "Invoice number"},
     },
     required=["invoice_name"],
     group="invoice_comments",
@@ -174,11 +174,11 @@ def list_invoice_comments(invoice_name):
 
 @erpnext_tool(
     "add_invoice_comment",
-    "为发票追加一条备注。",
+    "Append a comment to an invoice.",
     {
-        "invoice_name": {"type": "string", "description": "发票编号"},
-        "comment": {"type": "string", "description": "备注内容"},
-        "author": {"type": "string", "description": "备注作者"},
+        "invoice_name": {"type": "string", "description": "Invoice number"},
+        "comment": {"type": "string", "description": "Comment content"},
+        "author": {"type": "string", "description": "Comment author"},
     },
     required=["invoice_name", "comment"],
     is_write=True,
@@ -200,10 +200,10 @@ def add_invoice_comment(invoice_name, comment, author="accounts-bot"):
 
 @erpnext_tool(
     "update_invoice_due_date",
-    "更新销售发票的到期日。",
+    "Update the due date of a sales invoice.",
     {
-        "invoice_name": {"type": "string", "description": "发票编号"},
-        "due_date": {"type": "string", "description": "新的到期日，如 2026-04-30"},
+        "invoice_name": {"type": "string", "description": "Invoice number"},
+        "due_date": {"type": "string", "description": "New due date, for example 2026-04-30"},
     },
     required=["invoice_name", "due_date"],
     is_write=True,
@@ -221,10 +221,10 @@ def update_invoice_due_date(invoice_name, due_date):
 
 @erpnext_tool(
     "update_invoice_status",
-    "更新发票状态。当前支持把销售发票标记为 Paid。",
+    "Update the status of an invoice. Currently supports marking a sales invoice as Paid.",
     {
-        "invoice_name": {"type": "string", "description": "发票编号"},
-        "status": {"type": "string", "description": "新状态，如 Paid"},
+        "invoice_name": {"type": "string", "description": "Invoice number"},
+        "status": {"type": "string", "description": "New status, such as Paid"},
     },
     required=["invoice_name", "status"],
     is_write=True,
@@ -242,9 +242,9 @@ def update_invoice_status(invoice_name, status):
 
 @erpnext_tool(
     "cancel_invoice",
-    "取消销售发票。已提交的发票才能取消。",
+    "Cancel a sales invoice. Only submitted invoices can be cancelled.",
     {
-        "invoice_name": {"type": "string", "description": "发票编号"},
+        "invoice_name": {"type": "string", "description": "Invoice number"},
     },
     required=["invoice_name"],
     is_write=True,
@@ -257,15 +257,15 @@ def cancel_invoice(invoice_name):
 
 @erpnext_tool(
     "create_invoice",
-    "创建销售发票。",
+    "Create a sales invoice.",
     {
-        "customer": {"type": "string", "description": "客户名称"},
+        "customer": {"type": "string", "description": "Customer name"},
         "items": {
             "type": "array",
             "items": {"type": "object"},
-            "description": "发票行项目列表，每项包含 item_code、qty、rate，可选 item_name",
+            "description": "Invoice line items. Each item includes item_code, qty, rate, and optional item_name.",
         },
-        "due_date": {"type": "string", "description": "到期日期，如 2026-04-15"},
+        "due_date": {"type": "string", "description": "Due date, for example 2026-04-15"},
     },
     required=["customer", "items"],
     is_write=True,
@@ -287,10 +287,10 @@ def create_invoice(customer, items, due_date=""):
 
 @erpnext_tool(
     "list_payments",
-    "列出付款记录，可按状态或客户筛选。",
+    "List payment entries, optionally filtered by status or customer.",
     {
-        "status": {"type": "string", "description": "状态，如 Draft、Submitted"},
-        "party": {"type": "string", "description": "客户名称"},
+        "status": {"type": "string", "description": "Status, such as Draft or Submitted"},
+        "party": {"type": "string", "description": "Customer name"},
     },
     group="payments",
     short_description="List payment entries with optional status or customer filter.",
@@ -301,9 +301,9 @@ def list_payments(status="", party=""):
 
 @erpnext_tool(
     "list_invoice_payments",
-    "列出某张发票关联的付款记录。",
+    "List payment entries linked to a specific invoice.",
     {
-        "invoice_name": {"type": "string", "description": "发票编号"},
+        "invoice_name": {"type": "string", "description": "Invoice number"},
     },
     required=["invoice_name"],
     group="payments",
@@ -315,9 +315,9 @@ def list_invoice_payments(invoice_name):
 
 @erpnext_tool(
     "get_payment",
-    "获取单个付款记录详情。",
+    "Get details for a single payment entry.",
     {
-        "payment_name": {"type": "string", "description": "付款记录编号"},
+        "payment_name": {"type": "string", "description": "Payment entry number"},
     },
     required=["payment_name"],
     group="payments",
@@ -326,17 +326,17 @@ def list_invoice_payments(invoice_name):
 def get_payment(payment_name):
     payload = _run_site_action("get_payment", {"payment_name": payment_name})
     if not payload:
-        raise ToolExecutionError(f"[错误] 找不到付款记录: {payment_name}")
+        raise ToolExecutionError(f"[Error] Payment entry not found: {payment_name}")
     return _format_json(payload)
 
 
 @erpnext_tool(
     "create_payment_entry",
-    "创建付款记录。",
+    "Create a payment entry.",
     {
-        "invoice_name": {"type": "string", "description": "关联的发票编号"},
-        "amount": {"type": "number", "description": "付款金额"},
-        "mode_of_payment": {"type": "string", "description": "付款方式，如 Cash、Wire Transfer"},
+        "invoice_name": {"type": "string", "description": "Linked invoice number"},
+        "amount": {"type": "number", "description": "Payment amount"},
+        "mode_of_payment": {"type": "string", "description": "Mode of payment, such as Cash or Wire Transfer"},
     },
     required=["invoice_name", "amount"],
     is_write=True,
@@ -358,9 +358,9 @@ def create_payment_entry(invoice_name, amount, mode_of_payment="Cash"):
 
 @erpnext_tool(
     "delete_payment_entry",
-    "删除付款记录。",
+    "Delete a payment entry.",
     {
-        "payment_name": {"type": "string", "description": "付款记录编号"},
+        "payment_name": {"type": "string", "description": "Payment entry number"},
     },
     required=["payment_name"],
     is_write=True,
@@ -373,9 +373,9 @@ def delete_payment_entry(payment_name):
 
 @erpnext_tool(
     "list_customers",
-    "列出客户，可按名称筛选。",
+    "List customers, optionally filtered by name.",
     {
-        "name_query": {"type": "string", "description": "客户名称关键词"},
+        "name_query": {"type": "string", "description": "Customer name keyword"},
     },
     group="customers",
     short_description="List customer master records with optional name filtering.",
@@ -386,9 +386,9 @@ def list_customers(name_query=""):
 
 @erpnext_tool(
     "get_customer",
-    "获取单个客户详情，包括其关联发票。",
+    "Get details for a single customer, including linked invoices.",
     {
-        "customer_name": {"type": "string", "description": "客户名称"},
+        "customer_name": {"type": "string", "description": "Customer name"},
     },
     required=["customer_name"],
     group="customers",
@@ -397,18 +397,18 @@ def list_customers(name_query=""):
 def get_customer(customer_name):
     payload = _run_site_action("get_customer", {"customer_name": customer_name})
     if not payload:
-        raise ToolExecutionError(f"[错误] 找不到客户: {customer_name}")
+        raise ToolExecutionError(f"[Error] Customer not found: {customer_name}")
     return _format_json(payload)
 
 
 @erpnext_tool(
     "create_customer",
-    "创建客户主数据。",
+    "Create a customer master record.",
     {
-        "customer_name": {"type": "string", "description": "客户名称"},
-        "customer_type": {"type": "string", "description": "客户类型，如 Company、Individual"},
-        "customer_group": {"type": "string", "description": "客户组，默认 All Customer Groups"},
-        "territory": {"type": "string", "description": "Territory，默认 All Territories"},
+        "customer_name": {"type": "string", "description": "Customer name"},
+        "customer_type": {"type": "string", "description": "Customer type, such as Company or Individual"},
+        "customer_group": {"type": "string", "description": "Customer group. Default: All Customer Groups"},
+        "territory": {"type": "string", "description": "Territory. Default: All Territories"},
     },
     required=["customer_name"],
     is_write=True,
@@ -431,9 +431,9 @@ def create_customer(customer_name, customer_type="Company", customer_group="All 
 
 @erpnext_tool(
     "list_suppliers",
-    "列出供应商，可按名称筛选。",
+    "List suppliers, optionally filtered by name.",
     {
-        "name_query": {"type": "string", "description": "供应商名称关键词"},
+        "name_query": {"type": "string", "description": "Supplier name keyword"},
     },
     group="suppliers",
     short_description="List supplier master records with optional name filtering.",
@@ -444,9 +444,9 @@ def list_suppliers(name_query=""):
 
 @erpnext_tool(
     "get_supplier",
-    "获取单个供应商详情，包括其关联采购发票。",
+    "Get details for a single supplier, including linked purchase invoices.",
     {
-        "supplier_name": {"type": "string", "description": "供应商名称"},
+        "supplier_name": {"type": "string", "description": "Supplier name"},
     },
     required=["supplier_name"],
     group="suppliers",
@@ -455,17 +455,17 @@ def list_suppliers(name_query=""):
 def get_supplier(supplier_name):
     payload = _run_site_action("get_supplier", {"supplier_name": supplier_name})
     if not payload:
-        raise ToolExecutionError(f"[错误] 找不到供应商: {supplier_name}")
+        raise ToolExecutionError(f"[Error] Supplier not found: {supplier_name}")
     return _format_json(payload)
 
 
 @erpnext_tool(
     "create_supplier",
-    "创建供应商主数据。",
+    "Create a supplier master record.",
     {
-        "supplier_name": {"type": "string", "description": "供应商名称"},
-        "supplier_type": {"type": "string", "description": "供应商类型，如 Company、Individual"},
-        "supplier_group": {"type": "string", "description": "供应商组，默认 All Supplier Groups"},
+        "supplier_name": {"type": "string", "description": "Supplier name"},
+        "supplier_type": {"type": "string", "description": "Supplier type, such as Company or Individual"},
+        "supplier_group": {"type": "string", "description": "Supplier group. Default: All Supplier Groups"},
     },
     required=["supplier_name"],
     is_write=True,
@@ -487,9 +487,9 @@ def create_supplier(supplier_name, supplier_type="Company", supplier_group="All 
 
 @erpnext_tool(
     "list_items",
-    "列出 Item 目录，可按 item code 或 item name 关键词筛选。",
+    "List items, optionally filtered by item code or item name keyword.",
     {
-        "name_query": {"type": "string", "description": "Item 编码或名称关键词"},
+        "name_query": {"type": "string", "description": "Item code or name keyword"},
     },
     group="items_catalog",
     short_description="List item master records with optional code or name filtering.",
@@ -500,9 +500,9 @@ def list_items(name_query=""):
 
 @erpnext_tool(
     "get_item",
-    "获取单个 Item 的详情。",
+    "Get details for a single item.",
     {
-        "item_code": {"type": "string", "description": "Item 编码"},
+        "item_code": {"type": "string", "description": "Item code"},
     },
     required=["item_code"],
     group="items_catalog",
@@ -511,19 +511,19 @@ def list_items(name_query=""):
 def get_item(item_code):
     payload = _run_site_action("get_item", {"item_code": item_code})
     if not payload:
-        raise ToolExecutionError(f"[错误] 找不到 Item: {item_code}")
+        raise ToolExecutionError(f"[Error] Item not found: {item_code}")
     return _format_json(payload)
 
 
 @erpnext_tool(
     "create_item",
-    "创建新的 Item 主数据。",
+    "Create a new item master record.",
     {
-        "item_code": {"type": "string", "description": "Item 编码"},
-        "item_name": {"type": "string", "description": "Item 名称"},
-        "item_group": {"type": "string", "description": "Item Group，默认 All Item Groups"},
-        "stock_uom": {"type": "string", "description": "计量单位，默认 Nos"},
-        "is_stock_item": {"type": "integer", "description": "是否为库存商品，0 或 1"},
+        "item_code": {"type": "string", "description": "Item code"},
+        "item_name": {"type": "string", "description": "Item name"},
+        "item_group": {"type": "string", "description": "Item group. Default: All Item Groups"},
+        "stock_uom": {"type": "string", "description": "Stock UOM. Default: Nos"},
+        "is_stock_item": {"type": "integer", "description": "Whether this is a stock item: 0 or 1"},
     },
     required=["item_code", "item_name"],
     is_write=True,
@@ -547,10 +547,10 @@ def create_item(item_code, item_name, item_group="All Item Groups", stock_uom="N
 
 @erpnext_tool(
     "list_purchase_invoices",
-    "列出采购发票，可按状态或供应商筛选。",
+    "List purchase invoices, optionally filtered by status or supplier.",
     {
-        "status": {"type": "string", "description": "状态，如 Unpaid、Paid、Overdue"},
-        "supplier": {"type": "string", "description": "供应商名称"},
+        "status": {"type": "string", "description": "Status, such as Unpaid, Paid, or Overdue"},
+        "supplier": {"type": "string", "description": "Supplier name"},
     },
     group="purchase_invoices",
     short_description="List purchase invoices with optional status or supplier filters.",
@@ -563,10 +563,10 @@ def list_purchase_invoices(status="", supplier=""):
 
 @erpnext_tool(
     "list_supplier_purchase_invoices",
-    "列出某个供应商的采购发票，可按状态筛选。",
+    "List purchase invoices for a supplier, optionally filtered by status.",
     {
-        "supplier_name": {"type": "string", "description": "供应商名称"},
-        "status": {"type": "string", "description": "状态，如 Unpaid、Paid、Overdue"},
+        "supplier_name": {"type": "string", "description": "Supplier name"},
+        "status": {"type": "string", "description": "Status, such as Unpaid, Paid, or Overdue"},
     },
     required=["supplier_name"],
     group="purchase_invoices",
@@ -583,7 +583,7 @@ def list_supplier_purchase_invoices(supplier_name, status=""):
 
 @erpnext_tool(
     "list_overdue_purchase_invoices",
-    "列出当前已逾期且仍有未结清金额的采购发票。",
+    "List purchase invoices that are overdue and still have an outstanding balance.",
     {},
     group="purchase_invoices",
     short_description="List overdue purchase invoices that still have outstanding balance.",
@@ -594,9 +594,9 @@ def list_overdue_purchase_invoices():
 
 @erpnext_tool(
     "get_purchase_invoice",
-    "获取单个采购发票详情，包括明细行和备注。",
+    "Get details for a single purchase invoice, including line items and comments.",
     {
-        "purchase_invoice_name": {"type": "string", "description": "采购发票编号"},
+        "purchase_invoice_name": {"type": "string", "description": "Purchase invoice number"},
     },
     required=["purchase_invoice_name"],
     group="purchase_invoices",
@@ -605,15 +605,15 @@ def list_overdue_purchase_invoices():
 def get_purchase_invoice(purchase_invoice_name):
     payload = _run_site_action("get_purchase_invoice", {"purchase_invoice_name": purchase_invoice_name})
     if not payload:
-        raise ToolExecutionError(f"[错误] 找不到采购发票: {purchase_invoice_name}")
+        raise ToolExecutionError(f"[Error] Purchase invoice not found: {purchase_invoice_name}")
     return _format_json(payload)
 
 
 @erpnext_tool(
     "list_purchase_invoice_comments",
-    "列出某张采购发票的备注历史。",
+    "List comment history for a specific purchase invoice.",
     {
-        "purchase_invoice_name": {"type": "string", "description": "采购发票编号"},
+        "purchase_invoice_name": {"type": "string", "description": "Purchase invoice number"},
     },
     required=["purchase_invoice_name"],
     group="purchase_invoice_comments",
@@ -630,11 +630,11 @@ def list_purchase_invoice_comments(purchase_invoice_name):
 
 @erpnext_tool(
     "add_purchase_invoice_comment",
-    "为采购发票追加一条备注。",
+    "Append a comment to a purchase invoice.",
     {
-        "purchase_invoice_name": {"type": "string", "description": "采购发票编号"},
-        "comment": {"type": "string", "description": "备注内容"},
-        "author": {"type": "string", "description": "备注作者"},
+        "purchase_invoice_name": {"type": "string", "description": "Purchase invoice number"},
+        "comment": {"type": "string", "description": "Comment content"},
+        "author": {"type": "string", "description": "Comment author"},
     },
     required=["purchase_invoice_name", "comment"],
     is_write=True,
@@ -656,10 +656,10 @@ def add_purchase_invoice_comment(purchase_invoice_name, comment, author="ap-bot"
 
 @erpnext_tool(
     "update_purchase_invoice_due_date",
-    "更新采购发票的到期日。",
+    "Update the due date of a purchase invoice.",
     {
-        "purchase_invoice_name": {"type": "string", "description": "采购发票编号"},
-        "due_date": {"type": "string", "description": "新的到期日，如 2026-04-30"},
+        "purchase_invoice_name": {"type": "string", "description": "Purchase invoice number"},
+        "due_date": {"type": "string", "description": "New due date, for example 2026-04-30"},
     },
     required=["purchase_invoice_name", "due_date"],
     is_write=True,
@@ -677,9 +677,9 @@ def update_purchase_invoice_due_date(purchase_invoice_name, due_date):
 
 @erpnext_tool(
     "cancel_purchase_invoice",
-    "取消采购发票。已提交的采购发票才能取消。",
+    "Cancel a purchase invoice. Only submitted purchase invoices can be cancelled.",
     {
-        "purchase_invoice_name": {"type": "string", "description": "采购发票编号"},
+        "purchase_invoice_name": {"type": "string", "description": "Purchase invoice number"},
     },
     required=["purchase_invoice_name"],
     is_write=True,
@@ -697,15 +697,15 @@ def cancel_purchase_invoice(purchase_invoice_name):
 
 @erpnext_tool(
     "create_purchase_invoice",
-    "创建采购发票。",
+    "Create a purchase invoice.",
     {
-        "supplier": {"type": "string", "description": "供应商名称"},
+        "supplier": {"type": "string", "description": "Supplier name"},
         "items": {
             "type": "array",
             "items": {"type": "object"},
-            "description": "采购发票行项目列表，每项包含 item_code、qty、rate，可选 item_name",
+            "description": "Purchase invoice line items. Each item includes item_code, qty, rate, and optional item_name.",
         },
-        "due_date": {"type": "string", "description": "到期日期，如 2026-04-15"},
+        "due_date": {"type": "string", "description": "Due date, for example 2026-04-15"},
     },
     required=["supplier", "items"],
     is_write=True,
@@ -727,7 +727,7 @@ def create_purchase_invoice(supplier, items, due_date=""):
 
 @erpnext_tool(
     "list_companies",
-    "列出当前 ERPNext 站点中的公司。",
+    "List companies in the current ERPNext site.",
     {},
     group="reference_data",
     short_description="List configured companies in the ERPNext site.",
@@ -738,7 +738,7 @@ def list_companies():
 
 @erpnext_tool(
     "list_payment_modes",
-    "列出当前可用的付款方式。",
+    "List currently available payment modes.",
     {},
     group="reference_data",
     short_description="List available payment modes such as Cash or Wire Transfer.",

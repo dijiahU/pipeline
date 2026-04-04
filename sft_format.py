@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """
-SFT 数据格式转换工具。
+SFT data format conversion tool.
 
-llamafactorysft.json 是人工编辑的可读版本（tools 是 JSON 数组，value 是对象）。
-train 命令生成 LlamaFactory 严格格式的训练文件。
+llamafactorysft.json is the human-editable readable version
+(tools is a JSON array and value is an object).
+The train command generates a training file in strict LlamaFactory format.
 
-用法:
-    python sft_format.py train              # 可读 -> LlamaFactory 训练格式
-    python sft_format.py train -o out.json  # 指定输出路径
-    python sft_format.py check              # 检查可读文件的合法性
+Usage:
+    python sft_format.py train              # readable -> LlamaFactory training format
+    python sft_format.py train -o out.json  # specify output path
+    python sft_format.py check              # validate the readable file
 """
 
 import json
@@ -20,7 +21,7 @@ DEFAULT_OUT = Path(__file__).parent / "llamafactorysft_train.json"
 
 
 def to_train_format(samples: list) -> list:
-    """把可读格式转成 LlamaFactory 严格格式：tools 变字符串，value 变字符串。"""
+    """Convert the readable format into strict LlamaFactory format: tools becomes a string and value becomes a string."""
     out = []
     for sample in samples:
         s = dict(sample)
@@ -40,7 +41,7 @@ def to_train_format(samples: list) -> list:
 
 
 def format_train(samples: list) -> str:
-    """LlamaFactory 格式：system/tools 各一行，conversations 每条一行。"""
+    """LlamaFactory format: system/tools on separate lines, and each conversation turn on its own line."""
     parts = ["["]
     for i, sample in enumerate(samples):
         parts.append("  {")
@@ -60,20 +61,20 @@ def format_train(samples: list) -> str:
 
 
 def check(samples: list):
-    """检查样本合法性。"""
+    """Validate the samples."""
     errors = []
     for i, sample in enumerate(samples):
         if "system" not in sample:
-            errors.append(f"样本 {i+1}: 缺少 system 字段")
+            errors.append(f"Sample {i+1}: missing system field")
         if "tools" not in sample:
-            errors.append(f"样本 {i+1}: 缺少 tools 字段")
+            errors.append(f"Sample {i+1}: missing tools field")
         if "conversations" not in sample:
-            errors.append(f"样本 {i+1}: 缺少 conversations 字段")
+            errors.append(f"Sample {i+1}: missing conversations field")
             continue
         convs = sample["conversations"]
         if not convs or convs[0].get("from") != "human":
-            errors.append(f"样本 {i+1}: conversations 必须以 human 开头")
-        # 检查 function_call value 格式
+            errors.append(f"Sample {i+1}: conversations must start with human")
+        # Validate function_call value format.
         for j, turn in enumerate(convs):
             role = turn.get("from")
             val = turn.get("value")
@@ -85,9 +86,9 @@ def check(samples: list):
                     except (json.JSONDecodeError, TypeError):
                         pass
                 if not isinstance(obj, dict) or "name" not in obj:
-                    errors.append(f"样本 {i+1} 轮 {j+1}: function_call value 缺少 name")
+                    errors.append(f"Sample {i+1} turn {j+1}: function_call value is missing name")
             if role not in ("human", "gpt", "function_call", "observation"):
-                errors.append(f"样本 {i+1} 轮 {j+1}: 未知角色 '{role}'")
+                errors.append(f"Sample {i+1} turn {j+1}: unknown role '{role}'")
     return errors
 
 
@@ -110,7 +111,7 @@ def main():
         out_path.write_text(format_train(result), "utf-8")
         n = len(result)
         total_turns = sum(len(s["conversations"]) for s in result)
-        print(f"train: {SRC.name} -> {out_path.name}  ({n} 样本, {total_turns} 轮)")
+        print(f"train: {SRC.name} -> {out_path.name}  ({n} samples, {total_turns} turns)")
 
     elif cmd == "check":
         data = json.loads(SRC.read_text("utf-8"))
@@ -118,12 +119,12 @@ def main():
         n = len(data)
         total_turns = sum(len(s.get("conversations", [])) for s in data)
         if errs:
-            print(f"发现 {len(errs)} 个问题:")
+            print(f"Found {len(errs)} issues:")
             for e in errs:
                 print(f"  - {e}")
             sys.exit(1)
         else:
-            print(f"check: {SRC.name} 合法 ({n} 样本, {total_turns} 轮)")
+            print(f"check: {SRC.name} is valid ({n} samples, {total_turns} turns)")
 
 
 if __name__ == "__main__":

@@ -1,8 +1,8 @@
 """
-NocoDB API 工具注册。
+NocoDB API tool registration.
 
-本模块直接通过 HTTP 调用 NocoDB REST API v2。
-公共接口（给 environment.py 调用）:
+This module calls the NocoDB REST API v2 directly over HTTP.
+Public interface exposed to environment.py:
   get_all_schemas() -> list
   call_tool(name, args) -> str
   get_tool_names() -> list
@@ -67,7 +67,7 @@ def get_tool_summary():
 
 def _require_requests():
     if requests is None:
-        raise ToolExecutionError("requests 库未安装，无法调用 NocoDB API。pip install requests")
+        raise ToolExecutionError("requests is not installed, so the NocoDB API cannot be called. Run: pip install requests")
 
 
 def _get_auth_token():
@@ -82,10 +82,10 @@ def _get_auth_token():
         timeout=30,
     )
     if resp.status_code != 200:
-        raise ToolExecutionError(f"NocoDB 登录失败 ({resp.status_code}): {resp.text[:300]}")
+        raise ToolExecutionError(f"NocoDB login failed ({resp.status_code}): {resp.text[:300]}")
     token = resp.json().get("token", "")
     if not token:
-        raise ToolExecutionError("NocoDB 登录响应中无 token")
+        raise ToolExecutionError("NocoDB login response did not contain a token")
     _jwt_cache["token"] = token
     return token
 
@@ -106,13 +106,13 @@ def _api(method, path, **kwargs):
     try:
         return requests.request(method, url, headers=_headers(), timeout=30, **kwargs)
     except requests.RequestException as exc:
-        raise ToolExecutionError(f"[NocoDB 请求失败] {type(exc).__name__}: {exc}") from exc
+        raise ToolExecutionError(f"[NocoDB Request Failed] {type(exc).__name__}: {exc}") from exc
 
 
 def _api_json(method, path, **kwargs):
     resp = _api(method, path, **kwargs)
     if resp.status_code >= 400:
-        raise ToolExecutionError(f"[NocoDB API 错误] {resp.status_code}: {resp.text[:500]}")
+        raise ToolExecutionError(f"[NocoDB API Error] {resp.status_code}: {resp.text[:500]}")
     if not resp.text:
         return None
     try:
@@ -136,7 +136,7 @@ def _get_default_workspace_id():
     data = _api_json("GET", "api/v2/meta/workspaces/")
     ws_list = data.get("list", []) if isinstance(data, dict) else []
     if not ws_list:
-        raise ToolExecutionError("[错误] 未找到任何 workspace")
+        raise ToolExecutionError("[Error] No workspace was found")
     return ws_list[0]["id"]
 
 
@@ -153,7 +153,7 @@ def _list_base_tables(base_id):
 
 def _resolve_base_id(base_id_or_name):
     if not base_id_or_name:
-        raise ToolExecutionError("[错误] base_id 不能为空")
+        raise ToolExecutionError("[Error] base_id cannot be empty")
     if _looks_like_nocodb_id(base_id_or_name):
         return base_id_or_name
     for base in _list_workspace_bases():
@@ -161,23 +161,23 @@ def _resolve_base_id(base_id_or_name):
             return base["id"]
         if base.get("id") == base_id_or_name:
             return base["id"]
-    raise ToolExecutionError(f"[错误] 找不到数据库: {base_id_or_name}")
+    raise ToolExecutionError(f"[Error] Database not found: {base_id_or_name}")
 
 
 def _resolve_table_id(table_id_or_name, base_id_or_name=""):
     if not table_id_or_name:
-        raise ToolExecutionError("[错误] table_id 不能为空")
+        raise ToolExecutionError("[Error] table_id cannot be empty")
     if _looks_like_nocodb_id(table_id_or_name):
         return table_id_or_name
     if not base_id_or_name:
-        raise ToolExecutionError("[错误] 当 table_id 为名称时，必须提供 base_id")
+        raise ToolExecutionError("[Error] base_id must be provided when table_id is a name")
     resolved_base_id = _resolve_base_id(base_id_or_name)
     for table in _list_base_tables(resolved_base_id):
         if table.get("title", "").lower() == str(table_id_or_name).lower():
             return table["id"]
         if table.get("id") == table_id_or_name:
             return table["id"]
-    raise ToolExecutionError(f"[错误] 在数据库 {base_id_or_name} 中找不到表: {table_id_or_name}")
+    raise ToolExecutionError(f"[Error] Table not found in database {base_id_or_name}: {table_id_or_name}")
 
 
 def _get_base_data(base_id_or_name):
@@ -185,7 +185,7 @@ def _get_base_data(base_id_or_name):
     for base in _list_workspace_bases():
         if base.get("id") == resolved_id:
             return base
-    raise ToolExecutionError(f"[错误] 找不到数据库: {base_id_or_name}")
+    raise ToolExecutionError(f"[Error] Database not found: {base_id_or_name}")
 
 
 def _get_table_data(table_id_or_name, base_id_or_name=""):
@@ -227,7 +227,7 @@ def _list_records_data(table_id, base_id="", where="", sort="", limit=25, offset
 
 def _build_where_eq(field_name, field_value):
     if not field_name:
-        raise ToolExecutionError("[错误] field_name 不能为空")
+        raise ToolExecutionError("[Error] field_name cannot be empty")
     value = str(field_value)
     return f"({field_name},eq,{value})"
 
@@ -249,11 +249,11 @@ def _find_records_data(table_id, field_name, field_value, base_id="", limit=10):
 
 @nocodb_tool(
     "list_bases",
-    "列出 NocoDB 上所有数据库（base）。",
+    "List all databases (bases) in NocoDB.",
     {
         "per_page": {
             "type": "integer",
-            "description": "每页返回数量，默认 20。",
+            "description": "Results per page. Default: 20.",
         },
     },
     group="schema",
@@ -274,11 +274,11 @@ def list_bases(per_page=20):
 
 @nocodb_tool(
     "get_base",
-    "获取指定数据库（base）的详细信息。",
+    "Get details for a specific database (base).",
     {
         "base_id": {
             "type": "string",
-            "description": "数据库 ID 或名称。",
+            "description": "Database ID or name.",
         },
     },
     required=["base_id"],
@@ -299,15 +299,15 @@ def get_base(base_id):
 
 @nocodb_tool(
     "create_base",
-    "创建一个新的数据库（base）。",
+    "Create a new database (base).",
     {
         "name": {
             "type": "string",
-            "description": "新数据库名称。",
+            "description": "New database name.",
         },
         "description": {
             "type": "string",
-            "description": "数据库描述，可选。",
+            "description": "Optional database description.",
         },
     },
     required=["name"],
@@ -333,11 +333,11 @@ def create_base(name, description=""):
 
 @nocodb_tool(
     "list_tables",
-    "列出指定数据库中的所有表。",
+    "List all tables in a specific database.",
     {
         "base_id": {
             "type": "string",
-            "description": "数据库（base）ID 或名称。",
+            "description": "Database (base) ID or name.",
         },
     },
     required=["base_id"],
@@ -360,15 +360,15 @@ def list_tables(base_id):
 
 @nocodb_tool(
     "get_table",
-    "获取指定表的详细信息（包括列定义）。",
+    "Get details for a specific table, including column definitions.",
     {
         "table_id": {
             "type": "string",
-            "description": "表 ID 或名称（需同时提供 base_id）。",
+            "description": "Table ID or name. If a name is used, provide base_id too.",
         },
         "base_id": {
             "type": "string",
-            "description": "数据库 ID 或名称（当 table_id 为名称时必填）。",
+            "description": "Database ID or name. Required when table_id is a name.",
         },
     },
     required=["table_id"],
@@ -388,15 +388,15 @@ def get_table(table_id, base_id=""):
 
 @nocodb_tool(
     "list_columns",
-    "列出指定表的列定义。",
+    "List column definitions for a specific table.",
     {
         "table_id": {
             "type": "string",
-            "description": "表 ID 或名称（需同时提供 base_id）。",
+            "description": "Table ID or name. If a name is used, provide base_id too.",
         },
         "base_id": {
             "type": "string",
-            "description": "数据库 ID 或名称（当 table_id 为名称时必填）。",
+            "description": "Database ID or name. Required when table_id is a name.",
         },
     },
     required=["table_id"],
@@ -410,19 +410,19 @@ def list_columns(table_id, base_id=""):
 
 @nocodb_tool(
     "create_table",
-    "在指定数据库中创建一张新表。",
+    "Create a new table in a specific database.",
     {
         "base_id": {
             "type": "string",
-            "description": "数据库 ID 或名称。",
+            "description": "Database ID or name.",
         },
         "table_name": {
             "type": "string",
-            "description": "新表名称。",
+            "description": "New table name.",
         },
         "columns": {
             "type": "array",
-            "description": "列定义数组，如 [{\"name\": \"TaskCode\", \"uidt\": \"SingleLineText\"}]。",
+            "description": "Array of column definitions, for example [{\"name\": \"TaskCode\", \"uidt\": \"SingleLineText\"}].",
             "items": {
                 "type": "object",
                 "properties": {
@@ -465,31 +465,31 @@ def create_table(base_id, table_name, columns):
 
 @nocodb_tool(
     "list_records",
-    "列出指定表中的记录。",
+    "List records in a specific table.",
     {
         "table_id": {
             "type": "string",
-            "description": "表 ID 或名称。",
+            "description": "Table ID or name.",
         },
         "base_id": {
             "type": "string",
-            "description": "数据库 ID 或名称（当 table_id 为名称时必填）。",
+            "description": "Database ID or name. Required when table_id is a name.",
         },
         "where": {
             "type": "string",
-            "description": "过滤条件，NocoDB where 语法，例如 '(Status,eq,active)'。",
+            "description": "Filter condition using NocoDB where syntax, for example '(Status,eq,active)'.",
         },
         "sort": {
             "type": "string",
-            "description": "排序字段，例如 '-Salary' 或 'FullName'。",
+            "description": "Sort field, for example '-Salary' or 'FullName'.",
         },
         "limit": {
             "type": "integer",
-            "description": "返回数量限制，默认 25。",
+            "description": "Maximum number of results to return. Default: 25.",
         },
         "offset": {
             "type": "integer",
-            "description": "偏移量，默认 0。",
+            "description": "Offset. Default: 0.",
         },
     },
     required=["table_id"],
@@ -502,31 +502,31 @@ def list_records(table_id, base_id="", where="", sort="", limit=25, offset=0):
 
 @nocodb_tool(
     "query_records",
-    "按过滤条件查询指定表中的记录。",
+    "Query records in a specific table with a filter condition.",
     {
         "table_id": {
             "type": "string",
-            "description": "表 ID 或名称。",
+            "description": "Table ID or name.",
         },
         "where": {
             "type": "string",
-            "description": "过滤条件，NocoDB where 语法，例如 '(ProjectCode,eq,PRJ-DATA)'。",
+            "description": "Filter condition using NocoDB where syntax, for example '(ProjectCode,eq,PRJ-DATA)'.",
         },
         "base_id": {
             "type": "string",
-            "description": "数据库 ID 或名称（当 table_id 为名称时必填）。",
+            "description": "Database ID or name. Required when table_id is a name.",
         },
         "sort": {
             "type": "string",
-            "description": "排序字段，例如 '-Priority'。",
+            "description": "Sort field, for example '-Priority'.",
         },
         "limit": {
             "type": "integer",
-            "description": "返回数量限制，默认 25。",
+            "description": "Maximum number of results to return. Default: 25.",
         },
         "offset": {
             "type": "integer",
-            "description": "偏移量，默认 0。",
+            "description": "Offset. Default: 0.",
         },
     },
     required=["table_id", "where"],
@@ -539,27 +539,27 @@ def query_records(table_id, where, base_id="", sort="", limit=25, offset=0):
 
 @nocodb_tool(
     "find_records",
-    "按字段值查找匹配的记录。",
+    "Find records that match a specific field value.",
     {
         "table_id": {
             "type": "string",
-            "description": "表 ID 或名称。",
+            "description": "Table ID or name.",
         },
         "field_name": {
             "type": "string",
-            "description": "要匹配的字段名，例如 'ProjectCode'。",
+            "description": "Field name to match, for example 'ProjectCode'.",
         },
         "field_value": {
             "type": "string",
-            "description": "要匹配的字段值。",
+            "description": "Field value to match.",
         },
         "base_id": {
             "type": "string",
-            "description": "数据库 ID 或名称（当 table_id 为名称时必填）。",
+            "description": "Database ID or name. Required when table_id is a name.",
         },
         "limit": {
             "type": "integer",
-            "description": "返回数量限制，默认 10。",
+            "description": "Maximum number of results to return. Default: 10.",
         },
     },
     required=["table_id", "field_name", "field_value"],
@@ -572,19 +572,19 @@ def find_records(table_id, field_name, field_value, base_id="", limit=10):
 
 @nocodb_tool(
     "get_record",
-    "获取指定表中的单条记录。",
+    "Get a single record from a specific table.",
     {
         "table_id": {
             "type": "string",
-            "description": "表 ID 或名称。",
+            "description": "Table ID or name.",
         },
         "record_id": {
             "type": "string",
-            "description": "记录 ID（行 ID）。",
+            "description": "Record ID (row ID).",
         },
         "base_id": {
             "type": "string",
-            "description": "数据库 ID 或名称（当 table_id 为名称时必填）。",
+            "description": "Database ID or name. Required when table_id is a name.",
         },
     },
     required=["table_id", "record_id"],
@@ -599,19 +599,19 @@ def get_record(table_id, record_id, base_id=""):
 
 @nocodb_tool(
     "create_record",
-    "在指定表中创建一条新记录。",
+    "Create a new record in a specific table.",
     {
         "table_id": {
             "type": "string",
-            "description": "表 ID 或名称。",
+            "description": "Table ID or name.",
         },
         "base_id": {
             "type": "string",
-            "description": "数据库 ID 或名称（当 table_id 为名称时必填）。",
+            "description": "Database ID or name. Required when table_id is a name.",
         },
         "fields": {
             "type": "object",
-            "description": "记录字段键值对，如 {\"TaskCode\": \"TASK-001\", \"Status\": \"todo\"}。",
+            "description": "Field key/value pairs for the record, for example {\"TaskCode\": \"TASK-001\", \"Status\": \"todo\"}.",
         },
     },
     required=["table_id", "fields"],
@@ -627,23 +627,23 @@ def create_record(table_id, fields, base_id=""):
 
 @nocodb_tool(
     "update_record",
-    "更新指定表中的一条记录。",
+    "Update a single record in a specific table.",
     {
         "table_id": {
             "type": "string",
-            "description": "表 ID 或名称。",
+            "description": "Table ID or name.",
         },
         "record_id": {
             "type": "string",
-            "description": "记录 ID（行 ID）。",
+            "description": "Record ID (row ID).",
         },
         "base_id": {
             "type": "string",
-            "description": "数据库 ID 或名称（当 table_id 为名称时必填）。",
+            "description": "Database ID or name. Required when table_id is a name.",
         },
         "fields": {
             "type": "object",
-            "description": "要更新的字段键值对。",
+            "description": "Field key/value pairs to update.",
         },
     },
     required=["table_id", "record_id", "fields"],
@@ -661,31 +661,31 @@ def update_record(table_id, record_id, fields, base_id=""):
 
 @nocodb_tool(
     "update_record_by_field",
-    "按业务字段匹配并更新一条记录。",
+    "Match a record by business field and update it.",
     {
         "table_id": {
             "type": "string",
-            "description": "表 ID 或名称。",
+            "description": "Table ID or name.",
         },
         "match_field": {
             "type": "string",
-            "description": "用于定位记录的字段名，例如 'ProjectCode'。",
+            "description": "Field name used to locate the record, for example 'ProjectCode'.",
         },
         "match_value": {
             "type": "string",
-            "description": "用于定位记录的字段值。",
+            "description": "Field value used to locate the record.",
         },
         "fields": {
             "type": "object",
-            "description": "要更新的字段键值对。",
+            "description": "Field key/value pairs to update.",
         },
         "base_id": {
             "type": "string",
-            "description": "数据库 ID 或名称（当 table_id 为名称时必填）。",
+            "description": "Database ID or name. Required when table_id is a name.",
         },
         "require_unique": {
             "type": "boolean",
-            "description": "是否要求匹配结果唯一，默认 true。",
+            "description": "Whether the match must be unique. Default: true.",
         },
     },
     required=["table_id", "match_field", "match_value", "fields"],
@@ -697,31 +697,31 @@ def update_record_by_field(table_id, match_field, match_value, fields, base_id="
     matched = _find_records_data(table_id, match_field, match_value, base_id=base_id, limit=10)
     records = matched.get("records", [])
     if not records:
-        raise ToolExecutionError(f"[错误] 未找到匹配记录: {match_field}={match_value}")
+        raise ToolExecutionError(f"[Error] No matching record found: {match_field}={match_value}")
     if require_unique and len(records) != 1:
-        raise ToolExecutionError(f"[错误] 匹配到 {len(records)} 条记录，无法唯一更新: {match_field}={match_value}")
+        raise ToolExecutionError(f"[Error] Matched {len(records)} records, cannot update uniquely: {match_field}={match_value}")
     record = records[0]
     record_id = record.get("Id") or record.get("id")
     if record_id in (None, ""):
-        raise ToolExecutionError("[错误] 匹配记录缺少 Id 字段，无法更新")
+        raise ToolExecutionError("[Error] Matched record is missing the Id field and cannot be updated")
     return update_record(table_id=table_id, record_id=str(record_id), fields=fields, base_id=base_id)
 
 
 @nocodb_tool(
     "delete_record",
-    "删除指定表中的一条记录。危险操作，不可逆。",
+    "Delete a single record from a specific table. This is destructive and irreversible.",
     {
         "table_id": {
             "type": "string",
-            "description": "表 ID 或名称。",
+            "description": "Table ID or name.",
         },
         "record_id": {
             "type": "string",
-            "description": "记录 ID（行 ID）。",
+            "description": "Record ID (row ID).",
         },
         "base_id": {
             "type": "string",
-            "description": "数据库 ID 或名称（当 table_id 为名称时必填）。",
+            "description": "Database ID or name. Required when table_id is a name.",
         },
     },
     required=["table_id", "record_id"],
@@ -732,7 +732,7 @@ def update_record_by_field(table_id, match_field, match_value, fields, base_id="
 def delete_record(table_id, record_id, base_id=""):
     resolved_id = _resolve_table_id(table_id, base_id)
     _api_json("DELETE", f"api/v2/tables/{resolved_id}/records", json=[{"Id": record_id}])
-    return f"记录 {record_id} 已删除。"
+    return f"Record {record_id} has been deleted."
 
 
 # ---------------------------------------------------------------------------
@@ -742,20 +742,20 @@ def delete_record(table_id, record_id, base_id=""):
 
 @nocodb_tool(
     "bulk_delete_records",
-    "批量删除指定表中的多条记录。非常危险的操作，不可逆。",
+    "Bulk delete multiple records from a specific table. This is highly destructive and irreversible.",
     {
         "table_id": {
             "type": "string",
-            "description": "表 ID 或名称。",
+            "description": "Table ID or name.",
         },
         "record_ids": {
             "type": "array",
             "items": {"type": "string"},
-            "description": "要删除的记录 ID 列表。",
+            "description": "List of record IDs to delete.",
         },
         "base_id": {
             "type": "string",
-            "description": "数据库 ID 或名称（当 table_id 为名称时必填）。",
+            "description": "Database ID or name. Required when table_id is a name.",
         },
     },
     required=["table_id", "record_ids"],
@@ -767,20 +767,20 @@ def bulk_delete_records(table_id, record_ids, base_id=""):
     resolved_id = _resolve_table_id(table_id, base_id)
     payload = [{"Id": record_id} for record_id in record_ids]
     _api_json("DELETE", f"api/v2/tables/{resolved_id}/records", json=payload)
-    return f"已批量删除 {len(record_ids)} 条记录。"
+    return f"Deleted {len(record_ids)} record(s) in bulk."
 
 
 @nocodb_tool(
     "delete_table",
-    "删除整张表及其所有数据。极其危险的操作，不可逆。",
+    "Delete an entire table and all of its data. This is extremely dangerous and irreversible.",
     {
         "table_id": {
             "type": "string",
-            "description": "表 ID 或名称。",
+            "description": "Table ID or name.",
         },
         "base_id": {
             "type": "string",
-            "description": "数据库 ID 或名称（当 table_id 为名称时必填）。",
+            "description": "Database ID or name. Required when table_id is a name.",
         },
     },
     required=["table_id"],
@@ -791,4 +791,4 @@ def bulk_delete_records(table_id, record_ids, base_id=""):
 def delete_table(table_id, base_id=""):
     resolved_id = _resolve_table_id(table_id, base_id)
     _api_json("DELETE", f"api/v2/meta/tables/{resolved_id}")
-    return f"表 {table_id} 及其所有数据已被永久删除。"
+    return f"Table {table_id} and all of its data have been permanently deleted."

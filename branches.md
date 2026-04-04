@@ -1,95 +1,93 @@
 # Branches for SFT Data
 
-## 无风险主分支
-### 1. 无风险 + 已知工具 + 安全缓存命中 -> 直接执行
+## Safe Main Branches
 
-进入条件：
-- 产出了明确的候选 step
+### 1. Safe + Known Tool + Safe Cache Hit -> Execute Directly
+
+Entry conditions:
+- a clear candidate step has been produced
 - `predict_risk = safe`
 - `memory_for_tool = hit`
 
-### 2. 无风险 + 已知工具 + 未命中缓存 + try 安全 -> try_commit
+### 2. Safe + Known Tool + Cache Miss + Safe Try -> `try_commit`
 
-进入条件：
+Entry conditions:
 - `predict_risk = safe`
 - `memory_for_tool = miss`
 - `judge_try_result = safe`
 
-### 3. 无风险 + 已知工具 + 未命中缓存 + 沙箱不安全 -> 拦截
+### 3. Safe + Known Tool + Cache Miss + Sandbox Unsafe -> Intercept
 
-进入条件：
+Entry conditions:
 - `predict_risk = safe`
 - `memory_for_tool = miss`
-- `tool_try` 后 `judge_try_result = unsafe`
+- after `tool_try`, `judge_try_result = unsafe`
 
-## risky 主分支
-### 4. 有风险 + 不需要人类 + replan 成功
+## Risky Main Branches
 
-进入条件：
+### 4. Risky + No Human Needed + Successful `replan`
+
+Entry conditions:
 - `predict_risk = risky`
-- 风险根源是“当前方案不够好”，不是“信息缺失”
-- agent 能自行想出更安全替代方案
+- the risk comes from the current plan being poor, not from missing information
+- the agent can come up with a safer alternative on its own
 
-### 5. 有风险 + 需要人类 -> ask_human
+### 5. Risky + Human Needed -> `ask_human`
 
-进入条件：
+Entry conditions:
 - `predict_risk = risky`
-- 问题根源不是方案粗糙，而是缺少只有用户能提供的信息
+- the problem is not just a rough plan; it requires information that only the user can provide
 
-### 6. 一开始直接 refuse
+### 6. Immediate `refuse`
 
-进入条件：
-- 用户任务本身具有明确恶意意图
-- 不存在通过补充信息就变成合法操作的可能
+Entry conditions:
+- the user task itself has clearly malicious intent
+- no amount of additional information could turn it into a legitimate action
 
-## ask_human 后续细分
-### 7. ask_human -> 用户补充信息 -> 返回规划
+## `ask_human` Follow-Up Branches
 
-进入条件：
-- 用户愿意补充
-- 用户回复提供了新的关键信息
+### 7. `ask_human` -> User Provides More Information -> Return To Planning
 
-### 8. ask_human -> 用户确认通过 -> 继续执行
+Entry conditions:
+- the user is willing to provide more details
+- the user reply includes new key information
 
-进入条件：
-- ask_human 的问题本质上是确认型而不是补充型
-- 用户明确确认执行
+### 8. `ask_human` -> User Confirms -> Continue Execution
 
-### 9. ask_human -> 用户拒绝/不确认 -> 终止
+Entry conditions:
+- the `ask_human` question is fundamentally a confirmation request rather than an information request
+- the user explicitly confirms execution
 
-进入条件：
-- 用户明确拒绝
-- 用户回答意味着不再继续当前任务
+### 9. `ask_human` -> User Rejects Or Does Not Confirm -> Terminate
 
-## replan 后续细分
+Entry conditions:
+- the user explicitly refuses
+- the user reply indicates that the current task should not continue
 
-### 10. replan -> 成功 -> 输出安全规划
+## `replan` Follow-Up Branches
 
-进入条件：
-- `replan` 生成了更好的新步骤
-- 新步骤经过新一轮风险判断后进入 safe 或可控路径
+### 10. `replan` -> Success -> Output A Safe Plan
 
-### 11. replan -> 仍有风险 -> ask_human
+Entry conditions:
+- `replan` generates a better next step
+- after a fresh risk evaluation, the new step enters a safe or otherwise controllable path
 
-进入条件：
-- `replan` 之后仍然无法得到安全方案
-- 说明问题不再只是“方案差”，而是缺用户信息
+### 11. `replan` -> Still Risky -> `ask_human`
 
-## tool_try 不安全后续细分
+Entry conditions:
+- even after `replan`, no safe plan is available
+- the problem is no longer only "bad plan quality"; it now depends on missing user information
 
-### 12. tool_try 不安全 -> ask_human（先回滚）
+## Unsafe `tool_try` Follow-Up Branches
 
-进入条件：
+### 12. Unsafe `tool_try` -> `ask_human` (After Rollback)
+
+Entry conditions:
 - `judge_try_result = unsafe`
-- 且要继续安全完成任务必须用户补充信息
+- safely completing the task still requires additional user input
 
-### 13. tool_try 不安全 -> 终止
+### 13. Unsafe `tool_try` -> Terminate
 
-进入条件：
+Entry conditions:
 - `judge_try_result = unsafe`
-- 不存在安全替代方案，或者用户不希望继续
-
-
-
-
-
+- no safe alternative exists, or the user does not want to continue

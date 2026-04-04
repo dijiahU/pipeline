@@ -1,7 +1,7 @@
 """
-Zammad REST API 工具注册。
+Zammad REST API tool registration.
 
-使用 Basic Auth 调用 Zammad 官方 API。
+Calls the official Zammad API with Basic Auth.
 """
 
 import json
@@ -61,7 +61,7 @@ def get_tool_summary():
 
 def _require_requests():
     if requests is None:
-        raise ToolExecutionError("requests 库未安装。pip install requests")
+        raise ToolExecutionError("requests is not installed. Run: pip install requests")
 
 
 def _auth():
@@ -80,13 +80,13 @@ def _api(method, path, **kwargs):
     try:
         return requests.request(method, url, **kwargs)
     except requests.RequestException as exc:
-        raise ToolExecutionError(f"[Zammad 请求失败] {type(exc).__name__}: {exc}") from exc
+        raise ToolExecutionError(f"[Zammad Request Failed] {type(exc).__name__}: {exc}") from exc
 
 
 def _api_json(method, path, **kwargs):
     resp = _api(method, path, **kwargs)
     if resp.status_code >= 400:
-        raise ToolExecutionError(f"[Zammad API 错误] {resp.status_code}: {resp.text[:500]}")
+        raise ToolExecutionError(f"[Zammad API Error] {resp.status_code}: {resp.text[:500]}")
     if not resp.text:
         return None
     try:
@@ -316,10 +316,10 @@ def _update_ticket_payload(ticket_id, *, title="", group="", priority="", owner_
     if owner_email:
         owner = _find_user_by_email(owner_email, only_agents=True)
         if not owner:
-            raise ToolExecutionError(f"[错误] 找不到可分配的 Agent: {owner_email}")
+            raise ToolExecutionError(f"[Error] Assignable agent not found: {owner_email}")
         payload["owner_id"] = owner["id"]
     if not payload:
-        raise ToolExecutionError("[错误] 至少需要提供一个要更新的字段")
+        raise ToolExecutionError("[Error] At least one field to update must be provided")
     data = _api_json("PUT", f"tickets/{ticket_id}", json=payload)
     return data, payload
 
@@ -348,9 +348,9 @@ def _create_ticket_article(ticket_id, body, *, internal, subject, sender="Agent"
 
 @zammad_tool(
     "list_customers",
-    "列出客户支持系统中的客户，可按姓名或邮箱关键词筛选。",
+    "List customers in the support system, optionally filtered by name or email keyword.",
     {
-        "query": {"type": "string", "description": "客户姓名或邮箱关键词"},
+        "query": {"type": "string", "description": "Customer name or email keyword"},
     },
     group="customers",
     short_description="List customer profiles with optional name or email filtering.",
@@ -378,9 +378,9 @@ def list_customers(query=""):
 
 @zammad_tool(
     "get_customer",
-    "获取单个客户的详细信息。",
+    "Get detailed information for a single customer.",
     {
-        "customer_id": {"type": "integer", "description": "客户 ID"},
+        "customer_id": {"type": "integer", "description": "Customer ID"},
     },
     group="customers",
     short_description="Read a single customer profile by numeric customer id.",
@@ -389,16 +389,16 @@ def get_customer(customer_id):
     user = _api_json("GET", f"users/{customer_id}")
     roles_by_id = _roles_by_id()
     if not _is_customer(user, roles_by_id=roles_by_id):
-        raise ToolExecutionError(f"[错误] 用户 {customer_id} 不是 Customer")
+        raise ToolExecutionError(f"[Error] User {customer_id} is not a Customer")
     return _format_json(_user_summary(user, roles_by_id=roles_by_id))
 
 
 @zammad_tool(
     "list_customer_tickets",
-    "列出某个客户的工单，可按状态筛选。",
+    "List tickets for a specific customer, optionally filtered by state.",
     {
-        "customer_email": {"type": "string", "description": "客户邮箱"},
-        "state": {"type": "string", "description": "工单状态，如 open、closed"},
+        "customer_email": {"type": "string", "description": "Customer email address"},
+        "state": {"type": "string", "description": "Ticket state, such as open or closed"},
     },
     required=["customer_email"],
     group="customers",
@@ -410,9 +410,9 @@ def list_customer_tickets(customer_email, state=""):
 
 @zammad_tool(
     "list_agents",
-    "列出客服 Agent/Admin 账号，可按姓名或邮箱关键词筛选。",
+    "List support Agent/Admin accounts, optionally filtered by name or email keyword.",
     {
-        "query": {"type": "string", "description": "Agent 姓名或邮箱关键词"},
+        "query": {"type": "string", "description": "Agent name or email keyword"},
     },
     group="agents_and_groups",
     short_description="List agent and admin accounts available for ticket ownership.",
@@ -440,9 +440,9 @@ def list_agents(query=""):
 
 @zammad_tool(
     "get_agent",
-    "按邮箱获取单个客服 Agent/Admin 账号详情。",
+    "Get details for one Agent/Admin account by email address.",
     {
-        "email": {"type": "string", "description": "Agent/Admin 邮箱"},
+        "email": {"type": "string", "description": "Agent/Admin email address"},
     },
     required=["email"],
     group="agents_and_groups",
@@ -451,13 +451,13 @@ def list_agents(query=""):
 def get_agent(email):
     user = _find_user_by_email(email, only_agents=True)
     if not user:
-        raise ToolExecutionError(f"[错误] 找不到 Agent/Admin: {email}")
+        raise ToolExecutionError(f"[Error] Agent/Admin not found: {email}")
     return _format_json(_user_summary(user, roles_by_id=_roles_by_id()))
 
 
 @zammad_tool(
     "list_groups",
-    "列出当前客服分组。",
+    "List the current support groups.",
     {},
     group="agents_and_groups",
     short_description="List available support groups such as Billing or Support.",
@@ -468,9 +468,9 @@ def list_groups():
 
 @zammad_tool(
     "get_group",
-    "读取单个客服分组详情。",
+    "Read details for a single support group.",
     {
-        "group_name": {"type": "string", "description": "分组名称，如 Billing、Support"},
+        "group_name": {"type": "string", "description": "Group name, such as Billing or Support"},
     },
     required=["group_name"],
     group="agents_and_groups",
@@ -479,13 +479,13 @@ def list_groups():
 def get_group(group_name):
     group = _find_group(group_name)
     if not group:
-        raise ToolExecutionError(f"[错误] 找不到分组: {group_name}")
+        raise ToolExecutionError(f"[Error] Group not found: {group_name}")
     return _format_json(_group_summary(group))
 
 
 @zammad_tool(
     "list_ticket_states",
-    "列出系统中的工单状态。",
+    "List the ticket states available in the system.",
     {},
     group="ticket_queries",
     short_description="List valid ticket states available for workflow transitions.",
@@ -507,7 +507,7 @@ def list_ticket_states():
 
 @zammad_tool(
     "list_ticket_priorities",
-    "列出系统中的工单优先级。",
+    "List the ticket priorities available in the system.",
     {},
     group="ticket_queries",
     short_description="List valid ticket priorities such as low, normal, and high.",
@@ -527,14 +527,14 @@ def list_ticket_priorities():
 
 @zammad_tool(
     "list_tickets",
-    "列出工单，可按状态、分组、客户、负责人、优先级或标签筛选。",
+    "List tickets, optionally filtered by state, group, customer, owner, priority, or tag.",
     {
-        "state": {"type": "string", "description": "工单状态，如 open、closed"},
-        "group": {"type": "string", "description": "工单分组，如 Billing、Support"},
-        "customer_email": {"type": "string", "description": "客户邮箱"},
-        "owner_email": {"type": "string", "description": "负责人邮箱"},
-        "priority": {"type": "string", "description": "优先级，如 1 low、2 normal、3 high"},
-        "tag": {"type": "string", "description": "标签名称"},
+        "state": {"type": "string", "description": "Ticket state, such as open or closed"},
+        "group": {"type": "string", "description": "Ticket group, such as Billing or Support"},
+        "customer_email": {"type": "string", "description": "Customer email address"},
+        "owner_email": {"type": "string", "description": "Owner email address"},
+        "priority": {"type": "string", "description": "Priority, such as 1 low, 2 normal, or 3 high"},
+        "tag": {"type": "string", "description": "Tag name"},
     },
     group="ticket_queries",
     short_description="List tickets with optional filters for workflow, ownership, and tags.",
@@ -573,10 +573,10 @@ def list_tickets(state="", group="", customer_email="", owner_email="", priority
 
 @zammad_tool(
     "list_group_tickets",
-    "列出指定分组的工单，可按状态筛选。",
+    "List tickets in a specific group, optionally filtered by state.",
     {
-        "group": {"type": "string", "description": "分组名称，如 Billing、Support"},
-        "state": {"type": "string", "description": "工单状态，如 open、closed"},
+        "group": {"type": "string", "description": "Group name, such as Billing or Support"},
+        "state": {"type": "string", "description": "Ticket state, such as open or closed"},
     },
     required=["group"],
     group="ticket_queries",
@@ -588,10 +588,10 @@ def list_group_tickets(group, state=""):
 
 @zammad_tool(
     "list_agent_tickets",
-    "列出某个 Agent 当前负责的工单，可按状态筛选。",
+    "List tickets currently assigned to one Agent, optionally filtered by state.",
     {
-        "owner_email": {"type": "string", "description": "负责人邮箱"},
-        "state": {"type": "string", "description": "工单状态，如 open、closed"},
+        "owner_email": {"type": "string", "description": "Owner email address"},
+        "state": {"type": "string", "description": "Ticket state, such as open or closed"},
     },
     required=["owner_email"],
     group="ticket_queries",
@@ -603,9 +603,9 @@ def list_agent_tickets(owner_email, state=""):
 
 @zammad_tool(
     "get_ticket",
-    "获取单个工单详情，包括客户、负责人、标签和文章列表。",
+    "Get details for a single ticket, including customer, owner, tags, and articles.",
     {
-        "ticket_id": {"type": "integer", "description": "工单 ID"},
+        "ticket_id": {"type": "integer", "description": "Ticket ID"},
     },
     group="ticket_queries",
     short_description="Read one ticket with customer, owner, tags, and article history.",
@@ -649,10 +649,10 @@ def get_ticket(ticket_id):
 
 @zammad_tool(
     "search_tickets",
-    "按关键词全文搜索工单。",
+    "Run a full-text search for tickets by keyword.",
     {
-        "query": {"type": "string", "description": "搜索关键词"},
-        "limit": {"type": "integer", "description": "返回数量限制，默认 20"},
+        "query": {"type": "string", "description": "Search keyword"},
+        "limit": {"type": "integer", "description": "Maximum number of results to return. Default: 20"},
     },
     required=["query"],
     group="ticket_queries",
@@ -681,10 +681,10 @@ def search_tickets(query, limit=20):
 
 @zammad_tool(
     "list_ticket_articles",
-    "获取指定工单的所有文章/回复。",
+    "Get all articles and replies for a specific ticket.",
     {
-        "ticket_id": {"type": "integer", "description": "工单 ID"},
-        "include_internal": {"type": "boolean", "description": "是否包含 internal 文章，默认 true"},
+        "ticket_id": {"type": "integer", "description": "Ticket ID"},
+        "include_internal": {"type": "boolean", "description": "Whether to include internal articles. Default: true"},
     },
     required=["ticket_id"],
     group="ticket_articles",
@@ -712,9 +712,9 @@ def list_ticket_articles(ticket_id, include_internal=True):
 
 @zammad_tool(
     "list_ticket_tags",
-    "列出某个工单当前的所有标签。",
+    "List the current tags attached to a ticket.",
     {
-        "ticket_id": {"type": "integer", "description": "工单 ID"},
+        "ticket_id": {"type": "integer", "description": "Ticket ID"},
     },
     required=["ticket_id"],
     group="tagging",
@@ -733,13 +733,13 @@ def list_ticket_tags(ticket_id):
 
 @zammad_tool(
     "create_ticket",
-    "创建一个新工单。",
+    "Create a new ticket.",
     {
-        "title": {"type": "string", "description": "工单标题"},
-        "group": {"type": "string", "description": "工单分组，如 Billing、Support"},
-        "customer_email": {"type": "string", "description": "客户邮箱"},
-        "body": {"type": "string", "description": "工单初始内容"},
-        "priority": {"type": "string", "description": "优先级，如 1 low、2 normal、3 high"},
+        "title": {"type": "string", "description": "Ticket title"},
+        "group": {"type": "string", "description": "Ticket group, such as Billing or Support"},
+        "customer_email": {"type": "string", "description": "Customer email address"},
+        "body": {"type": "string", "description": "Initial ticket content"},
+        "priority": {"type": "string", "description": "Priority, such as 1 low, 2 normal, or 3 high"},
     },
     required=["title", "group", "body", "customer_email"],
     is_write=True,
@@ -774,14 +774,14 @@ def create_ticket(title, group, body, customer_email="", priority="2 normal"):
 
 @zammad_tool(
     "update_ticket",
-    "更新工单属性（标题、状态、优先级、分组、负责人）。",
+    "Update ticket fields such as title, state, priority, group, or owner.",
     {
-        "ticket_id": {"type": "integer", "description": "工单 ID"},
-        "title": {"type": "string", "description": "新标题"},
-        "group": {"type": "string", "description": "新分组"},
-        "priority": {"type": "string", "description": "新优先级"},
-        "owner_email": {"type": "string", "description": "新负责人邮箱"},
-        "state": {"type": "string", "description": "新状态，如 open、closed"},
+        "ticket_id": {"type": "integer", "description": "Ticket ID"},
+        "title": {"type": "string", "description": "New title"},
+        "group": {"type": "string", "description": "New group"},
+        "priority": {"type": "string", "description": "New priority"},
+        "owner_email": {"type": "string", "description": "New owner email address"},
+        "state": {"type": "string", "description": "New state, such as open or closed"},
     },
     required=["ticket_id"],
     is_write=True,
@@ -802,10 +802,10 @@ def update_ticket(ticket_id, title="", group="", priority="", owner_email="", st
 
 @zammad_tool(
     "rename_ticket",
-    "更新工单标题。",
+    "Update a ticket title.",
     {
-        "ticket_id": {"type": "integer", "description": "工单 ID"},
-        "title": {"type": "string", "description": "新标题"},
+        "ticket_id": {"type": "integer", "description": "Ticket ID"},
+        "title": {"type": "string", "description": "New title"},
     },
     required=["ticket_id", "title"],
     is_write=True,
@@ -819,10 +819,10 @@ def rename_ticket(ticket_id, title):
 
 @zammad_tool(
     "update_ticket_state",
-    "更新工单状态。",
+    "Update a ticket state.",
     {
-        "ticket_id": {"type": "integer", "description": "工单 ID"},
-        "state": {"type": "string", "description": "新状态，如 open、pending reminder、closed"},
+        "ticket_id": {"type": "integer", "description": "Ticket ID"},
+        "state": {"type": "string", "description": "New state, such as open, pending reminder, or closed"},
     },
     required=["ticket_id", "state"],
     is_write=True,
@@ -836,10 +836,10 @@ def update_ticket_state(ticket_id, state):
 
 @zammad_tool(
     "update_ticket_priority",
-    "更新工单优先级。",
+    "Update a ticket priority.",
     {
-        "ticket_id": {"type": "integer", "description": "工单 ID"},
-        "priority": {"type": "string", "description": "新优先级，如 1 low、2 normal、3 high"},
+        "ticket_id": {"type": "integer", "description": "Ticket ID"},
+        "priority": {"type": "string", "description": "New priority, such as 1 low, 2 normal, or 3 high"},
     },
     required=["ticket_id", "priority"],
     is_write=True,
@@ -853,10 +853,10 @@ def update_ticket_priority(ticket_id, priority):
 
 @zammad_tool(
     "move_ticket_to_group",
-    "将工单移动到另一个分组。",
+    "Move a ticket to a different group.",
     {
-        "ticket_id": {"type": "integer", "description": "工单 ID"},
-        "group": {"type": "string", "description": "目标分组名称"},
+        "ticket_id": {"type": "integer", "description": "Ticket ID"},
+        "group": {"type": "string", "description": "Target group name"},
     },
     required=["ticket_id", "group"],
     is_write=True,
@@ -870,10 +870,10 @@ def move_ticket_to_group(ticket_id, group):
 
 @zammad_tool(
     "reassign_ticket_owner",
-    "把工单分配给指定 Agent。",
+    "Assign a ticket to a specific Agent.",
     {
-        "ticket_id": {"type": "integer", "description": "工单 ID"},
-        "owner_email": {"type": "string", "description": "目标负责人邮箱"},
+        "ticket_id": {"type": "integer", "description": "Ticket ID"},
+        "owner_email": {"type": "string", "description": "Target owner email address"},
     },
     required=["ticket_id", "owner_email"],
     is_write=True,
@@ -887,12 +887,12 @@ def reassign_ticket_owner(ticket_id, owner_email):
 
 @zammad_tool(
     "add_ticket_note",
-    "为工单追加一条内部备注。",
+    "Append an internal note to a ticket.",
     {
-        "ticket_id": {"type": "integer", "description": "工单 ID"},
-        "body": {"type": "string", "description": "备注内容"},
-        "internal": {"type": "boolean", "description": "是否为内部备注"},
-        "subject": {"type": "string", "description": "备注主题"},
+        "ticket_id": {"type": "integer", "description": "Ticket ID"},
+        "body": {"type": "string", "description": "Note content"},
+        "internal": {"type": "boolean", "description": "Whether this is an internal note"},
+        "subject": {"type": "string", "description": "Note subject"},
     },
     required=["ticket_id", "body"],
     is_write=True,
@@ -913,11 +913,11 @@ def add_ticket_note(ticket_id, body, internal=True, subject="Internal note"):
 
 @zammad_tool(
     "add_public_ticket_reply",
-    "给工单追加一条对客户可见的公开回复。",
+    "Append a public reply visible to the customer.",
     {
-        "ticket_id": {"type": "integer", "description": "工单 ID"},
-        "body": {"type": "string", "description": "回复内容"},
-        "subject": {"type": "string", "description": "回复主题"},
+        "ticket_id": {"type": "integer", "description": "Ticket ID"},
+        "body": {"type": "string", "description": "Reply content"},
+        "subject": {"type": "string", "description": "Reply subject"},
     },
     required=["ticket_id", "body"],
     is_write=True,
@@ -938,10 +938,10 @@ def add_public_ticket_reply(ticket_id, body, subject="Agent reply"):
 
 @zammad_tool(
     "add_ticket_tag",
-    "为工单添加标签。",
+    "Add a tag to a ticket.",
     {
-        "ticket_id": {"type": "integer", "description": "工单 ID"},
-        "tag": {"type": "string", "description": "标签名称"},
+        "ticket_id": {"type": "integer", "description": "Ticket ID"},
+        "tag": {"type": "string", "description": "Tag name"},
     },
     required=["ticket_id", "tag"],
     is_write=True,
@@ -963,10 +963,10 @@ def add_ticket_tag(ticket_id, tag):
 
 @zammad_tool(
     "remove_ticket_tag",
-    "删除工单上的一个标签。",
+    "Remove a tag from a ticket.",
     {
-        "ticket_id": {"type": "integer", "description": "工单 ID"},
-        "tag": {"type": "string", "description": "标签名称"},
+        "ticket_id": {"type": "integer", "description": "Ticket ID"},
+        "tag": {"type": "string", "description": "Tag name"},
     },
     required=["ticket_id", "tag"],
     is_write=True,
@@ -988,9 +988,9 @@ def remove_ticket_tag(ticket_id, tag):
 
 @zammad_tool(
     "delete_ticket",
-    "永久删除工单。",
+    "Permanently delete a ticket.",
     {
-        "ticket_id": {"type": "integer", "description": "工单 ID"},
+        "ticket_id": {"type": "integer", "description": "Ticket ID"},
     },
     required=["ticket_id"],
     is_write=True,
@@ -1000,5 +1000,5 @@ def remove_ticket_tag(ticket_id, tag):
 def delete_ticket(ticket_id):
     resp = _api("DELETE", f"tickets/{ticket_id}")
     if resp.status_code >= 400:
-        raise ToolExecutionError(f"[Zammad API 错误] {resp.status_code}: {resp.text[:500]}")
+        raise ToolExecutionError(f"[Zammad API Error] {resp.status_code}: {resp.text[:500]}")
     return _format_json({"deleted_ticket_id": ticket_id})

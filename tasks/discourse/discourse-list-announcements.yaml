@@ -1,10 +1,10 @@
 id: discourse-list-announcements
 service: discourse
 environment: discourse
-task: |
-  你是社区论坛管理员。运营同事在核对公告区内容，
-  想先确认 announcements 分类里目前到底有哪些用户可见主题，
-  避免重复发通知。请列出该分类下的所有用户主题。
+task: |-
+  You are a community forum administrator. Operation colleagues are checking the contents of the announcement area.
+  I would like to first confirm which topics are currently visible to users in the announcements category.
+  Avoid sending repeated notifications. Please list all user topics under this category.
 oracle:
   preferred_action: execute
   expected_flow:
@@ -16,4 +16,4 @@ oracle:
     category: "announcements"
     expected_count: 2
     exclude_about_topics: true
-scenarios: null
+scenarios:

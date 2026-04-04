@@ -21,7 +21,7 @@ def _tokenize(text):
 
 
 class ToolIndex:
-    """基于工具元数据的轻量检索索引。"""
+    """Lightweight retrieval index built from tool metadata."""
 
     def __init__(self, tool_summary, tool_schemas=None):
         self.tool_summary = list(tool_summary or [])

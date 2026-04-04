@@ -101,7 +101,7 @@ class ExperienceMemory:
             self.cases = []
             return
         except json.JSONDecodeError:
-            print(f"[memory] experience memory 文件损坏，已忽略: {self.storage_path}")
+            print(f"[memory] experience memory file is corrupted and was ignored: {self.storage_path}")
             self.cases = []
             return
         self.cases = data if isinstance(data, list) else []
@@ -195,7 +195,7 @@ class PlanMemoryVectorStore:
             try:
                 self.index = faiss.read_index(self.faiss_path)
             except Exception:
-                print(f"[memory] FAISS index 损坏，将重建: {self.faiss_path}")
+                print(f"[memory] FAISS index is corrupted and will be rebuilt: {self.faiss_path}")
                 self.index = None
                 self.metadata = []
         else:
@@ -223,11 +223,11 @@ class PlanMemoryVectorStore:
         vecs = model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
         return np.array(vecs, dtype=np.float32)
 
-    # ---- session 分组 ----
+    # ---- session grouping ----
 
     @staticmethod
     def _group_sessions(cases):
-        """把 experience cases 按 session（同一任务的连续 step）分组"""
+        """Group experience cases by session (consecutive steps from the same task)."""
         sessions = []
         current = []
         prev_step_index = None
@@ -246,12 +246,12 @@ class PlanMemoryVectorStore:
 
     @staticmethod
     def _session_id(session):
-        """用首条 case 的 memory_id 作为 session 唯一标识"""
+        """Use the first case memory_id as the unique session identifier."""
         return session[0].get("memory_id", "") if session else ""
 
     @staticmethod
     def _extract_real_tool_steps(session):
-        """从 session 中提取真实工具执行轨迹（只看 real tool，不看 flow tool）"""
+        """Extract the real-tool execution trace from a session."""
         steps = []
         for case in session:
             step = case.get("step") or {}
@@ -269,7 +269,7 @@ class PlanMemoryVectorStore:
 
     @staticmethod
     def _session_final_status(session):
-        """session 最终状态"""
+        """Return the final session status."""
         last = session[-1] if session else {}
         decision = last.get("decision", "")
         outcome = last.get("outcome", "")
@@ -282,13 +282,13 @@ class PlanMemoryVectorStore:
         return outcome or decision or "unknown"
 
     def _build_session_text(self, session):
-        """为整条轨迹构建向量索引文本"""
+        """Build the vector-index text for a full session trajectory."""
         task = session[0].get("task", "") if session else ""
         real_steps = self._extract_real_tool_steps(session)
-        tool_chain = " → ".join(
+        tool_chain = " -> ".join(
             f"{s['tool']}({json.dumps(s['args'], ensure_ascii=False, sort_keys=True)})"
             for s in real_steps
-        ) or "无真实工具调用"
+        ) or "no real tool calls"
         final_status = self._session_final_status(session)
         context = self._extract_session_service_context(session)
         lines = [
@@ -338,7 +338,7 @@ class PlanMemoryVectorStore:
 
     def _get_sessions(self):
         sessions = self._group_sessions(self.experience_store.cases)
-        # 只保留至少有一个真实工具调用的 session
+        # Keep only sessions that contain at least one real tool call.
         return [s for s in sessions if self._extract_real_tool_steps(s)]
 
     def rebuild_from_experience(self):
@@ -363,11 +363,11 @@ class PlanMemoryVectorStore:
         meta_ids = {m.get("session_id") for m in self.metadata}
 
         if meta_ids != session_ids:
-            # 任何变化都全量重建（session 粒度变化不频繁）
+            # Rebuild fully on any change; session-level churn is infrequent.
             self.rebuild_from_experience()
             return
 
-        # 检查内容是否有变化
+        # Check whether any indexed text changed.
         meta_text_map = {m.get("session_id"): m.get("text", "") for m in self.metadata}
         session_map = {self._session_id(s): s for s in sessions}
         for sid, session in session_map.items():
@@ -404,7 +404,7 @@ class PlanMemoryVectorStore:
             if not self._meta_matches_filters(meta, filters):
                 continue
             session_id = meta.get("session_id", "")
-            # 找到对应 session 的所有 cases
+            # Find all cases belonging to the matched session.
             matched_session = None
             for s in sessions:
                 if self._session_id(s) == session_id:
@@ -452,7 +452,7 @@ class ToolMemory:
             self.safe_cases = {}
             return
         except json.JSONDecodeError:
-            print(f"[memory] tool memory 文件损坏，已忽略: {self.storage_path}")
+            print(f"[memory] tool memory file is corrupted and was ignored: {self.storage_path}")
             self.safe_cases = {}
             return
         self.safe_cases = data if isinstance(data, dict) else {}
@@ -466,12 +466,12 @@ class ToolMemory:
         return self.safe_cases.get(tool_signature(tool_name, args))
 
     def get_safe_cases_by_tool(self, tool_name, top_k=2):
-        """按工具名检索安全记录，返回最近 top_k 条"""
+        """Return the most recent top_k safe records for a tool."""
         matches = [
             case for case in self.safe_cases.values()
             if case.get("tool") == tool_name
         ]
-        # 按存入顺序取最后 top_k 条（字典保持插入顺序）
+        # Take the latest top_k entries in insertion order.
         return matches[-top_k:] if matches else []
 
     def store_safe_case(self, tool_name, args, exec_result, safety_reason):
@@ -508,7 +508,7 @@ def get_plan_memory_store():
 
 
 def _build_trajectory_view(session, score, meta=None):
-    """把一个 session 转成轨迹视图，只展示真实工具调用链"""
+    """Convert a session into a trajectory view that only shows real tool calls."""
     store = get_plan_memory_store()
     task = session[0].get("task", "") if session else ""
     real_steps = store._extract_real_tool_steps(session)
@@ -550,9 +550,9 @@ def memory_for_plan(task_query, service_id=None, environment=None):
 
     if not trajectories:
         if _plan_memory_disabled_reason:
-            summary = f"计划记忆已降级为空召回：{_plan_memory_disabled_reason}"
+            summary = f"Plan memory fell back to empty recall: {_plan_memory_disabled_reason}"
         else:
-            summary = "向量库中没有召回到相关历史轨迹。"
+            summary = "No relevant historical trajectories were recalled from the vector store."
     else:
         top_score = trajectories[0]["score"]
         status_counts = {}
@@ -560,8 +560,8 @@ def memory_for_plan(task_query, service_id=None, environment=None):
             s = t["final_status"]
             status_counts[s] = status_counts.get(s, 0) + 1
         summary = (
-            f"轨迹级向量检索召回 {len(trajectories)} 条相似历史任务，"
-            f"最高相似度 {top_score:.4f}，最终状态分布: {status_counts}"
+            f"Trajectory-level vector retrieval recalled {len(trajectories)} similar historical tasks, "
+            f"top similarity {top_score:.4f}, final status distribution: {status_counts}"
         )
 
     return {
@@ -588,20 +588,20 @@ def sanitize_safe_case_for_observation(safe_case):
 
 
 def memory_for_tool(tool_name):
-    """按工具名检索安全记录，返回最近 2 条"""
+    """Return the two most recent safe records for a tool."""
     cases = tool_memory.get_safe_cases_by_tool(tool_name, top_k=2)
     return {
         "hit": len(cases) > 0,
         "safe_cases": [sanitize_safe_case_for_observation(c) for c in cases],
-        "summary": f"找到 {len(cases)} 条 {tool_name} 的安全调用记录。"
+        "summary": f"Found {len(cases)} safe call record(s) for {tool_name}."
         if cases
-        else f"没有找到 {tool_name} 的安全调用记录。",
+        else f"No safe call records found for {tool_name}.",
     }
 
 
 def sanitize_tool_memory_result(tool_memory_result):
     tool_memory_result = tool_memory_result or {}
-    # 兼容新格式（safe_cases 列表）和旧格式（safe_case 单条）
+    # Support both the new format (safe_cases list) and the old format (single safe_case).
     if "safe_cases" in tool_memory_result:
         return {
             "hit": bool(tool_memory_result.get("hit")),
@@ -619,7 +619,7 @@ def sanitize_tool_memory_result(tool_memory_result):
 
 
 def compose_task_query(task_text, known_context=None, authorization=None):
-    lines = [f"当前任务: {task_text}"]
+    lines = [f"Current task: {task_text}"]
     known_context = [
         summarize_result_for_memory(item, limit=120)
         for item in (known_context or [])
@@ -631,9 +631,9 @@ def compose_task_query(task_text, known_context=None, authorization=None):
         if str(item).strip()
     ]
     if known_context:
-        lines.append(f"已知上下文: {' | '.join(known_context[:6])}")
+        lines.append(f"Known context: {' | '.join(known_context[:6])}")
     if authorization:
-        lines.append(f"授权状态: {' | '.join(authorization[:4])}")
+        lines.append(f"Authorization state: {' | '.join(authorization[:4])}")
     return "\n".join(lines)
 
 
@@ -648,13 +648,13 @@ def build_task_memory_query_from_case(case):
 
 
 def sanitize_plan_memory_result(plan_memory_result, current_case=None):
-    """兼容旧数据的 plan memory 结果清洗"""
+    """Normalize plan memory results while remaining compatible with older data."""
     plan_memory_result = dict(plan_memory_result or {})
-    # 新格式用 trajectories，旧格式用 cases，都保留
+    # Keep both the new trajectories field and the legacy cases field if present.
     plan_memory_result.pop("task_context", None)
     plan_memory_result.pop("current_step", None)
     if not plan_memory_result.get("task_query"):
         plan_memory_result["task_query"] = build_task_memory_query_from_case(current_case)
     if not plan_memory_result.get("summary"):
-        plan_memory_result["summary"] = "向量库中没有召回到相关历史轨迹。"
+        plan_memory_result["summary"] = "No relevant historical trajectories were recalled from the vector store."
     return plan_memory_result

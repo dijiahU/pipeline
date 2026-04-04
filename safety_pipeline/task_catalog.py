@@ -28,7 +28,7 @@ class TaskSpec:
 
 def _load_yaml(path):
     if yaml is None:
-        raise RuntimeError("pyyaml 未安装。pip install pyyaml")
+        raise RuntimeError("pyyaml is not installed. Run: pip install pyyaml")
     with open(path, "r", encoding="utf-8") as fh:
         return yaml.safe_load(fh) or {}
 

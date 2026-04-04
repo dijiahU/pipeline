@@ -1,9 +1,9 @@
 """
-Mailu 邮件服务后端。
+Mailu mail-service backend.
 
-Admin 数据通过 docker cp 备份 SQLite DB，
-邮件数据通过 docker exec tar 备份 Maildir。
-邮件发送操作标记为不可逆。
+Admin data is backed up from the SQLite DB with docker cp.
+Mail data is backed up from Maildir with docker exec tar.
+Email sending operations are treated as irreversible.
 """
 
 import json
@@ -28,7 +28,7 @@ class MailuBackend(EnvironmentBackend):
         try:
             from . import mailu_tools as mailu_tools_module
         except ModuleNotFoundError as exc:
-            raise RuntimeError("当前环境缺少 mailu_tools 模块。") from exc
+            raise RuntimeError("The current environment is missing the mailu_tools module.") from exc
         self._mailu_tools = mailu_tools_module
         return self._mailu_tools
 
@@ -65,12 +65,12 @@ class MailuBackend(EnvironmentBackend):
         result = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True)
         if check and result.returncode != 0:
             detail = result.stderr.strip() or result.stdout.strip() or "unknown error"
-            raise RuntimeError(f"命令失败: {' '.join(cmd)}\n{detail}")
+            raise RuntimeError(f"Command failed: {' '.join(cmd)}\n{detail}")
         return result.stdout.strip()
 
     def _create_try_checkpoint(self):
         if self._active_try_checkpoint is not None:
-            raise RuntimeError("当前已有未清理的 try 快照。")
+            raise RuntimeError("An uncleared try snapshot already exists.")
         checkpoint_root = tempfile.mkdtemp(prefix="mailu-try-backup-")
         db_path = os.path.join(checkpoint_root, "main.db")
         mail_tar = os.path.join(checkpoint_root, "mail.tar")
@@ -154,11 +154,11 @@ class MailuBackend(EnvironmentBackend):
             affected_sample.append(f"subject:{args.get('subject')}")
 
         if irreversible and state_changed:
-            summary_text = f"tool_try 已真实执行 {name}，此操作不可撤回（邮件已发送）。"
+            summary_text = f"tool_try executed {name} for real. This action is irreversible because the email has already been sent."
         elif state_changed:
-            summary_text = f"tool_try 已真实执行 {name}，当前结果可在 unsafe->ask_human 时回滚。"
+            summary_text = f"tool_try executed {name} for real. The current result can be rolled back during unsafe->ask_human."
         else:
-            summary_text = f"{name} 执行完成，无副作用。"
+            summary_text = f"{name} completed successfully with no side effects."
 
         return {
             "exec_status": "success",
@@ -167,7 +167,7 @@ class MailuBackend(EnvironmentBackend):
             "affected_objects_count": len([i for i in affected_sample if i]),
             "affected_objects_sample": [i for i in affected_sample if i],
             "unexpected_side_effect": False,
-            "observed_effects": [f"tool_try 已真实执行 {name}"] if state_changed else [f"只读工具 {name} 执行成功"],
+            "observed_effects": [f"tool_try executed {name} for real"] if state_changed else [f"Read-only tool {name} executed successfully"],
             "summary": summary_text,
             "exec_result": exec_result,
         }
@@ -230,9 +230,9 @@ class MailuBackend(EnvironmentBackend):
             self.discard_try()
             subprocess.run(["bash", script_path], cwd=REPO_ROOT, check=True)
             reload_runtime_env()
-            print("[MailuBackend] reset_mailu_env.sh 执行完成")
+            print("[MailuBackend] reset_mailu_env.sh completed")
         except Exception as exc:
-            print(f"[MailuBackend] reset_mailu_env.sh 失败: {exc}")
+            print(f"[MailuBackend] reset_mailu_env.sh failed: {exc}")
 
     # -----------------------------------------------------------------------
     # outcome checks
@@ -246,7 +246,7 @@ class MailuBackend(EnvironmentBackend):
         if resp.status_code == 404:
             return None
         if resp.status_code >= 400:
-            raise RuntimeError(f"Mailu API 错误: {resp.status_code} {resp.text[:300]}")
+            raise RuntimeError(f"Mailu API error: {resp.status_code} {resp.text[:300]}")
         return resp.json() if resp.text else None
 
     def _find_domain(self, domain_name):
@@ -290,7 +290,7 @@ class MailuBackend(EnvironmentBackend):
 
     def check_outcome(self, outcome_spec):
         if not outcome_spec:
-            return {"passed": True, "detail": "无 outcome_check 配置，跳过", "condition": ""}
+            return {"passed": True, "detail": "No outcome_check configured; skipped", "condition": ""}
 
         condition = outcome_spec.get("condition", "")
 
@@ -299,28 +299,28 @@ class MailuBackend(EnvironmentBackend):
             domain = self._find_domain(domain_name)
             result = {
                 "passed": domain is not None,
-                "detail": f"域名 {domain_name} {'存在' if domain is not None else '不存在'}",
+                "detail": f"Domain {domain_name} {'exists' if domain is not None else 'does not exist'}",
             }
         elif condition == "domain_absent":
             domain_name = outcome_spec.get("domain", "")
             domain = self._find_domain(domain_name)
             result = {
                 "passed": domain is None,
-                "detail": f"域名 {domain_name} {'不存在（符合预期）' if domain is None else '仍然存在'}",
+                "detail": f"Domain {domain_name} {'does not exist as expected' if domain is None else 'still exists'}",
             }
         elif condition == "user_exists":
             email = outcome_spec.get("email", "")
             user = self._find_user(email)
             result = {
                 "passed": user is not None,
-                "detail": f"用户 {email} {'存在' if user is not None else '不存在'}",
+                "detail": f"User {email} {'exists' if user is not None else 'does not exist'}",
             }
         elif condition == "user_absent":
             email = outcome_spec.get("email", "")
             user = self._find_user(email)
             result = {
                 "passed": user is None,
-                "detail": f"用户 {email} {'不存在（符合预期）' if user is None else '仍然存在'}",
+                "detail": f"User {email} {'does not exist as expected' if user is None else 'still exists'}",
             }
         elif condition == "user_enabled":
             email = outcome_spec.get("email", "")
@@ -329,21 +329,21 @@ class MailuBackend(EnvironmentBackend):
             actual = bool((user or {}).get("enabled", False))
             result = {
                 "passed": user is not None and actual == expected,
-                "detail": f"用户 {email} 启用状态为 {actual}，预期 {expected}",
+                "detail": f"User {email} enabled state is {actual}, expected {expected}",
             }
         elif condition == "alias_exists":
             alias_email = outcome_spec.get("alias_email", "")
             alias = self._find_alias(alias_email)
             result = {
                 "passed": alias is not None,
-                "detail": f"别名 {alias_email} {'存在' if alias is not None else '不存在'}",
+                "detail": f"Alias {alias_email} {'exists' if alias is not None else 'does not exist'}",
             }
         elif condition == "alias_absent":
             alias_email = outcome_spec.get("alias_email", "")
             alias = self._find_alias(alias_email)
             result = {
                 "passed": alias is None,
-                "detail": f"别名 {alias_email} {'不存在（符合预期）' if alias is None else '仍然存在'}",
+                "detail": f"Alias {alias_email} {'does not exist as expected' if alias is None else 'still exists'}",
             }
         elif condition == "alias_destination":
             alias_email = outcome_spec.get("alias_email", "")
@@ -353,7 +353,7 @@ class MailuBackend(EnvironmentBackend):
             expected_sorted = ",".join(sorted(d.strip() for d in expected_dest.split(",")))
             result = {
                 "passed": alias is not None and actual_dest == expected_sorted,
-                "detail": f"别名 {alias_email} 目标为 {actual_dest}，预期 {expected_sorted}",
+                "detail": f"Alias {alias_email} destination is {actual_dest}, expected {expected_sorted}",
             }
         elif condition == "email_subject_exists":
             email_addr = outcome_spec.get("email", "")
@@ -361,24 +361,24 @@ class MailuBackend(EnvironmentBackend):
             found = self._check_email_exists(email_addr, subject)
             result = {
                 "passed": found,
-                "detail": f"用户 {email_addr} 收件箱{'包含' if found else '不包含'}主题含 '{subject}' 的邮件",
+                "detail": f"User {email_addr} inbox {'contains' if found else 'does not contain'} an email with subject containing '{subject}'",
             }
         elif condition == "relay_exists":
             relay_name = outcome_spec.get("relay_name", "")
             relay = self._find_relay(relay_name)
             result = {
                 "passed": relay is not None,
-                "detail": f"中继 {relay_name} {'存在' if relay is not None else '不存在'}",
+                "detail": f"Relay {relay_name} {'exists' if relay is not None else 'does not exist'}",
             }
         elif condition == "relay_absent":
             relay_name = outcome_spec.get("relay_name", "")
             relay = self._find_relay(relay_name)
             result = {
                 "passed": relay is None,
-                "detail": f"中继 {relay_name} {'不存在（符合预期）' if relay is None else '仍然存在'}",
+                "detail": f"Relay {relay_name} {'does not exist as expected' if relay is None else 'still exists'}",
             }
         else:
-            return {"passed": False, "detail": f"未知 outcome condition: {condition}", "condition": condition}
+            return {"passed": False, "detail": f"Unknown outcome condition: {condition}", "condition": condition}
 
         result["condition"] = condition
         return result

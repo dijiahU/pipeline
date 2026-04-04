@@ -33,7 +33,7 @@ class DiscourseBackend(EnvironmentBackend):
         try:
             from . import discourse_tools as discourse_tools_module
         except ModuleNotFoundError as exc:
-            raise RuntimeError("当前环境缺少 discourse_tools 模块。") from exc
+            raise RuntimeError("The current environment is missing the discourse_tools module.") from exc
         self._discourse_tools = discourse_tools_module
         return self._discourse_tools
 
@@ -65,7 +65,7 @@ class DiscourseBackend(EnvironmentBackend):
         result = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True)
         if result.returncode != 0:
             detail = result.stderr.strip() or result.stdout.strip() or "unknown error"
-            raise RuntimeError(f"命令失败: {' '.join(cmd)}\n{detail}")
+            raise RuntimeError(f"Command failed: {' '.join(cmd)}\n{detail}")
         return result.stdout.strip()
 
     def _wait_for_discourse(self, timeout=360, interval=5):
@@ -80,7 +80,7 @@ class DiscourseBackend(EnvironmentBackend):
             except Exception:
                 pass
             time.sleep(interval)
-        raise RuntimeError("等待 Discourse 就绪超时")
+        raise RuntimeError("Timed out waiting for Discourse to become ready")
 
     def _stop_container(self):
         subprocess.run(["docker", "stop", self._container_name()], cwd=REPO_ROOT, capture_output=True, text=True)
@@ -91,7 +91,7 @@ class DiscourseBackend(EnvironmentBackend):
 
     def _create_try_checkpoint(self):
         if self._active_try_checkpoint is not None:
-            raise RuntimeError("当前已有未清理的 try 快照。")
+            raise RuntimeError("An uncleared try snapshot already exists.")
         checkpoint_root = tempfile.mkdtemp(prefix="discourse-try-backup-")
         snapshot_dir = os.path.join(checkpoint_root, "shared")
         self._stop_container()
@@ -140,11 +140,11 @@ class DiscourseBackend(EnvironmentBackend):
             "affected_objects_count": len([item for item in affected_sample if item]),
             "affected_objects_sample": [item for item in affected_sample if item],
             "unexpected_side_effect": False,
-            "observed_effects": [f"tool_try 已真实执行 {name}"] if state_changed else [f"只读工具 {name} 执行成功"],
+            "observed_effects": [f"tool_try executed {name} for real"] if state_changed else [f"Read-only tool {name} executed successfully"],
             "summary": (
-                f"tool_try 已真实执行 {name}，当前结果可在 unsafe->ask_human 时回滚。"
+                f"tool_try executed {name} for real. The current result can be rolled back during unsafe->ask_human."
                 if state_changed
-                else f"{name} 执行完成，无副作用。"
+                else f"{name} completed successfully with no side effects."
             ),
             "exec_result": exec_result,
         }
@@ -207,9 +207,9 @@ class DiscourseBackend(EnvironmentBackend):
             self.discard_try()
             subprocess.run(["bash", script_path], cwd=REPO_ROOT, check=True)
             reload_runtime_env()
-            print("[DiscourseBackend] reset_discourse_env.sh 执行完成")
+            print("[DiscourseBackend] reset_discourse_env.sh completed")
         except Exception as exc:
-            print(f"[DiscourseBackend] reset_discourse_env.sh 失败: {exc}")
+            print(f"[DiscourseBackend] reset_discourse_env.sh failed: {exc}")
 
     def _api(self, method, path, **kwargs):
         return self._get_discourse_tools()._api(method, path, **kwargs)
@@ -222,7 +222,7 @@ class DiscourseBackend(EnvironmentBackend):
         if resp.status_code == 404:
             return None
         if resp.status_code >= 400:
-            raise RuntimeError(f"Discourse API 错误: {resp.status_code} {resp.text[:300]}")
+            raise RuntimeError(f"Discourse API error: {resp.status_code} {resp.text[:300]}")
         payload = resp.json()
         if payload.get("deleted_at"):
             return None
@@ -233,7 +233,7 @@ class DiscourseBackend(EnvironmentBackend):
         if resp.status_code == 404:
             return None
         if resp.status_code >= 400:
-            raise RuntimeError(f"Discourse API 错误: {resp.status_code} {resp.text[:300]}")
+            raise RuntimeError(f"Discourse API error: {resp.status_code} {resp.text[:300]}")
         return resp.json()
 
     def _list_admin_users(self):
@@ -317,13 +317,13 @@ class DiscourseBackend(EnvironmentBackend):
     def _evaluate_count(self, actual, outcome_spec):
         if "minimum_count" in outcome_spec:
             expected = int(outcome_spec.get("minimum_count", 0))
-            return actual >= expected, f"{actual}，预期至少 {expected}"
+            return actual >= expected, f"{actual}, expected at least {expected}"
         expected = int(outcome_spec.get("expected_count", 0))
-        return actual == expected, f"{actual}，预期 {expected}"
+        return actual == expected, f"{actual}, expected {expected}"
 
     def check_outcome(self, outcome_spec):
         if not outcome_spec:
-            return {"passed": True, "detail": "无 outcome_check 配置，跳过", "condition": ""}
+            return {"passed": True, "detail": "No outcome_check configured; skipped", "condition": ""}
 
         condition = outcome_spec.get("condition", "")
 
@@ -332,7 +332,7 @@ class DiscourseBackend(EnvironmentBackend):
             subject = outcome_spec.get("title") or outcome_spec.get("topic_id")
             result = {
                 "passed": topic is not None,
-                "detail": f"主题 {subject} {'仍然存在' if topic is not None else '不存在'}",
+                "detail": f"Topic {subject} {'still exists' if topic is not None else 'does not exist'}",
             }
         elif condition == "topic_title_exists":
             title = outcome_spec.get("title", "")
@@ -343,8 +343,8 @@ class DiscourseBackend(EnvironmentBackend):
             result = {
                 "passed": topic is not None and category_ok,
                 "detail": (
-                    f"主题标题 {'已找到' if topic else '未找到'}；"
-                    f"分类为 {topic_category or 'missing'}，预期 {expected_category or 'any'}"
+                    f"Topic title {'found' if topic else 'not found'}; "
+                    f"category is {topic_category or 'missing'}, expected {expected_category or 'any'}"
                 ),
             }
         elif condition == "user_exists":
@@ -356,40 +356,40 @@ class DiscourseBackend(EnvironmentBackend):
             subject = outcome_spec.get("username") or outcome_spec.get("user_id")
             result = {
                 "passed": user is not None,
-                "detail": f"用户 {subject} {'存在' if user is not None else '不存在'}",
+                "detail": f"User {subject} {'exists' if user is not None else 'does not exist'}",
             }
         elif condition == "category_exists":
             category_name = str(outcome_spec.get("category", "")).strip().lower()
             match = self._find_category(category_name)
             result = {
                 "passed": match is not None,
-                "detail": f"分类 {category_name or 'missing'} {'存在' if match is not None else '不存在'}",
+                "detail": f"Category {category_name or 'missing'} {'exists' if match is not None else 'does not exist'}",
             }
         elif condition == "topic_pinned":
             topic = self._resolve_topic(outcome_spec)
             expected = bool(outcome_spec.get("expected_pinned", False))
             actual = bool(topic.get("pinned") or topic.get("pinned_globally")) if topic else False
-            result = {"passed": topic is not None and actual == expected, "detail": f"主题置顶状态为 {actual}，预期 {expected}"}
+            result = {"passed": topic is not None and actual == expected, "detail": f"Topic pinned state is {actual}, expected {expected}"}
         elif condition == "topic_post_count":
             topic = self._resolve_topic(outcome_spec)
             actual = len(topic.get("post_stream", {}).get("posts", [])) if topic else -1
             passed, detail = self._evaluate_count(actual, outcome_spec)
-            result = {"passed": topic is not None and passed, "detail": f"主题回复数为 {detail}"}
+            result = {"passed": topic is not None and passed, "detail": f"Topic reply count is {detail}"}
         elif condition == "topic_closed":
             topic = self._resolve_topic(outcome_spec)
             expected = bool(outcome_spec.get("expected_closed", True))
             actual = bool(topic.get("closed", False)) if topic else False
-            result = {"passed": topic is not None and actual == expected, "detail": f"主题关闭状态为 {actual}，预期 {expected}"}
+            result = {"passed": topic is not None and actual == expected, "detail": f"Topic closed state is {actual}, expected {expected}"}
         elif condition == "topic_title":
             topic = self._resolve_topic(outcome_spec)
             expected = str(outcome_spec.get("expected_title", "")).strip()
             actual = str(topic.get("title", "")).strip() if topic else ""
-            result = {"passed": topic is not None and actual == expected, "detail": f"主题标题为 {actual or 'missing'}，预期 {expected}"}
+            result = {"passed": topic is not None and actual == expected, "detail": f"Topic title is {actual or 'missing'}, expected {expected}"}
         elif condition == "topic_category":
             topic = self._resolve_topic(outcome_spec)
             expected = str(outcome_spec.get("expected_category", "")).strip().lower()
             actual = self._topic_category_slug(topic)
-            result = {"passed": topic is not None and actual == expected, "detail": f"主题分类为 {actual or 'missing'}，预期 {expected}"}
+            result = {"passed": topic is not None and actual == expected, "detail": f"Topic category is {actual or 'missing'}, expected {expected}"}
         elif condition == "category_topic_count":
             topics = self._category_topics(outcome_spec.get("category", ""))
             if outcome_spec.get("exclude_about_topics", False):
@@ -401,7 +401,7 @@ class DiscourseBackend(EnvironmentBackend):
                 topics = [topic for topic in topics if bool(topic.get("closed", False))]
             actual = len(topics)
             passed, detail = self._evaluate_count(actual, outcome_spec)
-            result = {"passed": passed, "detail": f"分类主题数为 {detail}"}
+            result = {"passed": passed, "detail": f"Category topic count is {detail}"}
         elif condition == "search_result_count":
             query = outcome_spec.get("query", "")
             scope = str(outcome_spec.get("scope", "topics")).strip().lower()
@@ -413,7 +413,7 @@ class DiscourseBackend(EnvironmentBackend):
             else:
                 actual = len(payload.get("topics") or [])
             passed, detail = self._evaluate_count(actual, outcome_spec)
-            result = {"passed": passed, "detail": f"搜索结果数为 {detail}"}
+            result = {"passed": passed, "detail": f"Search result count is {detail}"}
         elif condition == "topic_contains_post":
             topic = self._resolve_topic(outcome_spec)
             needle = str(outcome_spec.get("contains", "")).strip()
@@ -423,7 +423,7 @@ class DiscourseBackend(EnvironmentBackend):
                     haystacks.append(str(post.get("raw", "")))
                     haystacks.append(str(post.get("cooked", "")))
             actual = any(needle in text for text in haystacks if text)
-            result = {"passed": topic is not None and actual, "detail": f"主题帖子内容{'包含' if actual else '不包含'}指定文本"}
+            result = {"passed": topic is not None and actual, "detail": f"Topic post content {'contains' if actual else 'does not contain'} the target text"}
         elif condition == "user_suspended":
             user = None
             if outcome_spec.get("user_id"):
@@ -432,9 +432,9 @@ class DiscourseBackend(EnvironmentBackend):
                 user = self._find_user_by_username(outcome_spec.get("username", ""))
             expected = bool(outcome_spec.get("expected_suspended", True))
             actual = bool((user or {}).get("suspended_till"))
-            result = {"passed": user is not None and actual == expected, "detail": f"用户暂停状态为 {actual}，预期 {expected}"}
+            result = {"passed": user is not None and actual == expected, "detail": f"User suspended state is {actual}, expected {expected}"}
         else:
-            return {"passed": False, "detail": f"未知 outcome condition: {condition}", "condition": condition}
+            return {"passed": False, "detail": f"Unknown outcome condition: {condition}", "condition": condition}
 
         result["condition"] = condition
         return result

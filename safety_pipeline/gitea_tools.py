@@ -1,8 +1,8 @@
 """
-Gitea API 工具注册 — 服务化工具架构标准
+Gitea API tool registration - service tool architecture standard
 
-本模块直接通过 HTTP 调用 Gitea API v1。
-公共接口（给 environment.py 调用）:
+This module calls the Gitea API v1 directly over HTTP.
+Public interfaces (used by environment.py):
   get_all_schemas() -> list
   call_tool(name, args) -> str
   get_tool_names() -> list
@@ -34,7 +34,7 @@ _REGISTRY = ServiceToolRegistry(service_id="gitea")
 
 
 def gitea_tool(name, description, params, required=None, is_write=False, group="", short_description=""):
-    """装饰器：注册 Gitea 工具到 _REGISTRY"""
+    """Decorator: register a Gitea tool in _REGISTRY."""
     return _REGISTRY.register(
         name=name,
         description=description,
@@ -68,7 +68,7 @@ def get_tool_summary():
 
 def _require_requests():
     if requests is None:
-        raise ToolExecutionError("requests 库未安装，无法调用 Gitea API。pip install requests")
+        raise ToolExecutionError("The requests package is not installed, so the Gitea API cannot be called. Run: pip install requests")
 
 
 def _api(method, path, **kwargs):
@@ -79,13 +79,13 @@ def _api(method, path, **kwargs):
     try:
         return requests.request(method, url, headers=headers, timeout=30, **kwargs)
     except requests.RequestException as exc:
-        raise ToolExecutionError(f"[Gitea 请求失败] {type(exc).__name__}: {exc}") from exc
+        raise ToolExecutionError(f"[Gitea Request Failed] {type(exc).__name__}: {exc}") from exc
 
 
 def _api_json(method, path, **kwargs):
     resp = _api(method, path, **kwargs)
     if resp.status_code >= 400:
-        raise ToolExecutionError(f"[Gitea API 错误] {resp.status_code}: {resp.text[:500]}")
+        raise ToolExecutionError(f"[Gitea API Error] {resp.status_code}: {resp.text[:500]}")
     if not resp.text:
         return None
     try:
@@ -118,7 +118,7 @@ def _list_projects_raw(limit=100):
 def _project_ref(project_id):
     value = str(project_id).strip()
     if not value:
-        raise ToolExecutionError("[错误] project_id 不能为空")
+        raise ToolExecutionError("[Error] project_id cannot be empty")
 
     if "/" in value:
         owner, repo = value.split("/", 1)
@@ -133,7 +133,7 @@ def _project_ref(project_id):
                     owner, repo_name = full_name.split("/", 1)
                     return owner, repo_name
                 return (repo.get("owner") or {}).get("login", _config["owner"]), repo.get("name", value)
-        raise ToolExecutionError(f"[错误] 找不到 id={project_id} 的 Gitea 仓库")
+        raise ToolExecutionError(f"[Error] Could not find a Gitea repository with id={project_id}")
 
     return _config["owner"], value
 
@@ -166,7 +166,7 @@ def _list_action_jobs(owner, repo, per_page=20):
         if resp.status_code == 404:
             continue
         if resp.status_code >= 400:
-            raise ToolExecutionError(f"[Gitea API 错误] {resp.status_code}: {resp.text[:500]}")
+            raise ToolExecutionError(f"[Gitea API Error] {resp.status_code}: {resp.text[:500]}")
         payload = resp.json() if resp.text else []
         jobs = _extract_action_jobs(payload)
         if jobs:
@@ -179,7 +179,7 @@ def _branch_protection_map(owner, repo):
     if resp.status_code == 404:
         return {}
     if resp.status_code >= 400:
-        raise ToolExecutionError(f"[Gitea API 错误] {resp.status_code}: {resp.text[:500]}")
+        raise ToolExecutionError(f"[Gitea API Error] {resp.status_code}: {resp.text[:500]}")
     protections = resp.json() if resp.text else []
     return {
         item.get("branch_name") or item.get("rule_name"): item
@@ -213,7 +213,7 @@ def _read_contents(owner, repo, file_path, ref="main"):
     encoded_file = "/".join(_encode_path(part) for part in str(file_path).split("/"))
     data = _api_json("GET", f"repos/{owner}/{repo}/contents/{encoded_file}", params={"ref": ref})
     if isinstance(data, list):
-        raise ToolExecutionError(f"[错误] {file_path} 是目录，不是文件")
+        raise ToolExecutionError(f"[Error] {file_path} is a directory, not a file")
     return data
 
 
@@ -225,7 +225,7 @@ def _list_directory_contents(owner, repo, directory_path="", ref="main"):
         base_path = f"{base_path}/{encoded_path}"
     data = _api_json("GET", base_path, params={"ref": ref})
     if isinstance(data, dict):
-        raise ToolExecutionError(f"[错误] {directory_path or '/'} 不是目录")
+        raise ToolExecutionError(f"[Error] {directory_path or '/'} is not a directory")
     return data if isinstance(data, list) else []
 
 
@@ -271,10 +271,10 @@ def _create_branch_via_api(owner, repo, branch_name, from_ref):
         resp = _api("POST", f"repos/{owner}/{repo}/branches", json=payload)
         if resp.status_code < 400:
             return resp.json() if resp.text else {"name": branch_name}
-        last_error = f"[Gitea API 错误] {resp.status_code}: {resp.text[:500]}"
+        last_error = f"[Gitea API Error] {resp.status_code}: {resp.text[:500]}"
         if resp.status_code not in (400, 404, 409, 422):
             raise ToolExecutionError(last_error)
-    raise ToolExecutionError(last_error or "[Gitea API 错误] 创建分支失败")
+    raise ToolExecutionError(last_error or "[Gitea API Error] Failed to create branch")
 
 
 def _list_repo_tags_raw(owner, repo, per_page=20):
@@ -284,15 +284,15 @@ def _list_repo_tags_raw(owner, repo, per_page=20):
 
 @gitea_tool(
     "list_projects",
-    "列出 Gitea 上所有可见项目。",
+    "List all visible projects on Gitea.",
     {
         "per_page": {
             "type": "integer",
-            "description": "每页返回数量，默认 20，最大 100",
+            "description": "Number of results per page. Default 20, maximum 100.",
         },
     },
     group="repo_info",
-    short_description="列出当前可见的仓库项目",
+    short_description="List currently visible repositories",
 )
 def list_projects(per_page=20):
     repos = _list_projects_raw(limit=per_page)
@@ -312,15 +312,15 @@ def list_projects(per_page=20):
 
 @gitea_tool(
     "get_project",
-    "获取指定 Gitea 项目的详细信息。",
+    "Get detailed information for a specific Gitea project.",
     {
         "project_id": {
             "type": "string",
-            "description": "项目 ID、仓库名，或路径（如 'root/openclaw'）",
+            "description": "Project ID, repository name, or path (for example 'root/openclaw').",
         },
     },
     group="repo_info",
-    short_description="读取单个仓库的详细元数据",
+    short_description="Read detailed metadata for one repository",
 )
 def get_project(project_id):
     data = _repo_meta(project_id)
@@ -329,19 +329,19 @@ def get_project(project_id):
 
 @gitea_tool(
     "list_branches",
-    "列出指定项目的所有分支。",
+    "List all branches in the specified project.",
     {
         "project_id": {
             "type": "string",
-            "description": "项目 ID 或路径",
+            "description": "Project ID or path.",
         },
         "per_page": {
             "type": "integer",
-            "description": "每页返回数量，默认 20",
+            "description": "Number of results per page. Default 20.",
         },
     },
     group="branch_ops",
-    short_description="列出仓库分支及默认分支信息",
+    short_description="List repository branches and default branch info",
 )
 def list_branches(project_id, per_page=20):
     owner, repo = _project_ref(project_id)
@@ -365,24 +365,24 @@ def list_branches(project_id, per_page=20):
 
 @gitea_tool(
     "list_issues",
-    "列出指定项目的 issue。",
+    "List issues in the specified project.",
     {
         "project_id": {
             "type": "string",
-            "description": "项目 ID 或路径",
+            "description": "Project ID or path.",
         },
         "state": {
             "type": "string",
             "enum": ["opened", "closed", "all"],
-            "description": "issue 状态筛选，默认 opened",
+            "description": "Issue state filter. Default is opened.",
         },
         "per_page": {
             "type": "integer",
-            "description": "每页返回数量，默认 20",
+            "description": "Number of results per page. Default 20.",
         },
     },
     group="issue_tracking",
-    short_description="按状态列出仓库 issue",
+    short_description="List repository issues by state",
 )
 def list_issues(project_id, state="opened", per_page=20):
     owner, repo = _project_ref(project_id)
@@ -412,24 +412,24 @@ def list_issues(project_id, state="opened", per_page=20):
 
 @gitea_tool(
     "list_merge_requests",
-    "列出指定项目的 Pull Request。",
+    "List pull requests in the specified project.",
     {
         "project_id": {
             "type": "string",
-            "description": "项目 ID 或路径",
+            "description": "Project ID or path.",
         },
         "state": {
             "type": "string",
             "enum": ["opened", "closed", "merged", "all"],
-            "description": "PR 状态筛选，默认 opened",
+            "description": "Pull request state filter. Default is opened.",
         },
         "per_page": {
             "type": "integer",
-            "description": "每页返回数量，默认 20",
+            "description": "Number of results per page. Default 20.",
         },
     },
     group="pull_requests",
-    short_description="按状态列出仓库 Pull Request",
+    short_description="List repository pull requests by state",
 )
 def list_merge_requests(project_id, state="opened", per_page=20):
     owner, repo = _project_ref(project_id)
@@ -460,23 +460,23 @@ def list_merge_requests(project_id, state="opened", per_page=20):
 
 @gitea_tool(
     "read_repo_file",
-    "读取仓库中指定分支上的文件内容。",
+    "Read a file from a specific branch in the repository.",
     {
         "project_id": {
             "type": "string",
-            "description": "项目 ID 或路径",
+            "description": "Project ID or path.",
         },
         "file_path": {
             "type": "string",
-            "description": "文件在仓库中的路径（如 'src/main.py'）",
+            "description": "Path of the file in the repository (for example 'src/main.py').",
         },
         "ref": {
             "type": "string",
-            "description": "分支名或 commit SHA，默认 main",
+            "description": "Branch name or commit SHA. Default is main.",
         },
     },
     group="repo_content",
-    short_description="读取仓库文件内容",
+    short_description="Read repository file contents",
 )
 def read_repo_file(project_id, file_path, ref="main"):
     owner, repo = _project_ref(project_id)
@@ -489,11 +489,11 @@ def read_repo_file(project_id, file_path, ref="main"):
 
 @gitea_tool(
     "read_pipeline_log",
-    "读取 Actions job 的执行日志。",
+    "Read the execution log for an Actions job.",
     {
         "project_id": {
             "type": "string",
-            "description": "项目 ID 或路径",
+            "description": "Project ID or path.",
         },
         "job_id": {
             "type": "string",
@@ -501,31 +501,31 @@ def read_repo_file(project_id, file_path, ref="main"):
         },
     },
     group="ci_cd",
-    short_description="读取指定 CI job 的日志",
+    short_description="Read the log for a specific CI job",
 )
 def read_pipeline_log(project_id, job_id):
     owner, repo = _project_ref(project_id)
     resp = _api("GET", f"repos/{owner}/{repo}/actions/jobs/{job_id}/logs")
     if resp.status_code >= 400:
-        raise ToolExecutionError(f"[Gitea API 错误] {resp.status_code}: {resp.text[:500]}")
+        raise ToolExecutionError(f"[Gitea API Error] {resp.status_code}: {resp.text[:500]}")
     return resp.text[:5000]
 
 
 @gitea_tool(
     "list_pipeline_jobs",
-    "列出仓库最近的 Actions / CI job。",
+    "List recent Actions / CI jobs in the repository.",
     {
         "project_id": {
             "type": "string",
-            "description": "项目 ID 或路径",
+            "description": "Project ID or path.",
         },
         "per_page": {
             "type": "integer",
-            "description": "返回数量，默认 10",
+            "description": "Number of results to return. Default 10.",
         },
     },
     group="ci_cd",
-    short_description="列出最近的 CI 或 Actions 任务",
+    short_description="List recent CI or Actions jobs",
 )
 def list_pipeline_jobs(project_id, per_page=10):
     owner, repo = _project_ref(project_id)
@@ -546,15 +546,15 @@ def list_pipeline_jobs(project_id, per_page=10):
 
 @gitea_tool(
     "get_latest_pipeline_log",
-    "读取仓库最近一次 Actions / CI job 的执行日志。",
+    "Read the execution log for the most recent Actions / CI job in the repository.",
     {
         "project_id": {
             "type": "string",
-            "description": "项目 ID 或路径",
+            "description": "Project ID or path.",
         },
     },
     group="ci_cd",
-    short_description="读取最近一次 CI job 的日志摘要",
+    short_description="Read the log summary for the latest CI job",
 )
 def get_latest_pipeline_log(project_id):
     owner, repo = _project_ref(project_id)
@@ -564,7 +564,7 @@ def get_latest_pipeline_log(project_id):
             {
                 "project_id": project_id,
                 "job_found": False,
-                "message": "该仓库当前没有可读取的 Actions / CI job 日志。",
+                "message": "This repository currently has no readable Actions / CI job logs.",
             }
         )
 
@@ -575,7 +575,7 @@ def get_latest_pipeline_log(project_id):
             {
                 "project_id": project_id,
                 "job_found": False,
-                "message": "找到了最近一次 Actions / CI 记录，但缺少可读取日志的 job_id。",
+                "message": "Found the most recent Actions / CI run, but it does not include a readable job_id.",
             }
         )
 
@@ -594,19 +594,19 @@ def get_latest_pipeline_log(project_id):
 
 @gitea_tool(
     "get_branch_protection",
-    "查看指定分支的保护规则。",
+    "View the protection rules for a specific branch.",
     {
         "project_id": {
             "type": "string",
-            "description": "项目 ID 或路径",
+            "description": "Project ID or path.",
         },
         "branch_name": {
             "type": "string",
-            "description": "分支名称",
+            "description": "Branch name.",
         },
     },
     group="branch_ops",
-    short_description="读取分支保护规则",
+    short_description="Read branch protection rules",
 )
 def get_branch_protection(project_id, branch_name):
     owner, repo = _project_ref(project_id)
@@ -616,78 +616,78 @@ def get_branch_protection(project_id, branch_name):
 
 @gitea_tool(
     "delete_branch",
-    "删除指定项目中的单个分支。危险操作，不可逆。",
+    "Delete a branch in the specified project. Dangerous operation; irreversible.",
     {
         "project_id": {
             "type": "string",
-            "description": "项目 ID 或路径",
+            "description": "Project ID or path.",
         },
         "branch_name": {
             "type": "string",
-            "description": "要删除的分支名称",
+            "description": "Name of the branch to delete.",
         },
     },
     is_write=True,
     group="branch_ops",
-    short_description="删除单个非默认分支",
+    short_description="Delete one non-default branch",
 )
 def delete_branch(project_id, branch_name):
     owner, repo = _project_ref(project_id)
     resp = _api("DELETE", f"repos/{owner}/{repo}/branches/{_encode_path(branch_name)}")
     if resp.status_code == 204:
-        return f"分支 '{branch_name}' 已删除。"
+        return f"Branch '{branch_name}' was deleted."
     if resp.status_code >= 400:
-        raise ToolExecutionError(f"[Gitea API 错误] {resp.status_code}: {resp.text[:500]}")
-    return f"分支 '{branch_name}' 删除请求已发送，状态码: {resp.status_code}"
+        raise ToolExecutionError(f"[Gitea API Error] {resp.status_code}: {resp.text[:500]}")
+    return f"Delete request for branch '{branch_name}' was sent. Status code: {resp.status_code}"
 
 
 @gitea_tool(
     "close_issue",
-    "关闭指定项目中的单个 issue。",
+    "Close a single issue in the specified project.",
     {
         "project_id": {
             "type": "string",
-            "description": "项目 ID 或路径",
+            "description": "Project ID or path.",
         },
         "issue_iid": {
             "type": "integer",
-            "description": "Issue 的项目内编号（iid）",
+            "description": "Issue internal ID within the project (iid).",
         },
     },
     is_write=True,
     group="issue_tracking",
-    short_description="关闭单个 issue",
+    short_description="Close one issue",
 )
 def close_issue(project_id, issue_iid):
     owner, repo = _project_ref(project_id)
     resp = _api("PATCH", f"repos/{owner}/{repo}/issues/{issue_iid}", json={"state": "closed"})
     if resp.status_code >= 400:
-        raise ToolExecutionError(f"[Gitea API 错误] {resp.status_code}: {resp.text[:500]}")
+        raise ToolExecutionError(f"[Gitea API Error] {resp.status_code}: {resp.text[:500]}")
     data = resp.json()
-    return f"Issue #{issue_iid} ('{data.get('title', '')}') 已关闭。"
+    return f"Issue #{issue_iid} ('{data.get('title', '')}') was closed."
 
 
 @gitea_tool(
     "update_branch_protection",
-    "修改分支保护规则：添加或移除保护。危险操作，可能影响合并策略和协作流程。",
+    "Update branch protection rules by adding or removing protection. Dangerous operation; may affect merge policies and collaboration flow.",
     {
         "project_id": {
             "type": "string",
-            "description": "项目 ID 或路径",
+            "description": "Project ID or path.",
         },
         "branch_name": {
             "type": "string",
-            "description": "分支名称",
+            "description": "Branch name.",
         },
         "action": {
             "type": "string",
             "enum": ["protect", "unprotect"],
-            "description": "protect=添加保护, unprotect=移除保护",
+            "description": "protect = add protection, unprotect = remove protection.",
         },
     },
     is_write=True,
     group="branch_ops",
-    short_description="添加或移除分支保护规则",
+    short_description="Add or remove branch protection rules",
 )
 def update_branch_protection(project_id, branch_name, action):
     owner, repo = _project_ref(project_id)
@@ -703,30 +703,30 @@ def update_branch_protection(project_id, branch_name, action):
         }
         resp = _api("POST", f"repos/{owner}/{repo}/branch_protections", json=payload)
         if resp.status_code >= 400:
-            raise ToolExecutionError(f"[Gitea API 错误] {resp.status_code}: {resp.text[:500]}")
-        return f"分支 '{branch_name}' 已添加保护。"
+            raise ToolExecutionError(f"[Gitea API Error] {resp.status_code}: {resp.text[:500]}")
+        return f"Protection was added to branch '{branch_name}'."
     if action == "unprotect":
         resp = _api("DELETE", f"repos/{owner}/{repo}/branch_protections/{encoded_branch}")
         if resp.status_code == 204:
-            return f"分支 '{branch_name}' 保护已移除。"
+            return f"Protection was removed from branch '{branch_name}'."
         if resp.status_code >= 400:
-            raise ToolExecutionError(f"[Gitea API 错误] {resp.status_code}: {resp.text[:500]}")
-        return f"分支 '{branch_name}' 保护移除请求已发送，状态码: {resp.status_code}"
+            raise ToolExecutionError(f"[Gitea API Error] {resp.status_code}: {resp.text[:500]}")
+        return f"Remove-protection request for branch '{branch_name}' was sent. Status code: {resp.status_code}"
 
-    raise ToolExecutionError(f"[错误] action 必须是 'protect' 或 'unprotect'，收到: {action}")
+    raise ToolExecutionError(f"[Error] action must be 'protect' or 'unprotect', got: {action}")
 
 
 @gitea_tool(
     "get_repo_settings",
-    "读取仓库的主要设置和能力开关。",
+    "Read the main repository settings and feature flags.",
     {
         "project_id": {
             "type": "string",
-            "description": "项目 ID、仓库名，或路径（如 'root/openclaw'）",
+            "description": "Project ID, repository name, or path (for example 'root/openclaw').",
         },
     },
     group="repo_info",
-    short_description="读取仓库设置和功能开关",
+    short_description="Read repository settings and feature flags",
 )
 def get_repo_settings(project_id):
     data = _repo_meta(project_id)
@@ -750,19 +750,19 @@ def get_repo_settings(project_id):
 
 @gitea_tool(
     "list_repo_tags",
-    "列出仓库当前可见的 tag。",
+    "List currently visible tags in the repository.",
     {
         "project_id": {
             "type": "string",
-            "description": "项目 ID 或路径",
+            "description": "Project ID or path.",
         },
         "per_page": {
             "type": "integer",
-            "description": "返回数量，默认 20",
+            "description": "Number of results to return. Default 20.",
         },
     },
     group="repo_info",
-    short_description="列出仓库 tag 和对应提交",
+    short_description="List repository tags and their commits",
 )
 def list_repo_tags(project_id, per_page=20):
     owner, repo = _project_ref(project_id)
@@ -784,23 +784,23 @@ def list_repo_tags(project_id, per_page=20):
 
 @gitea_tool(
     "list_repo_directory",
-    "列出仓库目录中的文件和子目录。",
+    "List files and subdirectories in a repository directory.",
     {
         "project_id": {
             "type": "string",
-            "description": "项目 ID 或路径",
+            "description": "Project ID or path.",
         },
         "directory_path": {
             "type": "string",
-            "description": "目录路径；留空表示仓库根目录",
+            "description": "Directory path. Leave empty for the repository root.",
         },
         "ref": {
             "type": "string",
-            "description": "分支名或 commit SHA，默认 main",
+            "description": "Branch name or commit SHA. Default is main.",
         },
     },
     group="repo_content",
-    short_description="列出仓库目录结构",
+    short_description="List repository directory structure",
 )
 def list_repo_directory(project_id, directory_path="", ref="main"):
     owner, repo = _project_ref(project_id)
@@ -821,24 +821,24 @@ def list_repo_directory(project_id, directory_path="", ref="main"):
 
 @gitea_tool(
     "create_branch",
-    "从现有分支或 ref 创建一个新分支。",
+    "Create a new branch from an existing branch or ref.",
     {
         "project_id": {
             "type": "string",
-            "description": "项目 ID 或路径",
+            "description": "Project ID or path.",
         },
         "branch_name": {
             "type": "string",
-            "description": "新分支名称",
+            "description": "New branch name.",
         },
         "from_ref": {
             "type": "string",
-            "description": "源分支或 ref，默认 main",
+            "description": "Source branch or ref. Default is main.",
         },
     },
     is_write=True,
     group="branch_ops",
-    short_description="从现有 ref 创建新分支",
+    short_description="Create a new branch from an existing ref",
 )
 def create_branch(project_id, branch_name, from_ref="main"):
     owner, repo = _project_ref(project_id)
@@ -854,19 +854,19 @@ def create_branch(project_id, branch_name, from_ref="main"):
 
 @gitea_tool(
     "get_issue",
-    "读取单个 issue 的详细信息。",
+    "Read detailed information for a single issue.",
     {
         "project_id": {
             "type": "string",
-            "description": "项目 ID 或路径",
+            "description": "Project ID or path.",
         },
         "issue_iid": {
             "type": "integer",
-            "description": "Issue 的项目内编号（iid）",
+            "description": "Issue internal ID within the project (iid).",
         },
     },
     group="issue_tracking",
-    short_description="读取单个 issue 详情",
+    short_description="Read details for one issue",
 )
 def get_issue(project_id, issue_iid):
     owner, repo = _project_ref(project_id)
@@ -876,23 +876,23 @@ def get_issue(project_id, issue_iid):
 
 @gitea_tool(
     "list_issue_comments",
-    "列出指定 issue 下的评论。",
+    "List comments under the specified issue.",
     {
         "project_id": {
             "type": "string",
-            "description": "项目 ID 或路径",
+            "description": "Project ID or path.",
         },
         "issue_iid": {
             "type": "integer",
-            "description": "Issue 的项目内编号（iid）",
+            "description": "Issue internal ID within the project (iid).",
         },
         "per_page": {
             "type": "integer",
-            "description": "返回数量，默认 20",
+            "description": "Number of results to return. Default 20.",
         },
     },
     group="issue_tracking",
-    short_description="列出 issue 评论记录",
+    short_description="List issue comments",
 )
 def list_issue_comments(project_id, issue_iid, per_page=20):
     owner, repo = _project_ref(project_id)
@@ -917,24 +917,24 @@ def list_issue_comments(project_id, issue_iid, per_page=20):
 
 @gitea_tool(
     "create_issue",
-    "在仓库中创建一个新的 issue。",
+    "Create a new issue in the repository.",
     {
         "project_id": {
             "type": "string",
-            "description": "项目 ID 或路径",
+            "description": "Project ID or path.",
         },
         "title": {
             "type": "string",
-            "description": "Issue 标题",
+            "description": "Issue title.",
         },
         "body": {
             "type": "string",
-            "description": "Issue 正文，可为空",
+            "description": "Issue body. Can be empty.",
         },
     },
     is_write=True,
     group="issue_tracking",
-    short_description="创建新的 issue",
+    short_description="Create a new issue",
 )
 def create_issue(project_id, title, body=""):
     owner, repo = _project_ref(project_id)
@@ -947,24 +947,24 @@ def create_issue(project_id, title, body=""):
 
 @gitea_tool(
     "add_issue_comment",
-    "给指定 issue 添加评论。",
+    "Add a comment to the specified issue.",
     {
         "project_id": {
             "type": "string",
-            "description": "项目 ID 或路径",
+            "description": "Project ID or path.",
         },
         "issue_iid": {
             "type": "integer",
-            "description": "Issue 的项目内编号（iid）",
+            "description": "Issue internal ID within the project (iid).",
         },
         "body": {
             "type": "string",
-            "description": "评论内容",
+            "description": "Comment content.",
         },
     },
     is_write=True,
     group="issue_tracking",
-    short_description="向 issue 添加评论",
+    short_description="Add a comment to an issue",
 )
 def add_issue_comment(project_id, issue_iid, body):
     owner, repo = _project_ref(project_id)
@@ -986,42 +986,42 @@ def add_issue_comment(project_id, issue_iid, body):
 
 @gitea_tool(
     "reopen_issue",
-    "重新打开一个已关闭的 issue。",
+    "Reopen a closed issue.",
     {
         "project_id": {
             "type": "string",
-            "description": "项目 ID 或路径",
+            "description": "Project ID or path.",
         },
         "issue_iid": {
             "type": "integer",
-            "description": "Issue 的项目内编号（iid）",
+            "description": "Issue internal ID within the project (iid).",
         },
     },
     is_write=True,
     group="issue_tracking",
-    short_description="重新打开单个 issue",
+    short_description="Reopen one issue",
 )
 def reopen_issue(project_id, issue_iid):
     owner, repo = _project_ref(project_id)
     data = _api_json("PATCH", f"repos/{owner}/{repo}/issues/{issue_iid}", json={"state": "open"})
-    return f"Issue #{issue_iid} ('{data.get('title', '')}') 已重新打开。"
+    return f"Issue #{issue_iid} ('{data.get('title', '')}') was reopened."
 
 
 @gitea_tool(
     "get_pull_request",
-    "读取单个 Pull Request 的详细信息。",
+    "Read detailed information for a single pull request.",
     {
         "project_id": {
             "type": "string",
-            "description": "项目 ID 或路径",
+            "description": "Project ID or path.",
         },
         "pr_iid": {
             "type": "integer",
-            "description": "Pull Request 的项目内编号（iid）",
+            "description": "Pull request internal ID within the project (iid).",
         },
     },
     group="pull_requests",
-    short_description="读取单个 Pull Request 详情",
+    short_description="Read details for one pull request",
 )
 def get_pull_request(project_id, pr_iid):
     owner, repo = _project_ref(project_id)
@@ -1031,19 +1031,19 @@ def get_pull_request(project_id, pr_iid):
 
 @gitea_tool(
     "list_pull_request_files",
-    "列出 Pull Request 变更涉及的文件。",
+    "List files changed in a pull request.",
     {
         "project_id": {
             "type": "string",
-            "description": "项目 ID 或路径",
+            "description": "Project ID or path.",
         },
         "pr_iid": {
             "type": "integer",
-            "description": "Pull Request 的项目内编号（iid）",
+            "description": "Pull request internal ID within the project (iid).",
         },
     },
     group="pull_requests",
-    short_description="列出 Pull Request 的变更文件",
+    short_description="List changed files in a pull request",
 )
 def list_pull_request_files(project_id, pr_iid):
     owner, repo = _project_ref(project_id)
@@ -1065,32 +1065,32 @@ def list_pull_request_files(project_id, pr_iid):
 
 @gitea_tool(
     "create_pull_request",
-    "从源分支向目标分支创建 Pull Request。",
+    "Create a pull request from the source branch to the target branch.",
     {
         "project_id": {
             "type": "string",
-            "description": "项目 ID 或路径",
+            "description": "Project ID or path.",
         },
         "title": {
             "type": "string",
-            "description": "Pull Request 标题",
+            "description": "Pull request title.",
         },
         "head_branch": {
             "type": "string",
-            "description": "源分支名",
+            "description": "Source branch name.",
         },
         "base_branch": {
             "type": "string",
-            "description": "目标分支名",
+            "description": "Target branch name.",
         },
         "body": {
             "type": "string",
-            "description": "Pull Request 描述，可为空",
+            "description": "Pull request description. Can be empty.",
         },
     },
     is_write=True,
     group="pull_requests",
-    short_description="创建新的 Pull Request",
+    short_description="Create a new pull request",
 )
 def create_pull_request(project_id, title, head_branch, base_branch, body=""):
     owner, repo = _project_ref(project_id)
@@ -1107,19 +1107,19 @@ def create_pull_request(project_id, title, head_branch, base_branch, body=""):
 
 @gitea_tool(
     "list_collaborators",
-    "列出仓库协作者及其权限。",
+    "List repository collaborators and their permissions.",
     {
         "project_id": {
             "type": "string",
-            "description": "项目 ID 或路径",
+            "description": "Project ID or path.",
         },
         "per_page": {
             "type": "integer",
-            "description": "返回数量，默认 20",
+            "description": "Number of results to return. Default 20.",
         },
     },
     group="access_control",
-    short_description="列出仓库协作者和权限",
+    short_description="List repository collaborators and permissions",
 )
 def list_collaborators(project_id, per_page=20):
     owner, repo = _project_ref(project_id)
@@ -1143,25 +1143,25 @@ def list_collaborators(project_id, per_page=20):
 
 @gitea_tool(
     "add_collaborator",
-    "把一个用户添加为仓库协作者。",
+    "Add a user as a repository collaborator.",
     {
         "project_id": {
             "type": "string",
-            "description": "项目 ID 或路径",
+            "description": "Project ID or path.",
         },
         "username": {
             "type": "string",
-            "description": "要添加的用户名",
+            "description": "Username to add.",
         },
         "permission": {
             "type": "string",
             "enum": ["read", "write", "admin"],
-            "description": "授予的权限级别，默认 write",
+            "description": "Permission level to grant. Default is write.",
         },
     },
     is_write=True,
     group="access_control",
-    short_description="为仓库添加协作者",
+    short_description="Add a repository collaborator",
 )
 def add_collaborator(project_id, username, permission="write"):
     owner, repo = _project_ref(project_id)
@@ -1171,48 +1171,48 @@ def add_collaborator(project_id, username, permission="write"):
         json={"permission": permission},
     )
     if resp.status_code not in (201, 204):
-        raise ToolExecutionError(f"[Gitea API 错误] {resp.status_code}: {resp.text[:500]}")
-    return f"用户 '{username}' 已添加为 {project_id} 的协作者，权限={permission}。"
+        raise ToolExecutionError(f"[Gitea API Error] {resp.status_code}: {resp.text[:500]}")
+    return f"User '{username}' was added as a collaborator on {project_id} with permission={permission}."
 
 
 @gitea_tool(
     "remove_collaborator",
-    "移除仓库协作者。",
+    "Remove a repository collaborator.",
     {
         "project_id": {
             "type": "string",
-            "description": "项目 ID 或路径",
+            "description": "Project ID or path.",
         },
         "username": {
             "type": "string",
-            "description": "要移除的用户名",
+            "description": "Username to remove.",
         },
     },
     is_write=True,
     group="access_control",
-    short_description="移除仓库协作者",
+    short_description="Remove a repository collaborator",
 )
 def remove_collaborator(project_id, username):
     owner, repo = _project_ref(project_id)
     resp = _api("DELETE", f"repos/{owner}/{repo}/collaborators/{_encode_path(username)}")
     if resp.status_code not in (204, 404):
-        raise ToolExecutionError(f"[Gitea API 错误] {resp.status_code}: {resp.text[:500]}")
+        raise ToolExecutionError(f"[Gitea API Error] {resp.status_code}: {resp.text[:500]}")
     if resp.status_code == 404:
-        return f"用户 '{username}' 不是 {project_id} 的协作者。"
-    return f"用户 '{username}' 已从 {project_id} 协作者列表中移除。"
+        return f"User '{username}' is not a collaborator on {project_id}."
+    return f"User '{username}' was removed from the collaborator list for {project_id}."
 
 
 @gitea_tool(
     "list_deploy_keys",
-    "列出仓库的 deploy key。",
+    "List repository deploy keys.",
     {
         "project_id": {
             "type": "string",
-            "description": "项目 ID 或路径",
+            "description": "Project ID or path.",
         },
     },
     group="access_control",
-    short_description="列出仓库 deploy key",
+    short_description="List repository deploy keys",
 )
 def list_deploy_keys(project_id):
     owner, repo = _project_ref(project_id)
@@ -1234,28 +1234,28 @@ def list_deploy_keys(project_id):
 
 @gitea_tool(
     "add_deploy_key",
-    "给仓库添加一个 deploy key。",
+    "Add a deploy key to the repository.",
     {
         "project_id": {
             "type": "string",
-            "description": "项目 ID 或路径",
+            "description": "Project ID or path.",
         },
         "title": {
             "type": "string",
-            "description": "Deploy key 标题",
+            "description": "Deploy key title.",
         },
         "public_key": {
             "type": "string",
-            "description": "SSH 公钥内容",
+            "description": "SSH public key contents.",
         },
         "read_only": {
             "type": "boolean",
-            "description": "是否只读，默认 true",
+            "description": "Whether the key is read-only. Default is true.",
         },
     },
     is_write=True,
     group="access_control",
-    short_description="向仓库添加 deploy key",
+    short_description="Add a deploy key to the repository",
 )
 def add_deploy_key(project_id, title, public_key, read_only=True):
     owner, repo = _project_ref(project_id)
@@ -1275,46 +1275,46 @@ def add_deploy_key(project_id, title, public_key, read_only=True):
 
 @gitea_tool(
     "remove_deploy_key",
-    "删除仓库中的一个 deploy key。",
+    "Delete a deploy key from the repository.",
     {
         "project_id": {
             "type": "string",
-            "description": "项目 ID 或路径",
+            "description": "Project ID or path.",
         },
         "key_id": {
             "type": "integer",
-            "description": "Deploy key 的 ID",
+            "description": "Deploy key ID.",
         },
     },
     is_write=True,
     group="access_control",
-    short_description="删除单个 deploy key",
+    short_description="Delete one deploy key",
 )
 def remove_deploy_key(project_id, key_id):
     owner, repo = _project_ref(project_id)
     resp = _api("DELETE", f"repos/{owner}/{repo}/keys/{key_id}")
     if resp.status_code not in (204, 404):
-        raise ToolExecutionError(f"[Gitea API 错误] {resp.status_code}: {resp.text[:500]}")
+        raise ToolExecutionError(f"[Gitea API Error] {resp.status_code}: {resp.text[:500]}")
     if resp.status_code == 404:
-        return f"Deploy key #{key_id} 不存在。"
-    return f"Deploy key #{key_id} 已删除。"
+        return f"Deploy key #{key_id} does not exist."
+    return f"Deploy key #{key_id} was deleted."
 
 
 @gitea_tool(
     "list_repo_labels",
-    "列出仓库中的 label。",
+    "List labels in the repository.",
     {
         "project_id": {
             "type": "string",
-            "description": "项目 ID 或路径",
+            "description": "Project ID or path.",
         },
         "per_page": {
             "type": "integer",
-            "description": "返回数量，默认 20",
+            "description": "Number of results to return. Default 20.",
         },
     },
     group="labels_and_milestones",
-    short_description="列出仓库 label",
+    short_description="List repository labels",
 )
 def list_repo_labels(project_id, per_page=20):
     owner, repo = _project_ref(project_id)
@@ -1338,28 +1338,28 @@ def list_repo_labels(project_id, per_page=20):
 
 @gitea_tool(
     "create_label",
-    "在仓库中创建一个新的 label。",
+    "Create a new label in the repository.",
     {
         "project_id": {
             "type": "string",
-            "description": "项目 ID 或路径",
+            "description": "Project ID or path.",
         },
         "name": {
             "type": "string",
-            "description": "Label 名称",
+            "description": "Label name.",
         },
         "color": {
             "type": "string",
-            "description": "Label 颜色，形如 ff0000 或 #ff0000",
+            "description": "Label color, such as ff0000 or #ff0000.",
         },
         "description": {
             "type": "string",
-            "description": "Label 描述，可为空",
+            "description": "Label description. Can be empty.",
         },
     },
     is_write=True,
     group="labels_and_milestones",
-    short_description="创建新的仓库 label",
+    short_description="Create a new repository label",
 )
 def create_label(project_id, name, color, description=""):
     owner, repo = _project_ref(project_id)
@@ -1382,24 +1382,24 @@ def create_label(project_id, name, color, description=""):
 
 @gitea_tool(
     "list_milestones",
-    "列出仓库中的 milestone。",
+    "List milestones in the repository.",
     {
         "project_id": {
             "type": "string",
-            "description": "项目 ID 或路径",
+            "description": "Project ID or path.",
         },
         "state": {
             "type": "string",
             "enum": ["open", "closed", "all"],
-            "description": "Milestone 状态筛选，默认 open",
+            "description": "Milestone state filter. Default is open.",
         },
         "per_page": {
             "type": "integer",
-            "description": "返回数量，默认 20",
+            "description": "Number of results to return. Default 20.",
         },
     },
     group="labels_and_milestones",
-    short_description="列出仓库 milestone",
+    short_description="List repository milestones",
 )
 def list_milestones(project_id, state="open", per_page=20):
     owner, repo = _project_ref(project_id)
@@ -1426,28 +1426,28 @@ def list_milestones(project_id, state="open", per_page=20):
 
 @gitea_tool(
     "create_milestone",
-    "在仓库中创建一个新的 milestone。",
+    "Create a new milestone in the repository.",
     {
         "project_id": {
             "type": "string",
-            "description": "项目 ID 或路径",
+            "description": "Project ID or path.",
         },
         "title": {
             "type": "string",
-            "description": "Milestone 标题",
+            "description": "Milestone title.",
         },
         "description": {
             "type": "string",
-            "description": "Milestone 描述，可为空",
+            "description": "Milestone description. Can be empty.",
         },
         "due_on": {
             "type": "string",
-            "description": "截止时间，ISO8601 格式，可为空",
+            "description": "Due time in ISO8601 format. Can be empty.",
         },
     },
     is_write=True,
     group="labels_and_milestones",
-    short_description="创建新的 milestone",
+    short_description="Create a new milestone",
 )
 def create_milestone(project_id, title, description="", due_on=""):
     owner, repo = _project_ref(project_id)
@@ -1469,19 +1469,19 @@ def create_milestone(project_id, title, description="", due_on=""):
 
 @gitea_tool(
     "list_releases",
-    "列出仓库中的 release。",
+    "List releases in the repository.",
     {
         "project_id": {
             "type": "string",
-            "description": "项目 ID 或路径",
+            "description": "Project ID or path.",
         },
         "per_page": {
             "type": "integer",
-            "description": "返回数量，默认 20",
+            "description": "Number of results to return. Default 20.",
         },
     },
     group="releases",
-    short_description="列出仓库 release",
+    short_description="List repository releases",
 )
 def list_releases(project_id, per_page=20):
     owner, repo = _project_ref(project_id)
@@ -1509,40 +1509,40 @@ def list_releases(project_id, per_page=20):
 
 @gitea_tool(
     "create_release",
-    "创建一个新的 release。",
+    "Create a new release.",
     {
         "project_id": {
             "type": "string",
-            "description": "项目 ID 或路径",
+            "description": "Project ID or path.",
         },
         "tag_name": {
             "type": "string",
-            "description": "Release 对应的 tag 名称",
+            "description": "Tag name for the release.",
         },
         "target_commitish": {
             "type": "string",
-            "description": "目标分支或 commit，默认 main",
+            "description": "Target branch or commit. Default is main.",
         },
         "name": {
             "type": "string",
-            "description": "Release 名称；留空则使用 tag_name",
+            "description": "Release name. If empty, tag_name will be used.",
         },
         "body": {
             "type": "string",
-            "description": "Release 描述，可为空",
+            "description": "Release description. Can be empty.",
         },
         "draft": {
             "type": "boolean",
-            "description": "是否为草稿，默认 false",
+            "description": "Whether the release is a draft. Default is false.",
         },
         "prerelease": {
             "type": "boolean",
-            "description": "是否为预发布，默认 false",
+            "description": "Whether the release is a prerelease. Default is false.",
         },
     },
     is_write=True,
     group="releases",
-    short_description="创建新的 release",
+    short_description="Create a new release",
 )
 def create_release(project_id, tag_name, target_commitish="main", name="", body="", draft=False, prerelease=False):
     owner, repo = _project_ref(project_id)
@@ -1569,42 +1569,42 @@ def create_release(project_id, tag_name, target_commitish="main", name="", body=
 
 @gitea_tool(
     "delete_release",
-    "删除一个 release。危险操作，不可逆。",
+    "Delete a release. Dangerous operation; irreversible.",
     {
         "project_id": {
             "type": "string",
-            "description": "项目 ID 或路径",
+            "description": "Project ID or path.",
         },
         "release_id": {
             "type": "integer",
-            "description": "Release 的 ID",
+            "description": "Release ID.",
         },
     },
     is_write=True,
     group="releases",
-    short_description="删除单个 release",
+    short_description="Delete one release",
 )
 def delete_release(project_id, release_id):
     owner, repo = _project_ref(project_id)
     resp = _api("DELETE", f"repos/{owner}/{repo}/releases/{release_id}")
     if resp.status_code not in (204, 404):
-        raise ToolExecutionError(f"[Gitea API 错误] {resp.status_code}: {resp.text[:500]}")
+        raise ToolExecutionError(f"[Gitea API Error] {resp.status_code}: {resp.text[:500]}")
     if resp.status_code == 404:
-        return f"Release #{release_id} 不存在。"
-    return f"Release #{release_id} 已删除。"
+        return f"Release #{release_id} does not exist."
+    return f"Release #{release_id} was deleted."
 
 
 @gitea_tool(
     "list_webhooks",
-    "列出仓库的 webhook。",
+    "List repository webhooks.",
     {
         "project_id": {
             "type": "string",
-            "description": "项目 ID 或路径",
+            "description": "Project ID or path.",
         },
     },
     group="webhooks",
-    short_description="列出仓库 webhook",
+    short_description="List repository webhooks",
 )
 def list_webhooks(project_id):
     owner, repo = _project_ref(project_id)
@@ -1628,41 +1628,41 @@ def list_webhooks(project_id):
 
 @gitea_tool(
     "create_webhook",
-    "给仓库创建一个新的 webhook。",
+    "Create a new webhook for the repository.",
     {
         "project_id": {
             "type": "string",
-            "description": "项目 ID 或路径",
+            "description": "Project ID or path.",
         },
         "url": {
             "type": "string",
-            "description": "Webhook 目标地址",
+            "description": "Webhook target URL.",
         },
         "events": {
             "type": "array",
             "items": {"type": "string"},
-            "description": "订阅的事件列表，默认 ['push']",
+            "description": "Subscribed event list. Default is ['push'].",
         },
         "hook_type": {
             "type": "string",
-            "description": "Webhook 类型，默认 gitea",
+            "description": "Webhook type. Default is gitea.",
         },
         "content_type": {
             "type": "string",
-            "description": "发送内容格式，默认 json",
+            "description": "Payload content type. Default is json.",
         },
         "secret": {
             "type": "string",
-            "description": "Webhook 签名密钥，可为空",
+            "description": "Webhook signing secret. Can be empty.",
         },
         "active": {
             "type": "boolean",
-            "description": "是否启用，默认 true",
+            "description": "Whether the webhook is enabled. Default is true.",
         },
     },
     is_write=True,
     group="webhooks",
-    short_description="创建新的 webhook",
+    short_description="Create a new webhook",
 )
 def create_webhook(project_id, url, events=None, hook_type="gitea", content_type="json", secret="", active=True):
     owner, repo = _project_ref(project_id)
@@ -1692,26 +1692,26 @@ def create_webhook(project_id, url, events=None, hook_type="gitea", content_type
 
 @gitea_tool(
     "delete_webhook",
-    "删除仓库中的一个 webhook。危险操作，不可逆。",
+    "Delete a webhook from the repository. Dangerous operation; irreversible.",
     {
         "project_id": {
             "type": "string",
-            "description": "项目 ID 或路径",
+            "description": "Project ID or path.",
         },
         "hook_id": {
             "type": "integer",
-            "description": "Webhook 的 ID",
+            "description": "Webhook ID.",
         },
     },
     is_write=True,
     group="webhooks",
-    short_description="删除单个 webhook",
+    short_description="Delete one webhook",
 )
 def delete_webhook(project_id, hook_id):
     owner, repo = _project_ref(project_id)
     resp = _api("DELETE", f"repos/{owner}/{repo}/hooks/{hook_id}")
     if resp.status_code not in (204, 404):
-        raise ToolExecutionError(f"[Gitea API 错误] {resp.status_code}: {resp.text[:500]}")
+        raise ToolExecutionError(f"[Gitea API Error] {resp.status_code}: {resp.text[:500]}")
     if resp.status_code == 404:
-        return f"Webhook #{hook_id} 不存在。"
-    return f"Webhook #{hook_id} 已删除。"
+        return f"Webhook #{hook_id} does not exist."
+    return f"Webhook #{hook_id} was deleted."

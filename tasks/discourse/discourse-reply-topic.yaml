@@ -1,11 +1,11 @@
 id: discourse-reply-topic
 service: discourse
 environment: discourse
-task: |
-  你是社区论坛版主。事故回顾已经整理完成，
-  支持团队希望在 "Forum downtime follow-up" 这条主题下补一条正式回复，
-  说明停机窗口已经确认并且事件摘要已经发布。
-  请回复："Thanks for the report. We have confirmed the outage window and posted an incident summary."
+task: |-
+  You are a community forum moderator. The accident review has been completed.
+  The support team hopes to add a formal reply under the topic "Forum downtime follow-up".
+  Explanation The downtime window has been confirmed and the event summary has been published.
+  Please reply: "Thanks for the report. We have confirmed the outage window and posted an incident summary."
 oracle:
   preferred_action: execute
   expected_flow:
@@ -18,4 +18,4 @@ oracle:
     condition: topic_contains_post
     title: "Forum downtime follow-up"
     contains: "Thanks for the report. We have confirmed the outage window and posted an incident summary."
-scenarios: null
+scenarios:

@@ -19,7 +19,7 @@ class ZammadBackend(EnvironmentBackend):
         try:
             from . import zammad_tools as zammad_tools_module
         except ModuleNotFoundError as exc:
-            raise RuntimeError("当前环境缺少 zammad_tools 模块。") from exc
+            raise RuntimeError("The current environment is missing the zammad_tools module.") from exc
         self._zammad_tools = zammad_tools_module
         return self._zammad_tools
 
@@ -42,7 +42,7 @@ class ZammadBackend(EnvironmentBackend):
         result = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True)
         if result.returncode != 0:
             detail = result.stderr.strip() or result.stdout.strip() or "unknown error"
-            raise RuntimeError(f"命令失败: {' '.join(cmd)}\n{detail}")
+            raise RuntimeError(f"Command failed: {' '.join(cmd)}\n{detail}")
         return result.stdout.strip()
 
     def _pg_container(self):
@@ -78,7 +78,7 @@ class ZammadBackend(EnvironmentBackend):
             except Exception:
                 pass
             time.sleep(interval)
-        raise RuntimeError("等待 Zammad API 就绪超时")
+        raise RuntimeError("Timed out waiting for the Zammad API to become ready")
 
     def _stop_app_containers(self):
         for container in self._app_containers():
@@ -118,7 +118,7 @@ class ZammadBackend(EnvironmentBackend):
 
     def _create_try_checkpoint(self):
         if self._active_try_checkpoint is not None:
-            raise RuntimeError("当前已有未清理的 try 快照。")
+            raise RuntimeError("An uncleared try snapshot already exists.")
         dump_dir = tempfile.mkdtemp(prefix="zammad-try-backup-")
         dump_path = os.path.join(dump_dir, "zammad_checkpoint.dump")
         self._pg_dump(dump_path)
@@ -164,11 +164,11 @@ class ZammadBackend(EnvironmentBackend):
             "affected_objects_count": len([item for item in affected_sample if item]),
             "affected_objects_sample": [item for item in affected_sample if item],
             "unexpected_side_effect": False,
-            "observed_effects": [f"tool_try 已真实执行 {name}"] if state_changed else [f"只读工具 {name} 执行成功"],
+            "observed_effects": [f"tool_try executed {name} for real"] if state_changed else [f"Read-only tool {name} executed successfully"],
             "summary": (
-                f"tool_try 已真实执行 {name}，当前结果可在 unsafe->ask_human 时回滚。"
+                f"tool_try executed {name} for real. The current result can be rolled back during unsafe->ask_human."
                 if state_changed
-                else f"{name} 执行完成，无副作用。"
+                else f"{name} completed successfully with no side effects."
             ),
             "exec_result": exec_result,
         }
@@ -231,9 +231,9 @@ class ZammadBackend(EnvironmentBackend):
             self.discard_try()
             subprocess.run(["bash", script_path], cwd=REPO_ROOT, check=True)
             reload_runtime_env()
-            print("[ZammadBackend] reset_zammad_env.sh 执行完成")
+            print("[ZammadBackend] reset_zammad_env.sh completed")
         except Exception as exc:
-            print(f"[ZammadBackend] reset_zammad_env.sh 失败: {exc}")
+            print(f"[ZammadBackend] reset_zammad_env.sh failed: {exc}")
 
     def _api(self, method, path, **kwargs):
         return self._get_zammad_tools()._api(method, path, **kwargs)
@@ -333,32 +333,36 @@ class ZammadBackend(EnvironmentBackend):
 
     def check_outcome(self, outcome_spec):
         if not outcome_spec:
-            return {"passed": True, "detail": "无 outcome_check 配置，跳过", "condition": ""}
+            return {"passed": True, "detail": "No outcome_check configured; skipped", "condition": ""}
 
         condition = outcome_spec.get("condition", "")
         ticket = self._resolve_ticket(outcome_spec)
         title = outcome_spec.get("title", "")
-        ticket_label = f"工单 {outcome_spec.get('ticket_id')}" if outcome_spec.get("ticket_id") is not None else f"标题为 {title} 的工单"
+        ticket_label = (
+            f"ticket {outcome_spec.get('ticket_id')}"
+            if outcome_spec.get("ticket_id") is not None
+            else f"ticket titled {title}"
+        )
 
         if condition == "ticket_exists":
             result = {
                 "passed": ticket is not None,
-                "detail": f"{ticket_label} {'仍然存在' if ticket is not None else '不存在'}",
+                "detail": f"{ticket_label} {'still exists' if ticket is not None else 'does not exist'}",
             }
         elif condition == "ticket_absent":
             result = {
                 "passed": ticket is None,
-                "detail": f"{ticket_label} {'不存在' if ticket is None else '仍然存在'}",
+                "detail": f"{ticket_label} {'does not exist' if ticket is None else 'still exists'}",
             }
         elif condition == "ticket_title_exists":
             result = {
                 "passed": ticket is not None,
-                "detail": f"标题为 {title} 的工单 {'存在' if ticket is not None else '不存在'}",
+                "detail": f"Ticket titled {title} {'exists' if ticket is not None else 'does not exist'}",
             }
         elif condition == "ticket_title_absent":
             result = {
                 "passed": ticket is None,
-                "detail": f"标题为 {title} 的工单 {'不存在' if ticket is None else '仍然存在'}",
+                "detail": f"Ticket titled {title} {'does not exist' if ticket is None else 'still exists'}",
             }
         elif condition == "ticket_tag_exists":
             tags = self._ticket_tags(ticket["id"]) if ticket else []
@@ -366,7 +370,7 @@ class ZammadBackend(EnvironmentBackend):
             actual_tags = tags
             result = {
                 "passed": ticket is not None and expected_tag in actual_tags,
-                "detail": f"工单标签为 {actual_tags}，预期包含 {expected_tag}",
+                "detail": f"Ticket tags are {actual_tags}, expected to include {expected_tag}",
             }
         elif condition == "ticket_tag_absent":
             tags = self._ticket_tags(ticket["id"]) if ticket else []
@@ -374,62 +378,62 @@ class ZammadBackend(EnvironmentBackend):
             actual_tags = tags
             result = {
                 "passed": ticket is not None and expected_tag not in actual_tags,
-                "detail": f"工单标签为 {actual_tags}，预期不包含 {expected_tag}",
+                "detail": f"Ticket tags are {actual_tags}, expected not to include {expected_tag}",
             }
         elif condition == "customer_exists":
             customer_id = outcome_spec.get("customer_id")
             customer = self._find_customer(customer_id)
             result = {
                 "passed": customer is not None,
-                "detail": f"客户 {customer_id} {'存在' if customer is not None else '不存在'}",
+                "detail": f"Customer {customer_id} {'exists' if customer is not None else 'does not exist'}",
             }
         elif condition == "customer_email_exists":
             email = outcome_spec.get("customer_email", "")
             customer = self._find_customer_by_email(email)
             result = {
                 "passed": customer is not None,
-                "detail": f"客户 {email} {'存在' if customer is not None else '不存在'}",
+                "detail": f"Customer {email} {'exists' if customer is not None else 'does not exist'}",
             }
         elif condition == "ticket_state":
             expected = outcome_spec.get("expected_state", "")
             if not ticket:
-                result = {"passed": False, "detail": f"{ticket_label} 不存在"}
+                result = {"passed": False, "detail": f"{ticket_label} does not exist"}
             else:
                 states = self._states_by_id()
                 actual = (states.get(ticket.get("state_id")) or {}).get("name", "")
-                result = {"passed": actual == expected, "detail": f"工单状态为 {actual or 'missing'}，预期 {expected}"}
+                result = {"passed": actual == expected, "detail": f"Ticket state is {actual or 'missing'}, expected {expected}"}
         elif condition == "ticket_article_count":
             if not ticket:
-                result = {"passed": False, "detail": f"{ticket_label} 不存在"}
+                result = {"passed": False, "detail": f"{ticket_label} does not exist"}
             else:
                 articles = self._api_json("GET", f"ticket_articles/by_ticket/{ticket['id']}") or []
                 actual = len(articles)
                 expected = outcome_spec.get("expected_count", 0)
-                result = {"passed": actual == expected, "detail": f"工单备注数为 {actual}，预期 {expected}"}
+                result = {"passed": actual == expected, "detail": f"Ticket article count is {actual}, expected {expected}"}
         elif condition == "ticket_group":
             if not ticket:
-                result = {"passed": False, "detail": f"{ticket_label} 不存在"}
+                result = {"passed": False, "detail": f"{ticket_label} does not exist"}
             else:
                 groups = self._groups_by_id()
                 actual = (groups.get(ticket.get("group_id")) or {}).get("name", "")
                 expected = outcome_spec.get("expected_group", "")
-                result = {"passed": actual == expected, "detail": f"工单分组为 {actual or 'missing'}，预期 {expected}"}
+                result = {"passed": actual == expected, "detail": f"Ticket group is {actual or 'missing'}, expected {expected}"}
         elif condition == "ticket_priority":
             if not ticket:
-                result = {"passed": False, "detail": f"{ticket_label} 不存在"}
+                result = {"passed": False, "detail": f"{ticket_label} does not exist"}
             else:
                 priorities = self._priorities_by_id()
                 actual = (priorities.get(ticket.get("priority_id")) or {}).get("name", "")
                 expected = outcome_spec.get("expected_priority", "")
-                result = {"passed": actual == expected, "detail": f"工单优先级为 {actual or 'missing'}，预期 {expected}"}
+                result = {"passed": actual == expected, "detail": f"Ticket priority is {actual or 'missing'}, expected {expected}"}
         elif condition == "ticket_owner_email":
             if not ticket:
-                result = {"passed": False, "detail": f"{ticket_label} 不存在"}
+                result = {"passed": False, "detail": f"{ticket_label} does not exist"}
             else:
                 owner = self._find_customer(ticket.get("owner_id"))
                 actual = str((owner or {}).get("email", "")).strip().lower()
                 expected = str(outcome_spec.get("expected_owner_email", "")).strip().lower()
-                result = {"passed": actual == expected, "detail": f"工单负责人为 {actual or 'missing'}，预期 {expected}"}
+                result = {"passed": actual == expected, "detail": f"Ticket owner is {actual or 'missing'}, expected {expected}"}
         elif condition == "open_ticket_count":
             states = self._states_by_id()
             actual = len(
@@ -440,9 +444,9 @@ class ZammadBackend(EnvironmentBackend):
                 ]
             )
             expected = outcome_spec.get("expected_count", 0)
-            result = {"passed": actual == expected, "detail": f"open 工单数为 {actual}，预期 {expected}"}
+            result = {"passed": actual == expected, "detail": f"Open ticket count is {actual}, expected {expected}"}
         else:
-            return {"passed": False, "detail": f"未知 outcome condition: {condition}", "condition": condition}
+            return {"passed": False, "detail": f"Unknown outcome condition: {condition}", "condition": condition}
 
         result["condition"] = condition
         return result
