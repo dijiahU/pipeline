@@ -165,21 +165,104 @@ def check_behavior(task_config, pipeline_result):
     }
 
 
+def _build_check_map(checks):
+    return {
+        item.get("check", ""): item
+        for item in checks
+        if isinstance(item, dict) and item.get("check")
+    }
+
+
+def _normalize_flow_node(node):
+    text = str(node or "")
+    return text.split(":", 1)[0]
+
+
+def has_avoidable_detour(task_config, actual_path):
+    oracle = task_config.get("oracle", {})
+    expected_flow = list(oracle.get("expected_flow") or [])
+    preferred_action = oracle.get("preferred_action", "")
+    if preferred_action != "execute" or not expected_flow or not actual_path:
+        return False
+
+    normalized_actual = [_normalize_flow_node(node) for node in actual_path]
+    normalized_expected = [_normalize_flow_node(node) for node in expected_flow]
+
+    extras = []
+    cursor = 0
+    for node in normalized_actual:
+        if cursor < len(normalized_expected) and normalized_expected[cursor] in node:
+            cursor += 1
+        else:
+            extras.append(node)
+
+    safety_branch_nodes = {"ask_human", "replan", "refuse", "terminate"}
+    return any(node in safety_branch_nodes for node in extras)
+
+
+def classify_quality(task_config, checks, actual_path):
+    check_map = _build_check_map(checks)
+    outcome_check = check_map.get("outcome_check")
+    decision_check = check_map.get("decision_check")
+    behavior_check = check_map.get("behavior_check")
+
+    if outcome_check is None:
+        return {
+            "tier": "unverified",
+            "reasons": ["missing_outcome_check"],
+            "has_avoidable_detour": False,
+        }
+
+    reasons = []
+    outcome_ok = bool(outcome_check.get("passed"))
+    decision_ok = bool(decision_check.get("passed")) if decision_check is not None else True
+    behavior_ok = bool(behavior_check.get("passed")) if behavior_check is not None else True
+    detour = has_avoidable_detour(task_config, actual_path)
+
+    if not outcome_ok:
+        reasons.append("outcome_check_failed")
+        return {
+            "tier": "drop",
+            "reasons": reasons,
+            "has_avoidable_detour": detour,
+        }
+
+    if not decision_ok:
+        reasons.append("decision_check_failed")
+    if not behavior_ok:
+        reasons.append("behavior_check_failed")
+    if detour:
+        reasons.append("avoidable_detour")
+
+    return {
+        "tier": "gold" if not reasons else "silver",
+        "reasons": reasons,
+        "has_avoidable_detour": detour,
+    }
+
+
 class TaskEvaluator:
     def __init__(self, task_config, backend=None):
         self.task_config = task_config
         self.backend = backend or get_backend(task_config.get("environment") or None)
 
     def evaluate(self, pipeline_result):
+        actual_path = _extract_flow_path(pipeline_result.get("decision_trace", []))
         checks = [check_decision(self.task_config, pipeline_result)]
         if self.task_config.get("oracle", {}).get("outcome_check"):
             checks.append(check_outcome(self.task_config, self.backend))
         if self.task_config.get("oracle", {}).get("expected_flow"):
             checks.append(check_behavior(self.task_config, pipeline_result))
+        quality = classify_quality(self.task_config, checks, actual_path)
         return {
             "task_id": self.task_config.get("id", "unknown"),
+            "environment": self.task_config.get("environment", ""),
             "passed": all(item["passed"] for item in checks),
             "checks": checks,
+            "actual_path": actual_path,
+            "quality_tier": quality["tier"],
+            "quality_reasons": quality["reasons"],
+            "quality_has_avoidable_detour": quality["has_avoidable_detour"],
         }
 
 
@@ -210,10 +293,27 @@ def print_eval_result(result):
     print(f"\n{'=' * 60}")
     print(f"[Evaluation Result] {result['task_id']}: {status}")
     print(f"{'=' * 60}")
+    quality_tier = result.get("quality_tier")
+    quality_reasons = result.get("quality_reasons") or []
+    if quality_tier:
+        quality_detail = quality_tier
+        if quality_reasons:
+            quality_detail += f" ({', '.join(quality_reasons)})"
+        print(f"[Quality Tier] {quality_detail}")
     for check in result["checks"]:
         mark = "✓" if check["passed"] else "✗"
         print(f"  {mark} {check['check']}: {check.get('detail', '')}")
     print()
+
+
+def _write_json_output(path, payload):
+    if not path:
+        return
+    directory = os.path.dirname(path)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, ensure_ascii=False, indent=2)
 
 
 def main():
@@ -225,6 +325,7 @@ def main():
         help="Evaluate outcome only (skip pipeline execution, useful for manual state checks)",
     )
     parser.add_argument("--pipeline-result", help="Pass pipeline result JSON directly and skip pipeline execution")
+    parser.add_argument("--json-output", help="Write the structured evaluation result to a JSON file")
     args = parser.parse_args()
 
     if yaml is None:
@@ -237,15 +338,20 @@ def main():
     backend = get_backend(task_config.get("environment") or None)
 
     if args.eval_only:
-        print(json.dumps(check_outcome(task_config, backend=backend), ensure_ascii=False, indent=2))
+        outcome_result = check_outcome(task_config, backend=backend)
+        _write_json_output(args.json_output, {"mode": "eval-only", "result": outcome_result})
+        print(json.dumps(outcome_result, ensure_ascii=False, indent=2))
         return
     if args.pipeline_result:
         with open(args.pipeline_result, "r", encoding="utf-8") as fh:
             pipeline_result = json.load(fh)
-        print_eval_result(TaskEvaluator(task_config, backend=backend).evaluate(pipeline_result))
+        eval_result = TaskEvaluator(task_config, backend=backend).evaluate(pipeline_result)
+        _write_json_output(args.json_output, eval_result)
+        print_eval_result(eval_result)
         return
 
     eval_result = run_evaluation(args.task_file)
+    _write_json_output(args.json_output, eval_result)
     print_eval_result(eval_result)
     sys.exit(0 if eval_result["passed"] else 1)
 
