@@ -1893,6 +1893,19 @@ def flow_tool_judge_try_result(state, args):
     return {"accepted": True, "stored_as": "current_try_judgment", "next_phase": next_phase}
 
 
+def _rollback_current_try_if_unsafe(state, caller_name):
+    judgment = state.get("current_try_judgment") or {}
+    if judgment.get("result") != "unsafe":
+        return {"attempted": False, "applied": False}
+
+    rolled_back = get_environment_backend().rollback_try()
+    if rolled_back:
+        print(f"[{caller_name}] Rolled back to the environment state before tool_try.")
+    else:
+        print(f"[{caller_name}] WARNING: unsafe tool_try had no checkpoint to roll back.")
+    return {"attempted": True, "applied": bool(rolled_back)}
+
+
 def flow_tool_replan(state, args):
     step = get_current_step(state)
     signature = tool_signature(step["tool"], step["args"])
@@ -1963,10 +1976,7 @@ def flow_tool_ask_human(state, question):
         raise RuntimeError("ask_human.question cannot be empty.")
     update_latest_flow_tool_arguments(state, {"question": question})
 
-    if (state.get("current_try_judgment") or {}).get("result") == "unsafe":
-        rolled_back = get_environment_backend().rollback_try()
-        if rolled_back:
-            print("[ask_human] Rolled back to the environment state before tool_try.")
+    rollback_info = _rollback_current_try_if_unsafe(state, "ask_human")
 
     missing_ctx = [
         ((state.get("current_risk_assessment") or {}).get("reasoning"))
@@ -1982,7 +1992,15 @@ def flow_tool_ask_human(state, question):
             question,
             missing_context=missing_ctx,
         )
-    append_current_trace(state, "ask_human", human_resp.get("state_update", {}))
+    append_current_trace(
+        state,
+        "ask_human",
+        {
+            "status": human_resp.get("status", ""),
+            "state_update": human_resp.get("state_update", {}),
+            "rollback": rollback_info,
+        },
+    )
     record_current_experience(
         state,
         "ask_human",
@@ -2016,15 +2034,21 @@ def flow_tool_refuse(state, reason):
 
 def flow_tool_terminate(state, reason):
     print_stage_start("flow_tool: terminate")
-    if (state.get("current_try_judgment") or {}).get("result") == "unsafe":
-        get_environment_backend().discard_try()
-    append_current_trace(state, "terminate", reason)
+    rollback_info = _rollback_current_try_if_unsafe(state, "terminate")
+    append_current_trace(
+        state,
+        "terminate",
+        {
+            "reason": reason,
+            "rollback": rollback_info,
+        },
+    )
     record_current_experience(state, "terminate", "terminated")
     clear_current_flow_tool_calls(state)
     state["status"] = "aborted"
     print(f"[Termination Reason] {reason}")
     print_stage_end("flow_tool: terminate", "task terminated")
-    return {"reason": reason}
+    return {"reason": reason, "rollback": rollback_info}
 
 
 

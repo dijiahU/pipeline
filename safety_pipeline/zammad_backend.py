@@ -45,8 +45,50 @@ class ZammadBackend(EnvironmentBackend):
             raise RuntimeError(f"Command failed: {' '.join(cmd)}\n{detail}")
         return result.stdout.strip()
 
+    def _capture_container_tar(self, container, source_path, output_path, pre_command=None):
+        if pre_command:
+            self._run_command(["docker", "exec", container] + list(pre_command))
+        result = subprocess.run(
+            ["docker", "exec", container, "tar", "cf", "-", source_path],
+            cwd=REPO_ROOT,
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            detail = (
+                result.stderr.decode("utf-8", errors="replace").strip()
+                or result.stdout.decode("utf-8", errors="replace").strip()
+                or "unknown error"
+            )
+            raise RuntimeError(f"Command failed: docker exec {container} tar cf - {source_path}\n{detail}")
+        with open(output_path, "wb") as fh:
+            fh.write(result.stdout)
+
+    def _restore_container_tar(self, container, tar_path):
+        if not tar_path or not os.path.exists(tar_path):
+            return
+        with open(tar_path, "rb") as fh:
+            result = subprocess.run(
+                ["docker", "cp", "-", f"{container}:/"],
+                input=fh.read(),
+                cwd=REPO_ROOT,
+                capture_output=True,
+            )
+        if result.returncode != 0:
+            detail = (
+                result.stderr.decode("utf-8", errors="replace").strip()
+                or result.stdout.decode("utf-8", errors="replace").strip()
+                or "unknown error"
+            )
+            raise RuntimeError(f"Command failed: docker cp - {container}:/\n{detail}")
+
     def _pg_container(self):
         return os.environ.get("ZAMMAD_PG_CONTAINER", "pipeline-zammad-postgresql")
+
+    def _redis_container(self):
+        return os.environ.get("ZAMMAD_REDIS_CONTAINER", "pipeline-zammad-redis")
+
+    def _storage_container(self):
+        return os.environ.get("ZAMMAD_RAILSSERVER_CONTAINER", "pipeline-zammad-railsserver")
 
     def _app_containers(self):
         return [
@@ -121,8 +163,18 @@ class ZammadBackend(EnvironmentBackend):
             raise RuntimeError("An uncleared try snapshot already exists.")
         dump_dir = tempfile.mkdtemp(prefix="zammad-try-backup-")
         dump_path = os.path.join(dump_dir, "zammad_checkpoint.dump")
+        storage_tar = os.path.join(dump_dir, "storage.tar")
+        redis_tar = os.path.join(dump_dir, "redis.tar")
         self._pg_dump(dump_path)
-        checkpoint = {"kind": "pg_dump", "dump_dir": dump_dir, "dump_path": dump_path}
+        self._capture_container_tar(self._storage_container(), "/opt/zammad/storage", storage_tar)
+        self._capture_container_tar(self._redis_container(), "/data", redis_tar, pre_command=["redis-cli", "SAVE"])
+        checkpoint = {
+            "kind": "pg_dump_plus_runtime_state",
+            "dump_dir": dump_dir,
+            "dump_path": dump_path,
+            "storage_tar": storage_tar,
+            "redis_tar": redis_tar,
+        }
         self._active_try_checkpoint = checkpoint
         return checkpoint
 
@@ -130,9 +182,13 @@ class ZammadBackend(EnvironmentBackend):
         if not checkpoint:
             return
         self._stop_app_containers()
+        subprocess.run(["docker", "stop", self._redis_container()], cwd=REPO_ROOT, capture_output=True, text=True)
         try:
+            self._restore_container_tar(self._storage_container(), checkpoint.get("storage_tar"))
+            self._restore_container_tar(self._redis_container(), checkpoint.get("redis_tar"))
             self._pg_restore(checkpoint["dump_path"])
         finally:
+            subprocess.run(["docker", "start", self._redis_container()], cwd=REPO_ROOT, capture_output=True, text=True)
             self._start_app_containers()
 
     def _discard_checkpoint_data(self, checkpoint):

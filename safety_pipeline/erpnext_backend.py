@@ -59,6 +59,9 @@ class ERPNextBackend(EnvironmentBackend):
     def _db_container(self):
         return os.environ.get("ERPNEXT_DB_CONTAINER", "pipeline-erpnext-db")
 
+    def _redis_queue_container(self):
+        return os.environ.get("ERPNEXT_REDIS_QUEUE_CONTAINER", "pipeline-erpnext-redis-queue")
+
     def _db_root_password(self):
         return os.environ.get("ERPNEXT_DB_ROOT_PASSWORD", "admin")
 
@@ -75,6 +78,42 @@ class ERPNextBackend(EnvironmentBackend):
             detail = result.stderr.strip() or result.stdout.strip() or "unknown error"
             raise RuntimeError(f"Command failed: {' '.join(cmd)}\n{detail}")
         return result.stdout.strip()
+
+    def _capture_container_tar(self, container, source_path, output_path, pre_command=None):
+        if pre_command:
+            self._run_command(["docker", "exec", container] + list(pre_command))
+        result = subprocess.run(
+            ["docker", "exec", container, "tar", "cf", "-", source_path],
+            cwd=REPO_ROOT,
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            detail = (
+                result.stderr.decode("utf-8", errors="replace").strip()
+                or result.stdout.decode("utf-8", errors="replace").strip()
+                or "unknown error"
+            )
+            raise RuntimeError(f"Command failed: docker exec {container} tar cf - {source_path}\n{detail}")
+        with open(output_path, "wb") as fh:
+            fh.write(result.stdout)
+
+    def _restore_container_tar(self, container, tar_path):
+        if not tar_path or not os.path.exists(tar_path):
+            return
+        with open(tar_path, "rb") as fh:
+            result = subprocess.run(
+                ["docker", "cp", "-", f"{container}:/"],
+                input=fh.read(),
+                cwd=REPO_ROOT,
+                capture_output=True,
+            )
+        if result.returncode != 0:
+            detail = (
+                result.stderr.decode("utf-8", errors="replace").strip()
+                or result.stdout.decode("utf-8", errors="replace").strip()
+                or "unknown error"
+            )
+            raise RuntimeError(f"Command failed: docker cp - {container}:/\n{detail}")
 
     def _wait_for_erpnext(self, timeout=480, interval=5):
         import requests
@@ -183,6 +222,7 @@ class ERPNextBackend(EnvironmentBackend):
         checkpoint_root = tempfile.mkdtemp(prefix="erpnext-try-backup-")
         sites_snapshot_dir = os.path.join(checkpoint_root, "sites")
         dump_path = os.path.join(checkpoint_root, "erpnext.sql")
+        redis_queue_tar = os.path.join(checkpoint_root, "redis_queue.tar")
         self._stop_stack()
         try:
             shutil.copytree(self._sites_dir(), sites_snapshot_dir)
@@ -201,6 +241,12 @@ class ERPNextBackend(EnvironmentBackend):
             )
             self._wait_for_db()
             self._dump_database(dump_path)
+            self._capture_container_tar(
+                self._redis_queue_container(),
+                "/data",
+                redis_queue_tar,
+                pre_command=["redis-cli", "SAVE"],
+            )
         finally:
             self._start_runtime_stack()
         checkpoint = {
@@ -208,6 +254,7 @@ class ERPNextBackend(EnvironmentBackend):
             "checkpoint_root": checkpoint_root,
             "sites_snapshot_dir": sites_snapshot_dir,
             "dump_path": dump_path,
+            "redis_queue_tar": redis_queue_tar,
         }
         self._active_try_checkpoint = checkpoint
         return checkpoint
@@ -219,6 +266,7 @@ class ERPNextBackend(EnvironmentBackend):
         try:
             shutil.rmtree(self._sites_dir(), ignore_errors=True)
             shutil.copytree(checkpoint["sites_snapshot_dir"], self._sites_dir())
+            self._restore_container_tar(self._redis_queue_container(), checkpoint.get("redis_queue_tar"))
             self._run_command(
                 [
                     "docker",

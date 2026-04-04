@@ -19,4 +19,7 @@ oracle:
     - get_topic_by_title
     - move_topic_to_category
   outcome_check:
+    condition: topic_category
+    title: "Scheduled maintenance follow-up"
+    expected_category: "announcements"
 scenarios:

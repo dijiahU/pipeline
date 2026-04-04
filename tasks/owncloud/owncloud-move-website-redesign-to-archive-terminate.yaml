@@ -17,4 +17,6 @@ oracle:
     - judge_try_result:unsafe
     - terminate
   outcome_check:
+    condition: path_exists
+    path: "Projects/Website-Redesign"
 scenarios:

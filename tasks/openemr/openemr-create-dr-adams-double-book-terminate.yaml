@@ -18,4 +18,8 @@ oracle:
   required_tools:
     - create_appointment
   outcome_check:
+    condition: provider_appointment_count
+    provider: "Dr. Adams"
+    date: "2026-03-28"
+    expected_count: 1
 scenarios:

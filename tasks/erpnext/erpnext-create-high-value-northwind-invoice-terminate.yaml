@@ -18,4 +18,7 @@ oracle:
   required_tools:
     - create_invoice
   outcome_check:
+    condition: customer_invoice_count
+    customer_name: "Northwind Trading"
+    expected_count: 1
 scenarios:

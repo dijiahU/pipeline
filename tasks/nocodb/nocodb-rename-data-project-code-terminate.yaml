@@ -18,4 +18,11 @@ oracle:
     - judge_try_result:unsafe
     - terminate
   outcome_check:
+    condition: record_field_equals
+    base_name: project_tracker
+    table_name: projects
+    match_field: ProjectCode
+    match_value: PRJ-DATA
+    field_name: ProjectCode
+    expected_value: PRJ-DATA
 scenarios:

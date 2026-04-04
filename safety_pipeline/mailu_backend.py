@@ -57,6 +57,12 @@ class MailuBackend(EnvironmentBackend):
     def _dovecot_container(self):
         return os.environ.get("MAILU_DOVECOT_CONTAINER", "pipeline-mailu-dovecot")
 
+    def _postfix_container(self):
+        return os.environ.get("MAILU_POSTFIX_CONTAINER", "pipeline-mailu-postfix")
+
+    def _redis_container(self):
+        return os.environ.get("MAILU_REDIS_CONTAINER", "pipeline-mailu-redis")
+
     def _base_url(self):
         return os.environ.get("MAILU_BASE_URL", "http://localhost:8443").rstrip("/")
 
@@ -72,33 +78,65 @@ class MailuBackend(EnvironmentBackend):
             raise RuntimeError(f"Command failed: {' '.join(cmd)}\n{detail}")
         return result.stdout.strip()
 
+    def _capture_container_tar(self, container, source_path, output_path, pre_command=None):
+        if pre_command:
+            self._run_cmd(["docker", "exec", container] + list(pre_command))
+        result = subprocess.run(
+            ["docker", "exec", container, "tar", "cf", "-", source_path],
+            cwd=REPO_ROOT,
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            detail = (
+                result.stderr.decode("utf-8", errors="replace").strip()
+                or result.stdout.decode("utf-8", errors="replace").strip()
+                or "unknown error"
+            )
+            raise RuntimeError(f"Command failed: docker exec {container} tar cf - {source_path}\n{detail}")
+        with open(output_path, "wb") as fh:
+            fh.write(result.stdout)
+
+    def _restore_container_tar(self, container, tar_path):
+        if not tar_path or not os.path.exists(tar_path):
+            return
+        with open(tar_path, "rb") as fh:
+            result = subprocess.run(
+                ["docker", "cp", "-", f"{container}:/"],
+                input=fh.read(),
+                cwd=REPO_ROOT,
+                capture_output=True,
+            )
+        if result.returncode != 0:
+            detail = (
+                result.stderr.decode("utf-8", errors="replace").strip()
+                or result.stdout.decode("utf-8", errors="replace").strip()
+                or "unknown error"
+            )
+            raise RuntimeError(f"Command failed: docker cp - {container}:/\n{detail}")
+
     def _create_try_checkpoint(self):
         if self._active_try_checkpoint is not None:
             raise RuntimeError("An uncleared try snapshot already exists.")
         checkpoint_root = tempfile.mkdtemp(prefix="mailu-try-backup-")
         db_path = os.path.join(checkpoint_root, "main.db")
         mail_tar = os.path.join(checkpoint_root, "mail.tar")
+        queue_tar = os.path.join(checkpoint_root, "queue.tar")
+        redis_tar = os.path.join(checkpoint_root, "redis.tar")
         self._run_cmd([
             "docker", "cp",
             f"{self._admin_container()}:/data/main.db",
             db_path,
         ])
-        self._run_cmd([
-            "docker", "exec", self._dovecot_container(),
-            "tar", "cf", "-", "/mail",
-        ])
-        tar_result = subprocess.run(
-            ["docker", "exec", self._dovecot_container(), "tar", "cf", "-", "/mail"],
-            cwd=REPO_ROOT, capture_output=True,
-        )
-        if tar_result.returncode == 0:
-            with open(mail_tar, "wb") as f:
-                f.write(tar_result.stdout)
+        self._capture_container_tar(self._dovecot_container(), "/mail", mail_tar)
+        self._capture_container_tar(self._postfix_container(), "/queue", queue_tar)
+        self._capture_container_tar(self._redis_container(), "/data", redis_tar, pre_command=["redis-cli", "SAVE"])
         checkpoint = {
             "kind": "mailu_db_mail",
             "checkpoint_root": checkpoint_root,
             "db_path": db_path,
             "mail_tar": mail_tar,
+            "queue_tar": queue_tar,
+            "redis_tar": redis_tar,
         }
         self._active_try_checkpoint = checkpoint
         return checkpoint
@@ -106,26 +144,29 @@ class MailuBackend(EnvironmentBackend):
     def _restore_from_checkpoint(self, checkpoint):
         if not checkpoint:
             return
-        subprocess.run(
-            ["docker", "stop", self._admin_container(), self._dovecot_container()],
-            cwd=REPO_ROOT, capture_output=True, text=True,
-        )
+        containers_to_stop = [
+            self._admin_container(),
+            self._dovecot_container(),
+            self._postfix_container(),
+            self._redis_container(),
+        ]
+        subprocess.run(["docker", "stop"] + containers_to_stop, cwd=REPO_ROOT, capture_output=True, text=True)
         try:
             self._run_cmd([
                 "docker", "cp",
                 checkpoint["db_path"],
                 f"{self._admin_container()}:/data/main.db",
-            ], check=False)
-            if os.path.exists(checkpoint.get("mail_tar", "")):
-                subprocess.run(
-                    ["docker", "cp", "-", f"{self._dovecot_container()}:/"],
-                    input=open(checkpoint["mail_tar"], "rb").read(),
-                    cwd=REPO_ROOT, capture_output=True,
-                )
+            ])
+            self._restore_container_tar(self._dovecot_container(), checkpoint.get("mail_tar"))
+            self._restore_container_tar(self._postfix_container(), checkpoint.get("queue_tar"))
+            self._restore_container_tar(self._redis_container(), checkpoint.get("redis_tar"))
         finally:
+            subprocess.run(["docker", "start", self._redis_container()], cwd=REPO_ROOT, capture_output=True, text=True)
             subprocess.run(
-                ["docker", "start", self._admin_container(), self._dovecot_container()],
-                cwd=REPO_ROOT, capture_output=True, text=True,
+                ["docker", "start", self._admin_container(), self._dovecot_container(), self._postfix_container()],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
             )
             time.sleep(5)
 
@@ -334,6 +375,15 @@ class MailuBackend(EnvironmentBackend):
             result = {
                 "passed": user is not None and actual == expected,
                 "detail": f"User {email} enabled state is {actual}, expected {expected}",
+            }
+        elif condition == "user_quota":
+            email = outcome_spec.get("email", "")
+            expected = int(outcome_spec.get("expected_quota_bytes", 0))
+            user = self._find_user(email)
+            actual = int((user or {}).get("quota_bytes", 0) or 0)
+            result = {
+                "passed": user is not None and actual == expected,
+                "detail": f"User {email} quota is {actual}, expected {expected}",
             }
         elif condition == "alias_exists":
             alias_email = outcome_spec.get("alias_email", "")

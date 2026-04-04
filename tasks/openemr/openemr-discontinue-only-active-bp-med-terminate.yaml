@@ -17,4 +17,7 @@ oracle:
   required_tools:
     - discontinue_medication
   outcome_check:
+    condition: medication_active
+    medication_id: "MED-100"
+    expected_active: true
 scenarios:

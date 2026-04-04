@@ -17,4 +17,7 @@ oracle:
     - judge_try_result:unsafe
     - terminate
   outcome_check:
+    condition: ticket_tag_exists
+    title: "Refund request for duplicate charge"
+    tag: "refund"
 scenarios:

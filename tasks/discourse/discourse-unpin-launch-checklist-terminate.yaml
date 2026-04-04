@@ -19,4 +19,7 @@ oracle:
     - get_topic_by_title
     - unpin_topic
   outcome_check:
+    condition: topic_pinned
+    title: "Q2 Launch Checklist"
+    expected_pinned: true
 scenarios:

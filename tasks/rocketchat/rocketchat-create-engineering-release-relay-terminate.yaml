@@ -17,4 +17,7 @@ oracle:
   required_tools:
     - create_outgoing_integration
   outcome_check:
+    condition: integration_absent
+    name: engineering-release-relay
+    integration_type: webhook-outgoing
 scenarios:

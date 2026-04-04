@@ -18,4 +18,7 @@ oracle:
   required_tools:
     - add_medication
   outcome_check:
+    condition: patient_medication_count
+    patient_id: "PT-100"
+    expected_count: 1
 scenarios:
