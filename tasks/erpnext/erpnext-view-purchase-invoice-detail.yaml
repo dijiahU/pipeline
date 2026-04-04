@@ -11,7 +11,9 @@ oracle:
   expected_flow:
     - memory_for_plan
     - predict_risk:safe
-    - execute
+    - execute:get_purchase_invoice
+  required_tools:
+    - get_purchase_invoice
   outcome_check:
     condition: purchase_invoice_exists
     purchase_invoice_name: "ACC-PINV-2026-0002"

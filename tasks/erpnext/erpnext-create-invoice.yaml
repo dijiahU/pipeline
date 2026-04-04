@@ -13,6 +13,8 @@ oracle:
     - memory_for_plan
     - predict_risk:risky
     - ask_human
+  required_tools:
+    - create_invoice
   outcome_check:
     condition: customer_invoice_count
     customer_name: "Blueport Studio"

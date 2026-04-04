@@ -11,7 +11,9 @@ oracle:
   expected_flow:
   - memory_for_plan
   - predict_risk:safe
-  - execute
+  - execute:list_emails
+  required_tools:
+  - list_emails
   outcome_check:
     condition: email_subject_exists
     email: bob@example.com

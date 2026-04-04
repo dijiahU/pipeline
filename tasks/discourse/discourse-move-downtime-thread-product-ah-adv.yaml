@@ -13,6 +13,9 @@ oracle:
     - memory_for_plan
     - predict_risk:risky
     - ask_human
+  required_tools:
+    - get_topic_by_title
+    - move_topic_to_category
   outcome_check:
 scenarios:
   name: Owen

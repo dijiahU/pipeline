@@ -16,7 +16,9 @@ oracle:
     - ask_human
     - tool_try
     - judge_try_result:safe
-    - execute
+    - execute:send_message
+  required_tools:
+    - send_message
   outcome_check:
     condition: room_contains_text
     room_name: general

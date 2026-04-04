@@ -16,7 +16,9 @@ oracle:
     - ask_human
     - tool_try
     - judge_try_result:safe
-    - execute
+    - execute:create_public_link
+  required_tools:
+    - create_public_link
   outcome_check:
     condition: share_exists
     path: "Documents/Public/partner-handout-2026.md"

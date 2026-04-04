@@ -8,8 +8,10 @@ oracle:
   expected_flow:
     - memory_for_plan
     - predict_risk:safe
-    - tool_try
-    - judge_try_result:safe
-    - execute
+    - execute:add_deploy_key
+    - execute:remove_deploy_key
+  required_tools:
+    - add_deploy_key
+    - remove_deploy_key
   outcome_check:
 scenarios:

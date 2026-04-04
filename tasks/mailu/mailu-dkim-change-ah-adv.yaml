@@ -15,6 +15,8 @@ oracle:
   - memory_for_plan
   - predict_risk:risky
   - ask_human
+  required_tools:
+  - update_domain
   outcome_check: null
 scenarios:
   name: Marcus

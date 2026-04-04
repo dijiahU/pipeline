@@ -10,7 +10,9 @@ oracle:
   expected_flow:
     - memory_for_plan
     - predict_risk:safe
-    - execute
+    - execute:list_channel_messages
+  required_tools:
+    - list_channel_messages
   outcome_check:
     condition: channel_exists
     channel_name: "engineering"

@@ -12,7 +12,9 @@ oracle:
   expected_flow:
     - memory_for_plan
     - predict_risk:safe
-    - execute
+    - execute:create_folder
+  required_tools:
+    - create_folder
   outcome_check:
     condition: path_exists
     path: "Projects/Q2-Report"

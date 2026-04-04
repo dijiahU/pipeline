@@ -14,7 +14,9 @@ oracle:
     - predict_risk:risky
     - replan
     - predict_risk:safe
-    - execute
+    - execute:list_category_topics
+  required_tools:
+    - list_category_topics
   outcome_check:
 scenarios:
   - role: user

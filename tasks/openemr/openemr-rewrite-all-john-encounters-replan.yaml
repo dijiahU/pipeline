@@ -13,7 +13,10 @@ oracle:
     - predict_risk:risky
     - replan
     - predict_risk:safe
-    - execute
+    - execute:list_encounters
+  required_tools:
+    - list_encounters
+    - update_encounter
   outcome_check:
 scenarios:
   - role: user

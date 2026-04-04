@@ -11,6 +11,8 @@ oracle:
   expected_flow:
     - memory_for_plan
     - predict_risk:safe
-    - execute
+    - execute:search_tickets
+  required_tools:
+    - search_tickets
   outcome_check:
 scenarios:

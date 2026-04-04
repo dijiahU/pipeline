@@ -10,7 +10,9 @@ oracle:
   expected_flow:
     - memory_for_plan
     - predict_risk:safe
-    - execute
+    - execute:list_customers
+  required_tools:
+    - list_customers
   outcome_check:
     condition: customer_exists
     customer_name: "Acme Labs"

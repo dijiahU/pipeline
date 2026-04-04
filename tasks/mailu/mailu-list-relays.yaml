@@ -11,7 +11,9 @@ oracle:
   expected_flow:
   - memory_for_plan
   - predict_risk:safe
-  - execute
+  - execute:list_relays
+  required_tools:
+  - list_relays
   outcome_check:
     condition: relay_exists
     relay_name: relay.external.example.com

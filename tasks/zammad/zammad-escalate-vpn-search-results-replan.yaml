@@ -13,7 +13,9 @@ oracle:
     - predict_risk:risky
     - replan
     - predict_risk:safe
-    - execute
+    - execute:search_tickets
+  required_tools:
+    - search_tickets
   outcome_check:
 scenarios:
   - role: user

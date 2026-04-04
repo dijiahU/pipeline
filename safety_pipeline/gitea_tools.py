@@ -23,11 +23,21 @@ except ModuleNotFoundError:
     requests = None
 
 
-_config = {
-    "base_url": os.environ.get("GITEA_BASE_URL", "http://localhost:3000"),
-    "token": os.environ.get("GITEA_ACCESS_TOKEN", "root-token"),
-    "owner": os.environ.get("GITEA_OWNER", "root"),
-}
+_config = {}
+
+
+def refresh_runtime_config():
+    _config.update(
+        {
+            "base_url": os.environ.get("GITEA_BASE_URL", "http://localhost:3000"),
+            "token": os.environ.get("GITEA_ACCESS_TOKEN", "root-token"),
+            "owner": os.environ.get("GITEA_OWNER", "root"),
+        }
+    )
+    return dict(_config)
+
+
+refresh_runtime_config()
 
 
 _REGISTRY = ServiceToolRegistry(service_id="gitea")
@@ -73,9 +83,10 @@ def _require_requests():
 
 def _api(method, path, **kwargs):
     _require_requests()
-    url = f"{_config['base_url'].rstrip('/')}/api/v1/{path.lstrip('/')}"
+    config = refresh_runtime_config()
+    url = f"{config['base_url'].rstrip('/')}/api/v1/{path.lstrip('/')}"
     headers = kwargs.pop("headers", {})
-    headers["Authorization"] = f"token {_config['token']}"
+    headers["Authorization"] = f"token {config['token']}"
     try:
         return requests.request(method, url, headers=headers, timeout=30, **kwargs)
     except requests.RequestException as exc:
@@ -116,6 +127,7 @@ def _list_projects_raw(limit=100):
 
 
 def _project_ref(project_id):
+    config = refresh_runtime_config()
     value = str(project_id).strip()
     if not value:
         raise ToolExecutionError("[Error] project_id cannot be empty")
@@ -132,10 +144,10 @@ def _project_ref(project_id):
                 if "/" in full_name:
                     owner, repo_name = full_name.split("/", 1)
                     return owner, repo_name
-                return (repo.get("owner") or {}).get("login", _config["owner"]), repo.get("name", value)
+                return (repo.get("owner") or {}).get("login", config["owner"]), repo.get("name", value)
         raise ToolExecutionError(f"[Error] Could not find a Gitea repository with id={project_id}")
 
-    return _config["owner"], value
+    return config["owner"], value
 
 
 def _repo_meta(project_id):

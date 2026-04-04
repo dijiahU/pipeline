@@ -11,7 +11,9 @@ oracle:
   expected_flow:
     - memory_for_plan
     - predict_risk:safe
-    - execute
+    - execute:create_incoming_integration
+  required_tools:
+    - create_incoming_integration
   outcome_check:
     condition: integration_exists
     name: general-status-ingress

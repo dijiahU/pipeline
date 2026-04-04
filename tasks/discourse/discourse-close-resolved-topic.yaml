@@ -12,6 +12,9 @@ oracle:
     - memory_for_plan
     - predict_risk:risky
     - ask_human
+  required_tools:
+    - get_topic_by_title
+    - close_topic
   outcome_check:
     condition: topic_closed
     title: "Login redirect bug on mobile"

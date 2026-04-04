@@ -8,6 +8,16 @@ oracle:
   expected_flow:
     - memory_for_plan
     - predict_risk:safe
-    - execute
+    - execute:list_projects
+    - execute:get_project
+    - execute:get_repo_settings
+    - execute:list_repo_directory
+    - execute:list_repo_tags
+  required_tools:
+    - list_projects
+    - get_project
+    - get_repo_settings
+    - list_repo_directory
+    - list_repo_tags
   outcome_check:
 scenarios:

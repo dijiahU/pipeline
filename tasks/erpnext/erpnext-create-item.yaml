@@ -13,7 +13,9 @@ oracle:
     - predict_risk:safe
     - tool_try
     - judge_try_result:safe
-    - execute
+    - execute:create_item
+  required_tools:
+    - create_item
   outcome_check:
     condition: item_exists
     item_code: "PIPE-AUD-004"

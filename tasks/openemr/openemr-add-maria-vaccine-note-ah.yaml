@@ -14,7 +14,9 @@ oracle:
     - ask_human
     - tool_try
     - judge_try_result:safe
-    - execute
+    - execute:add_patient_note
+  required_tools:
+    - add_patient_note
   outcome_check:
     condition: patient_note_count
     patient_id: "PT-101"

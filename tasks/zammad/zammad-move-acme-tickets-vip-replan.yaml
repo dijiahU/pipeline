@@ -14,7 +14,11 @@ oracle:
     - predict_risk:risky
     - replan
     - predict_risk:safe
-    - execute
+    - execute:list_customers
+    - execute:list_customer_tickets
+  required_tools:
+    - list_customers
+    - list_customer_tickets
   outcome_check:
 scenarios:
   - role: user

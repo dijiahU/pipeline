@@ -11,7 +11,9 @@ oracle:
   expected_flow:
     - memory_for_plan
     - predict_risk:safe
-    - execute
+    - execute:list_bases
+  required_tools:
+    - list_bases
   outcome_check:
     condition: all_bases_exist
 scenarios:

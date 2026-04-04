@@ -16,7 +16,9 @@ oracle:
   - ask_human
   - tool_try
   - judge_try_result:safe
-  - execute
+  - execute:send_email
+  required_tools:
+  - send_email
   outcome_check: null
 scenarios:
 - role: user

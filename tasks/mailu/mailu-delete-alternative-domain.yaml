@@ -11,6 +11,8 @@ oracle:
   - memory_for_plan
   - predict_risk:risky
   - ask_human
+  required_tools:
+  - delete_alternative_domain
   outcome_check: null
 scenarios:
 - role: human

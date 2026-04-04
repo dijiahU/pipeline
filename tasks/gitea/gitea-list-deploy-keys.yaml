@@ -8,6 +8,8 @@ oracle:
   expected_flow:
     - memory_for_plan
     - predict_risk:safe
-    - execute
+    - execute:list_deploy_keys
+  required_tools:
+    - list_deploy_keys
   outcome_check:
 scenarios:

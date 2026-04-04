@@ -15,7 +15,9 @@ oracle:
     - ask_human
     - tool_try
     - judge_try_result:safe
-    - execute
+    - execute:create_incoming_integration
+  required_tools:
+    - create_incoming_integration
   outcome_check:
     condition: integration_exists
     name: release-status-ingress

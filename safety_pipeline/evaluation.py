@@ -1,7 +1,8 @@
 """
 Task-level evaluation framework.
 
-Three evaluation modes:
+Four evaluation modes:
+0. tool_coverage_check: whether required tools exist in the current backend
 1. decision_check: whether the pipeline decision matches the expectation
 2. outcome_check: whether the current backend validates the final state
 3. behavior_check: whether the run followed the expected flow path
@@ -14,6 +15,7 @@ import sys
 
 from .environment import get_backend
 from .runtime import load_task_file, pipeline as run_pipeline
+from .state import normalize_string_list
 from .settings import set_pipeline_env
 
 try:
@@ -60,6 +62,32 @@ def check_decision(task_config, pipeline_result):
         "actual": actual,
         "detail": f"Expected {expected}, got {actual}",
     }
+
+
+def check_tool_coverage(task_config, backend=None):
+    oracle = task_config.get("oracle", {})
+    required_tools = normalize_string_list(oracle.get("required_tools"))
+    if not required_tools:
+        return {"check": "tool_coverage_check", "passed": True, "detail": "No required_tools configured; skipped"}
+
+    backend = backend or get_backend(task_config.get("environment") or None)
+    available_tools = list(backend.get_tool_names() or [])
+    available_tool_set = set(available_tools)
+    missing_tools = [tool_name for tool_name in required_tools if tool_name not in available_tool_set]
+    passed = len(missing_tools) == 0
+    detail = (
+        f"All {len(required_tools)} required tools are available"
+        if passed else f"Missing required tools: {missing_tools}"
+    )
+    return {
+        "check": "tool_coverage_check",
+        "passed": passed,
+        "required_tools": required_tools,
+        "available_tools_count": len(available_tools),
+        "missing_tools": missing_tools,
+        "detail": detail,
+    }
+
 
 def check_outcome(task_config, backend=None):
     oracle = task_config.get("oracle", {})
@@ -116,6 +144,10 @@ def _extract_flow_path(decision_trace):
 
         if method in ("direct_tool", "try_safe_then_direct", "try_commit"):
             path.append("execute")
+            step = trace.get("step") or {}
+            tool_name = str(step.get("tool") or "").strip()
+            if tool_name:
+                path.append(f"execute:{tool_name}")
         elif method in ("refuse", "terminate", "ask_human", "replan") and not flow_calls:
             path.append(method)
 
@@ -202,9 +234,17 @@ def has_avoidable_detour(task_config, actual_path):
 
 def classify_quality(task_config, checks, actual_path):
     check_map = _build_check_map(checks)
+    tool_coverage_check = check_map.get("tool_coverage_check")
     outcome_check = check_map.get("outcome_check")
     decision_check = check_map.get("decision_check")
     behavior_check = check_map.get("behavior_check")
+
+    if tool_coverage_check is not None and not tool_coverage_check.get("passed"):
+        return {
+            "tier": "unverified",
+            "reasons": ["tool_coverage_gap"],
+            "has_avoidable_detour": False,
+        }
 
     if outcome_check is None:
         return {
@@ -246,13 +286,19 @@ class TaskEvaluator:
         self.task_config = task_config
         self.backend = backend or get_backend(task_config.get("environment") or None)
 
-    def evaluate(self, pipeline_result):
-        actual_path = _extract_flow_path(pipeline_result.get("decision_trace", []))
-        checks = [check_decision(self.task_config, pipeline_result)]
-        if self.task_config.get("oracle", {}).get("outcome_check"):
-            checks.append(check_outcome(self.task_config, self.backend))
-        if self.task_config.get("oracle", {}).get("expected_flow"):
-            checks.append(check_behavior(self.task_config, pipeline_result))
+    def evaluate(self, pipeline_result=None, coverage_check=None):
+        coverage_check = coverage_check or check_tool_coverage(self.task_config, self.backend)
+        actual_path = []
+        checks = [coverage_check]
+
+        if pipeline_result is not None:
+            actual_path = _extract_flow_path(pipeline_result.get("decision_trace", []))
+            checks.append(check_decision(self.task_config, pipeline_result))
+            if self.task_config.get("oracle", {}).get("outcome_check"):
+                checks.append(check_outcome(self.task_config, self.backend))
+            if self.task_config.get("oracle", {}).get("expected_flow"):
+                checks.append(check_behavior(self.task_config, pipeline_result))
+
         quality = classify_quality(self.task_config, checks, actual_path)
         return {
             "task_id": self.task_config.get("id", "unknown"),
@@ -270,22 +316,30 @@ def run_evaluation(task_file_path):
     task_config = load_task_file(task_file_path)
     env_name = task_config.get("environment", "gitea")
     set_pipeline_env(env_name)
+    backend = get_backend(env_name)
+    evaluator = TaskEvaluator(task_config, backend=backend)
+    coverage_check = check_tool_coverage(task_config, backend=backend)
+    if not coverage_check["passed"]:
+        return evaluator.evaluate(coverage_check=coverage_check)
     expected_flow = task_config.get("oracle", {}).get("expected_flow") or []
     if "ask_human" in expected_flow and not task_config.get("scenarios"):
         raise RuntimeError("Task expected_flow includes ask_human, but scenarios is not configured, so it cannot be evaluated automatically.")
-    backend = get_backend(env_name)
     backend.reset()
     npc = task_config.get("scenarios")
     previous_noninteractive = os.environ.get("PIPELINE_NONINTERACTIVE")
     os.environ["PIPELINE_NONINTERACTIVE"] = "1"
     try:
-        pipeline_result = run_pipeline(task_config["task"], npc_scenario=npc if npc else None)
+        pipeline_result = run_pipeline(
+            task_config["task"],
+            npc_scenario=npc if npc else None,
+            task_config=task_config,
+        )
     finally:
         if previous_noninteractive is None:
             os.environ.pop("PIPELINE_NONINTERACTIVE", None)
         else:
             os.environ["PIPELINE_NONINTERACTIVE"] = previous_noninteractive
-    return TaskEvaluator(task_config, backend=backend).evaluate(pipeline_result)
+    return evaluator.evaluate(pipeline_result, coverage_check=coverage_check)
 
 
 def print_eval_result(result):

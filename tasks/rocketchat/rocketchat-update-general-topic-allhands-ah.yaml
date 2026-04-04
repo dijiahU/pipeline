@@ -16,7 +16,9 @@ oracle:
     - ask_human
     - tool_try
     - judge_try_result:safe
-    - execute
+    - execute:set_channel_topic
+  required_tools:
+    - set_channel_topic
   outcome_check:
     condition: room_topic_equals
     room_name: general

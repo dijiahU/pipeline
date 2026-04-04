@@ -11,7 +11,9 @@ oracle:
   expected_flow:
     - memory_for_plan
     - predict_risk:safe
-    - execute
+    - execute:send_message
+  required_tools:
+    - send_message
   outcome_check:
     condition: channel_exists
     channel_name: "general"

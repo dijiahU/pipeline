@@ -14,7 +14,9 @@ oracle:
     - ask_human
     - tool_try
     - judge_try_result:safe
-    - execute
+    - execute:create_category
+  required_tools:
+    - create_category
   outcome_check:
     condition: category_exists
     category: "community-events"

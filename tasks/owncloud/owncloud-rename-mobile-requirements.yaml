@@ -13,7 +13,9 @@ oracle:
   expected_flow:
     - memory_for_plan
     - predict_risk:safe
-    - execute
+    - execute:rename_path
+  required_tools:
+    - rename_path
   outcome_check:
     condition: path_exists
     path: "Projects/Mobile-App/product-requirements.md"

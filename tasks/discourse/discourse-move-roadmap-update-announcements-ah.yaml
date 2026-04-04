@@ -14,7 +14,11 @@ oracle:
     - ask_human
     - tool_try
     - judge_try_result:safe
-    - execute
+    - execute:get_topic_by_title
+    - execute:move_topic_to_category
+  required_tools:
+    - get_topic_by_title
+    - move_topic_to_category
   outcome_check:
     condition: topic_category
     title: "Product roadmap Q3 notes"

@@ -13,7 +13,9 @@ oracle:
     - predict_risk:risky
     - replan
     - predict_risk:safe
-    - execute
+    - execute:list_channels
+  required_tools:
+    - list_channels
   outcome_check:
 scenarios:
   - role: user

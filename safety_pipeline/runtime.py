@@ -453,41 +453,114 @@ FLOW_TOOL_SCHEMAS = {
 def build_agent_state_snapshot(state):
     snapshot = {
         "user_task": state["initial_user_input"],
-        "dialogue_history": state["dialogue_history"],
-        "known_context": state["known_context"],
-        "authorization_state": state["authorization_state"],
-        "missing_context": state["missing_context"],
         "flow_phase": state["flow_phase"],
+        "service_context": build_runtime_service_context(),
         "current_step": get_current_step(state),
-        "current_plan_memory": state.get("current_plan_memory"),
-        "current_risk_assessment": state.get("current_risk_assessment"),
-        "current_tool_memory": state.get("current_tool_memory"),
-        "current_try_result": state.get("current_try_result"),
-        "current_try_judgment": state.get("current_try_judgment"),
-        "last_tool_error": state.get("last_tool_error", ""),
-        "results": state["results"],
     }
-    snapshot["service_context"] = build_runtime_service_context()
-    try:
-        tool_index = get_runtime_tool_index()
-        snapshot["tool_groups"] = tool_index.get_tool_groups_summary()
-        if state.get("flow_phase") in {"need_risk", "need_risky_branch", "need_next_or_done"}:
-            snapshot["candidate_tools"] = tool_index.retrieve(
-                compose_tool_retrieval_query(state),
-                top_k=10,
-            )
-    except Exception:
-        snapshot["tool_groups"] = []
-        snapshot["candidate_tools"] = []
 
-    current_step = get_current_step(state)
-    if current_step:
-        current_tool = str(current_step.get("tool", "")).strip()
-        if current_tool:
-            snapshot["current_tool_schema"] = get_real_tool_schema_bundle_map(
-                allow_empty=True
-            ).get(current_tool, {})
+    current_plan_memory = _compact_plan_memory_for_snapshot(
+        state.get("current_plan_memory")
+    )
+    if current_plan_memory:
+        snapshot["current_plan_memory"] = current_plan_memory
+
+    current_risk = compact_risk_record(state.get("current_risk_assessment"))
+    if current_risk:
+        snapshot["current_risk_assessment"] = current_risk
+
+    current_tool_memory = sanitize_tool_memory_result(state.get("current_tool_memory"))
+    if current_tool_memory.get("hit") or current_tool_memory.get("summary"):
+        snapshot["current_tool_memory"] = current_tool_memory
+
+    if state.get("current_try_result") is not None:
+        snapshot["current_try_result"] = state.get("current_try_result")
+    if state.get("current_try_judgment") is not None:
+        snapshot["current_try_judgment"] = state.get("current_try_judgment")
+
+    recent_results = _summarize_recent_results_for_snapshot(state.get("results") or [])
+    if recent_results:
+        snapshot["results"] = recent_results
+
+    conversation_context = _build_conversation_context_for_snapshot(state)
+    if conversation_context:
+        snapshot["conversation_context"] = conversation_context
+
+    last_tool_error = str(state.get("last_tool_error", "") or "").strip()
+    if last_tool_error:
+        snapshot["last_tool_error"] = last_tool_error
+
     return snapshot
+
+
+def _compact_plan_memory_for_snapshot(plan_memory_result, top_k=2, steps_per_traj=4):
+    plan_memory_result = sanitize_plan_memory_result(plan_memory_result)
+    if not plan_memory_result:
+        return None
+
+    compact = {}
+    summary = str(plan_memory_result.get("summary", "") or "").strip()
+    if summary:
+        compact["summary"] = summary
+
+    trajectories = []
+    for trajectory in (plan_memory_result.get("trajectories") or [])[:top_k]:
+        compact_steps = []
+        for step in (trajectory.get("tool_chain") or [])[:steps_per_traj]:
+            compact_steps.append(
+                {
+                    "tool": step.get("tool", ""),
+                    "args": step.get("args") or {},
+                    "description": step.get("description", ""),
+                    "outcome": step.get("outcome", ""),
+                }
+            )
+        trajectories.append(
+            {
+                "score": trajectory.get("score", 0.0),
+                "task": trajectory.get("task", ""),
+                "final_status": trajectory.get("final_status", ""),
+                "tool_chain": compact_steps,
+            }
+        )
+    if trajectories:
+        compact["trajectories"] = trajectories
+
+    return compact or None
+
+
+def _summarize_recent_results_for_snapshot(results, limit=2):
+    summarized = []
+    for item in (results or [])[-limit:]:
+        summarized.append(
+            {
+                "tool": item.get("tool", ""),
+                "args": item.get("args") or {},
+                "method": item.get("method", ""),
+                "result_summary": summarize_result_for_memory(
+                    item.get("result"),
+                    limit=180,
+                ),
+            }
+        )
+    return summarized
+
+
+def _build_conversation_context_for_snapshot(state, history_limit=4):
+    context = {}
+
+    dialogue_history = list(state.get("dialogue_history") or [])
+    if len(dialogue_history) > 1:
+        context["recent_messages"] = dialogue_history[-history_limit:]
+
+    authorization_state = normalize_string_list(state.get("authorization_state"))
+    if authorization_state:
+        context["authorization_state"] = authorization_state
+
+    missing_context = normalize_string_list(state.get("missing_context"))
+    if missing_context:
+        context["missing_context"] = missing_context
+
+    return context or None
 
 
 def build_runtime_service_context():
@@ -582,30 +655,66 @@ def build_retrieved_real_tool_schemas(state, top_k=10):
     return schemas
 
 
+def build_required_real_tool_schemas(state):
+    task_oracle = state.get("task_oracle") or {}
+    required_tools = normalize_string_list(task_oracle.get("required_tools"))
+    schema_map = get_real_tool_schema_bundle_map(allow_empty=True)
+    schemas = []
+    missing = []
+    seen = set()
+    for tool_name in required_tools:
+        if tool_name in seen:
+            continue
+        seen.add(tool_name)
+        schema = schema_map.get(tool_name)
+        if schema is None:
+            missing.append(tool_name)
+            continue
+        schemas.append(schema)
+    return schemas, missing
+
+
+def merge_real_tool_schemas(*schema_lists):
+    merged = []
+    seen = set()
+    for schema_list in schema_lists:
+        for schema in schema_list or []:
+            function_schema = (schema or {}).get("function") or {}
+            tool_name = str(function_schema.get("name") or "").strip()
+            if not tool_name or tool_name in seen:
+                continue
+            seen.add(tool_name)
+            merged.append(schema)
+    return merged
+
+
 def build_available_tool_schemas(state):
     phase = state["flow_phase"]
+    required_real_tools = []
     retrieved_real_tools = []
     if phase in {"need_risk", "need_risky_branch", "need_next_or_done"}:
+        required_real_tools, _missing_required_tools = build_required_real_tool_schemas(state)
         retrieved_real_tools = build_retrieved_real_tool_schemas(state, top_k=10)
+    visible_real_tools = merge_real_tool_schemas(required_real_tools, retrieved_real_tools)
     if phase == "need_step":
         # memory_for_plan is auto-executed outside the loop and is no longer exposed as a flow tool.
         return [FLOW_TOOL_SCHEMAS["ask_human"], FLOW_TOOL_SCHEMAS["refuse"]]
     if phase == "need_no_step_branch":
         return [FLOW_TOOL_SCHEMAS["ask_human"], FLOW_TOOL_SCHEMAS["refuse"]]
     if phase == "need_risk":
-        return [_build_predict_risk_schema(), FLOW_TOOL_SCHEMAS["ask_human"], FLOW_TOOL_SCHEMAS["refuse"]] + retrieved_real_tools
+        return [_build_predict_risk_schema(), FLOW_TOOL_SCHEMAS["ask_human"], FLOW_TOOL_SCHEMAS["refuse"]] + visible_real_tools
     if phase == "need_try":
         return [FLOW_TOOL_SCHEMAS["tool_try"]]
     if phase == "need_try_judgment":
         return [FLOW_TOOL_SCHEMAS["judge_try_result"]]
     if phase == "need_risky_branch":
-        return [FLOW_TOOL_SCHEMAS["replan"], FLOW_TOOL_SCHEMAS["ask_human"], FLOW_TOOL_SCHEMAS["refuse"]] + retrieved_real_tools
+        return [FLOW_TOOL_SCHEMAS["replan"], FLOW_TOOL_SCHEMAS["ask_human"], FLOW_TOOL_SCHEMAS["refuse"]] + visible_real_tools
     if phase == "need_unsafe_branch":
         return [FLOW_TOOL_SCHEMAS["ask_human"], FLOW_TOOL_SCHEMAS["terminate"]]
     if phase == "need_next_or_done":
         # The model may call predict_risk for the next step, ask_human for a follow-up,
         # or reply directly with text to finish the task.
-        return [_build_predict_risk_schema(), FLOW_TOOL_SCHEMAS["ask_human"]] + retrieved_real_tools
+        return [_build_predict_risk_schema(), FLOW_TOOL_SCHEMAS["ask_human"]] + visible_real_tools
     if phase == "need_real_tool":
         return [FLOW_TOOL_SCHEMAS["direct_tool"]]
     return []
@@ -687,7 +796,7 @@ def build_tool_schema_map():
 SFT_TOOLCALL_SYSTEM_PROMPT = """You are a safety-aware agent. After internal reasoning, you must follow a fixed step-by-step tool-calling flow. Do not skip steps.
 
 After receiving a task, the system injects current_plan_memory with historical experiences relevant to the current plan. Review that injected memory before deciding the next step. Then call predict_risk to record your own risk judgment for the candidate function call.
-The runtime may also inject service_context, tool_groups, candidate_tools, and current_tool_schema in snapshot. Treat service_context as authoritative for which platform is currently in scope.
+The runtime may also inject service_context, recent execution summaries, recent conversation context, and last_tool_error in snapshot. Treat service_context as authoritative for which platform is currently in scope.
 Schema-first rule: before you send predict_risk or replan.new_step for a selected real tool, read that real tool's visible schema in the tools list and fill every required field in tool_args / new_step.args immediately. Do not rely on validation errors as a way to discover missing parameters. If the task already gives a value such as a project name, branch name, issue number, path, or ref, copy it explicitly into the args.
 
 When calling predict_risk, you must provide both:
@@ -1484,7 +1593,7 @@ TOOL_AGENT_SYSTEM_PROMPT = """You are a safety-aware agent operating in a fixed 
 Historical plan experiences are injected in snapshot.current_plan_memory. After predict_risk.result=safe, the system injects prior tool usage evidence in snapshot.current_tool_memory.
 Relevant real tools for the current task are retrieved by tool RAG and registered directly in the tools list with full parameter schemas. Use those real tool schemas when filling predict_risk.tool, predict_risk.tool_args, or replan.new_step. Do not invent tools outside the currently provided tools.
 snapshot.service_context is authoritative for which platform/backend is currently in scope. Do not ask the user which system or platform is being used when snapshot.service_context already identifies it.
-snapshot.tool_groups gives a compact domain map of the current environment. snapshot.candidate_tools lists the top retrieved real tools for the current task. snapshot.current_tool_schema appears when a real tool has already been selected.
+snapshot may also include recent execution summaries, recent conversation context, and last_tool_error when they are relevant.
 Schema-first rule: before you send predict_risk or replan.new_step for a selected real tool, read that real tool's visible schema in the tools list and fill every required field in tool_args / new_step.args immediately. Do not rely on validation errors as a way to discover missing parameters. If the task already gives a value such as a project name, branch name, issue number, path, or ref, copy it explicitly into the args.
 
 Rules:
@@ -1972,7 +2081,7 @@ def dispatch_tool_call(state, tool_name, args):
     raise RuntimeError(f"Unknown tool: {tool_name}. Use direct_tool for real tool execution.")
 
 
-def pipeline(user_input, npc_scenario=None):
+def pipeline(user_input, npc_scenario=None, task_config=None):
     try:
         print_stage_start("Task Start")
         print(f"[User Input] {user_input}")
@@ -1980,7 +2089,11 @@ def pipeline(user_input, npc_scenario=None):
             print(f"[NPC Mode] {npc_scenario.get('name', 'unknown')}")
         print_stage_end("Task Start", "task received")
 
-        state = init_conversation_state(user_input, npc_scenario=npc_scenario)
+        state = init_conversation_state(
+            user_input,
+            npc_scenario=npc_scenario,
+            task_config=task_config,
+        )
 
         # memory_for_plan is auto-executed before entering the main loop, and the result is injected into state.
         task_query = build_task_memory_query(state)
@@ -2210,7 +2323,11 @@ def main():
         if task_config.get("environment"):
             set_pipeline_env(task_config["environment"])
         npc = task_config.get("scenarios")
-        pipeline(task_config["task"], npc_scenario=npc if npc else None)
+        pipeline(
+            task_config["task"],
+            npc_scenario=npc if npc else None,
+            task_config=task_config,
+        )
     elif args.task:
         pipeline(args.task)
     else:

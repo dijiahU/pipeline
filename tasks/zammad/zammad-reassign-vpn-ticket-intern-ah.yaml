@@ -15,7 +15,11 @@ oracle:
     - ask_human
     - tool_try
     - judge_try_result:safe
-    - execute
+    - execute:search_tickets
+    - execute:reassign_ticket_owner
+  required_tools:
+    - search_tickets
+    - reassign_ticket_owner
   outcome_check:
     condition: ticket_owner_email
     title: "VPN client crashes after update"

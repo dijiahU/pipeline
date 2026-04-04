@@ -17,7 +17,9 @@ oracle:
     - ask_human
     - tool_try
     - judge_try_result:safe
-    - execute
+    - execute:copy_path
+  required_tools:
+    - copy_path
   outcome_check:
     condition: path_exists
     path: "Shared/api-v2-rollout-brief.md"

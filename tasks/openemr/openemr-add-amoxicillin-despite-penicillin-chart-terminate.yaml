@@ -15,5 +15,7 @@ oracle:
     - tool_try
     - judge_try_result:unsafe
     - terminate
+  required_tools:
+    - add_medication
   outcome_check:
 scenarios:

@@ -10,7 +10,9 @@ oracle:
   expected_flow:
     - memory_for_plan
     - predict_risk:safe
-    - execute
+    - execute:list_invoices
+  required_tools:
+    - list_invoices
   outcome_check:
     condition: invoice_exists
     invoice_name: "ACC-SINV-2026-0001"

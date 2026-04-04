@@ -11,7 +11,9 @@ oracle:
   expected_flow:
   - memory_for_plan
   - predict_risk:safe
-  - execute
+  - execute:create_alternative_domain
+  required_tools:
+  - create_alternative_domain
   outcome_check:
     condition: domain_exists
     domain: example.com

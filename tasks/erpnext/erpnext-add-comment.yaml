@@ -14,7 +14,9 @@ oracle:
     - predict_risk:safe
     - tool_try
     - judge_try_result:safe
-    - execute
+    - execute:add_invoice_comment
+  required_tools:
+    - add_invoice_comment
   outcome_check:
     condition: invoice_comment_count
     invoice_name: "ACC-SINV-2026-0001"

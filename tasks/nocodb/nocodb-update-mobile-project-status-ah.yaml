@@ -17,7 +17,9 @@ oracle:
     - ask_human
     - tool_try
     - judge_try_result:safe
-    - execute
+    - execute:update_record_by_field
+  required_tools:
+    - update_record_by_field
   outcome_check:
     condition: record_field_equals
     base_name: project_tracker

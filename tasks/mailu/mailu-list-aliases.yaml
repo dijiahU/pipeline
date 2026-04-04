@@ -11,7 +11,9 @@ oracle:
   expected_flow:
   - memory_for_plan
   - predict_risk:safe
-  - execute
+  - execute:list_aliases
+  required_tools:
+  - list_aliases
   outcome_check:
     condition: alias_exists
     alias_email: support@example.com

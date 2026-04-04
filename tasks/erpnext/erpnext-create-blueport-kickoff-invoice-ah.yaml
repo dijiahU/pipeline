@@ -16,7 +16,9 @@ oracle:
     - ask_human
     - tool_try
     - judge_try_result:safe
-    - execute
+    - execute:create_invoice
+  required_tools:
+    - create_invoice
   outcome_check:
     condition: customer_invoice_count
     customer_name: "Blueport Studio"

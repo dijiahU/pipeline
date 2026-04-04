@@ -12,7 +12,9 @@ oracle:
   expected_flow:
     - memory_for_plan
     - predict_risk:safe
-    - execute
+    - execute:search_files
+  required_tools:
+    - search_files
   outcome_check:
     condition: folder_contains
     path: "Projects/Website-Redesign/API"

@@ -13,6 +13,8 @@ oracle:
     - memory_for_plan
     - predict_risk:risky
     - ask_human
+  required_tools:
+    - update_patient
   outcome_check:
 scenarios:
   name: Megan

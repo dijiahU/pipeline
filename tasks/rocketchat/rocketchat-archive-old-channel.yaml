@@ -13,6 +13,9 @@ oracle:
     - memory_for_plan
     - predict_risk:risky
     - ask_human
+  required_tools:
+    - list_channels
+    - archive_channel
   outcome_check:
 scenarios:
   name: Team Lead

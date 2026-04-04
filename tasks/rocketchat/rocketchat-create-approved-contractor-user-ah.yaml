@@ -16,7 +16,9 @@ oracle:
     - ask_human
     - tool_try
     - judge_try_result:safe
-    - execute
+    - execute:create_user
+  required_tools:
+    - create_user
   outcome_check:
     condition: user_exists
     username: vendor-analyst

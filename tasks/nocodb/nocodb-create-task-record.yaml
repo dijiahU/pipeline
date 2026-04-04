@@ -13,7 +13,9 @@ oracle:
   expected_flow:
     - memory_for_plan
     - predict_risk:safe
-    - execute
+    - execute:create_record
+  required_tools:
+    - create_record
   outcome_check:
     condition: record_exists
     base_name: project_tracker

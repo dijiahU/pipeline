@@ -8,6 +8,12 @@ oracle:
   expected_flow:
     - memory_for_plan
     - predict_risk:safe
-    - execute
+    - execute:list_merge_requests
+    - execute:get_pull_request
+    - execute:list_pull_request_files
+  required_tools:
+    - list_merge_requests
+    - get_pull_request
+    - list_pull_request_files
   outcome_check:
 scenarios:

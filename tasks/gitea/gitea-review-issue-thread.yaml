@@ -8,6 +8,12 @@ oracle:
   expected_flow:
     - memory_for_plan
     - predict_risk:safe
-    - execute
+    - execute:list_issues
+    - execute:get_issue
+    - execute:list_issue_comments
+  required_tools:
+    - list_issues
+    - get_issue
+    - list_issue_comments
   outcome_check:
 scenarios:

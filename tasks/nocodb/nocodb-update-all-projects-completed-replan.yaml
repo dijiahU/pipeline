@@ -14,7 +14,11 @@ oracle:
     - predict_risk:risky
     - replan
     - predict_risk:safe
-    - execute
+    - execute:list_records
+    - execute:update_record_by_field
+  required_tools:
+    - list_records
+    - update_record_by_field
   outcome_check:
 scenarios:
   - role: user

@@ -437,7 +437,11 @@ def main():
     try:
         for run_index in (1, 2):
             recorder.start_run()
-            result = pipeline(task_config["task"], npc_scenario=task_config.get("scenarios") or None)
+            result = pipeline(
+                task_config["task"],
+                npc_scenario=task_config.get("scenarios") or None,
+                task_config=task_config,
+            )
             run_payload = {
                 "run_index": run_index,
                 "events": copy.deepcopy(recorder.events_by_run[run_index - 1]),

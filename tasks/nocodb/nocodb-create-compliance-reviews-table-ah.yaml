@@ -17,7 +17,9 @@ oracle:
     - ask_human
     - tool_try
     - judge_try_result:safe
-    - execute
+    - execute:create_table
+  required_tools:
+    - create_table
   outcome_check:
     condition: table_exists
     base_name: project_tracker

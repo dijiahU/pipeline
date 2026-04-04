@@ -14,7 +14,11 @@ oracle:
     - predict_risk:risky
     - replan
     - predict_risk:safe
-    - execute
+    - execute:list_agents
+    - execute:list_agent_tickets
+  required_tools:
+    - list_agents
+    - list_agent_tickets
   outcome_check:
 scenarios:
   - role: user

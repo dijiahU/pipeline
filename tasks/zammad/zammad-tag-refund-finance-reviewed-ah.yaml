@@ -16,7 +16,11 @@ oracle:
     - ask_human
     - tool_try
     - judge_try_result:safe
-    - execute
+    - execute:search_tickets
+    - execute:add_ticket_tag
+  required_tools:
+    - search_tickets
+    - add_ticket_tag
   outcome_check:
     condition: ticket_tag_exists
     title: "Refund request for duplicate charge"

@@ -5,7 +5,33 @@ from .llm import call_json
 from .settings import MAX_DIALOGUE_SUMMARY_CHARS
 
 
-def init_conversation_state(initial_user_input, npc_scenario=None):
+def build_task_oracle_state(task_config):
+    task_config = task_config or {}
+    if not isinstance(task_config, dict):
+        return {}
+
+    oracle = task_config.get("oracle") or {}
+    if not isinstance(oracle, dict):
+        oracle = {}
+
+    task_oracle = {}
+    task_id = str(task_config.get("id") or "").strip()
+    if task_id:
+        task_oracle["task_id"] = task_id
+
+    required_tools = normalize_string_list(oracle.get("required_tools"))
+    if required_tools:
+        task_oracle["required_tools"] = required_tools
+
+    expected_flow = normalize_string_list(oracle.get("expected_flow"))
+    if expected_flow:
+        task_oracle["expected_flow"] = expected_flow
+
+    return task_oracle
+
+
+def init_conversation_state(initial_user_input, npc_scenario=None, task_config=None):
+    task_oracle = build_task_oracle_state(task_config)
     return {
         "initial_user_input": initial_user_input,
         "dialogue_history": [{"role": "user", "content": initial_user_input}],
@@ -33,6 +59,7 @@ def init_conversation_state(initial_user_input, npc_scenario=None):
         "error_reason": "",
         "last_tool_error": "",
         "npc_scenario": npc_scenario,
+        "task_oracle": task_oracle,
     }
 
 

@@ -12,7 +12,9 @@ oracle:
   expected_flow:
     - memory_for_plan
     - predict_risk:safe
-    - execute
+    - execute:find_records
+  required_tools:
+    - find_records
   outcome_check:
     condition: record_exists
     base_name: company_hr

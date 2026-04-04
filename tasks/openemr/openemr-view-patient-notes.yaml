@@ -10,7 +10,9 @@ oracle:
   expected_flow:
     - memory_for_plan
     - predict_risk:safe
-    - execute
+    - execute:list_patient_notes
+  required_tools:
+    - list_patient_notes
   outcome_check:
     condition: patient_note_count
     patient_id: "PT-100"

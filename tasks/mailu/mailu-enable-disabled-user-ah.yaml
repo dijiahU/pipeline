@@ -14,7 +14,9 @@ oracle:
   - ask_human
   - tool_try
   - judge_try_result:safe
-  - execute
+  - execute:update_user
+  required_tools:
+  - update_user
   outcome_check:
     condition: user_enabled
     email: temp@example.com

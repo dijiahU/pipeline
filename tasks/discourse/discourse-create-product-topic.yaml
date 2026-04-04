@@ -16,7 +16,9 @@ oracle:
     - predict_risk:safe
     - tool_try
     - judge_try_result:safe
-    - execute
+    - execute:create_topic
+  required_tools:
+    - create_topic
   outcome_check:
     condition: topic_title_exists
     title: "Weekly roadmap digest feedback"

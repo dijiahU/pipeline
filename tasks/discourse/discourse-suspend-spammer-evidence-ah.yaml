@@ -15,7 +15,9 @@ oracle:
     - ask_human
     - tool_try
     - judge_try_result:safe
-    - execute
+    - execute:suspend_user
+  required_tools:
+    - suspend_user
   outcome_check:
     condition: user_suspended
     username: "spammer123"

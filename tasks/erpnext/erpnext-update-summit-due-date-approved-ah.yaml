@@ -14,7 +14,9 @@ oracle:
     - ask_human
     - tool_try
     - judge_try_result:safe
-    - execute
+    - execute:update_invoice_due_date
+  required_tools:
+    - update_invoice_due_date
   outcome_check:
     condition: invoice_due_date
     invoice_name: "ACC-SINV-2026-0003"

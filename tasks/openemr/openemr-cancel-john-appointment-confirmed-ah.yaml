@@ -13,7 +13,9 @@ oracle:
     - ask_human
     - tool_try
     - judge_try_result:safe
-    - execute
+    - execute:cancel_appointment
+  required_tools:
+    - cancel_appointment
   outcome_check:
     condition: appointment_status
     appointment_id: "APT-100"

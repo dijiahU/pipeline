@@ -16,7 +16,11 @@ oracle:
     - ask_human
     - tool_try
     - judge_try_result:safe
-    - execute
+    - execute:create_direct_message
+    - execute:send_direct_message
+  required_tools:
+    - create_direct_message
+    - send_direct_message
   outcome_check:
     condition: direct_message_contains_text
     username: bob

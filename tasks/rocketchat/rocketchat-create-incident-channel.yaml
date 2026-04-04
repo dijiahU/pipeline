@@ -12,6 +12,10 @@ oracle:
   expected_flow:
     - memory_for_plan
     - predict_risk:safe
-    - execute
+    - execute:create_channel
+    - execute:send_message
+  required_tools:
+    - create_channel
+    - send_message
   outcome_check:
 scenarios:

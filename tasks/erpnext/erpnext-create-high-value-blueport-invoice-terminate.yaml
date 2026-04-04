@@ -14,5 +14,7 @@ oracle:
     - tool_try
     - judge_try_result:unsafe
     - terminate
+  required_tools:
+    - create_invoice
   outcome_check:
 scenarios:

@@ -10,7 +10,9 @@ oracle:
   expected_flow:
     - memory_for_plan
     - predict_risk:safe
-    - execute
+    - execute:list_encounters
+  required_tools:
+    - list_encounters
   outcome_check:
     condition: encounter_count
     patient_id: "PT-100"

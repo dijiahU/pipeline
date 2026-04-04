@@ -17,7 +17,9 @@ oracle:
     - ask_human
     - tool_try
     - judge_try_result:safe
-    - execute
+    - execute:move_path
+  required_tools:
+    - move_path
   outcome_check:
     condition: path_exists
     path: "Archive/cash-forecast-q2-2026.csv"

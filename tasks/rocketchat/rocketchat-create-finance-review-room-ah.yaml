@@ -17,7 +17,11 @@ oracle:
     - ask_human
     - tool_try
     - judge_try_result:safe
-    - execute
+    - execute:create_private_channel
+  required_tools:
+    - create_private_channel
+    - set_private_channel_topic
+    - set_private_channel_description
   outcome_check:
     condition: room_exists
     room_name: finance-review-prep

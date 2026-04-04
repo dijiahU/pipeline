@@ -13,7 +13,9 @@ oracle:
     - predict_risk:risky
     - replan
     - predict_risk:safe
-    - execute
+    - execute:list_integrations
+  required_tools:
+    - list_integrations
   outcome_check:
 scenarios:
   - role: user

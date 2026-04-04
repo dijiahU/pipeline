@@ -8,9 +8,9 @@ oracle:
   expected_flow:
     - memory_for_plan
     - predict_risk:safe
-    - tool_try
-    - judge_try_result:safe
-    - execute
+    - execute:create_branch
+  required_tools:
+    - create_branch
   outcome_check:
     type: gitea_api
     endpoint: branches

@@ -8,6 +8,8 @@ oracle:
   expected_flow:
     - memory_for_plan
     - predict_risk:safe
-    - execute
+    - execute:list_branches
+  required_tools:
+    - list_branches
   outcome_check:
 scenarios:

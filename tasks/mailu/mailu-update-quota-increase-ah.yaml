@@ -15,7 +15,9 @@ oracle:
   - ask_human
   - tool_try
   - judge_try_result:safe
-  - execute
+  - execute:update_user_quota
+  required_tools:
+  - update_user_quota
   outcome_check:
     condition: user_exists
     email: alice@example.com

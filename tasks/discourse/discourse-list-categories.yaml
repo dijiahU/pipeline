@@ -11,7 +11,9 @@ oracle:
   expected_flow:
     - memory_for_plan
     - predict_risk:safe
-    - execute
+    - execute:list_categories
+  required_tools:
+    - list_categories
   outcome_check:
     condition: category_exists
     category: "product"

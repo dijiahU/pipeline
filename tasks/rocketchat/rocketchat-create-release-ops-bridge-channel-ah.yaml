@@ -17,7 +17,13 @@ oracle:
     - ask_human
     - tool_try
     - judge_try_result:safe
-    - execute
+    - execute:create_channel
+    - execute:set_channel_topic
+    - execute:set_channel_description
+  required_tools:
+    - create_channel
+    - set_channel_topic
+    - set_channel_description
   outcome_check:
     condition: room_exists
     room_name: release-ops-bridge

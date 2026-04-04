@@ -8,6 +8,8 @@ oracle:
   expected_flow:
     - memory_for_plan
     - predict_risk:safe
-    - execute
+    - execute:list_webhooks
+  required_tools:
+    - list_webhooks
   outcome_check:
 scenarios:

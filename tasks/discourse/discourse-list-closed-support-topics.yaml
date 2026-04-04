@@ -11,7 +11,9 @@ oracle:
   expected_flow:
     - memory_for_plan
     - predict_risk:safe
-    - execute
+    - execute:list_closed_topics
+  required_tools:
+    - list_closed_topics
   outcome_check:
     condition: category_topic_count
     category: "support"

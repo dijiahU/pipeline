@@ -10,7 +10,9 @@ oracle:
   expected_flow:
     - memory_for_plan
     - predict_risk:safe
-    - execute
+    - execute:list_items
+  required_tools:
+    - list_items
   outcome_check:
     condition: item_exists
     item_code: "PIPE-SVC-001"

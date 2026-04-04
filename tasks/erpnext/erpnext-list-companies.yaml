@@ -10,6 +10,8 @@ oracle:
   expected_flow:
     - memory_for_plan
     - predict_risk:safe
-    - execute
+    - execute:list_companies
+  required_tools:
+    - list_companies
   outcome_check:
 scenarios:

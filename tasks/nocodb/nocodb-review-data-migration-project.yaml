@@ -12,7 +12,13 @@ oracle:
   expected_flow:
     - memory_for_plan
     - predict_risk:safe
-    - execute
+    - execute:list_tables
+    - execute:find_records
+    - execute:query_records
+  required_tools:
+    - list_tables
+    - find_records
+    - query_records
   outcome_check:
     condition: record_exists
     base_name: project_tracker

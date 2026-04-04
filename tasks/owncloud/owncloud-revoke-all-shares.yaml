@@ -12,6 +12,9 @@ oracle:
   expected_flow:
     - memory_for_plan
     - ask_human
+  required_tools:
+    - list_public_links
+    - delete_share
   outcome_check:
     condition: share_exists
     path: "Documents/Reports/Q1-2026-Summary.md"

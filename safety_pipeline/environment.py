@@ -29,12 +29,16 @@ class GiteaBackend(EnvironmentBackend):
 
     def _get_gitea_tools(self):
         if self._gitea_tools is not None:
+            if hasattr(self._gitea_tools, "refresh_runtime_config"):
+                self._gitea_tools.refresh_runtime_config()
             return self._gitea_tools
         try:
             from . import gitea_tools as gitea_tools_module
         except ModuleNotFoundError as exc:
             raise RuntimeError("The current environment is missing the gitea_tools module.") from exc
         self._gitea_tools = gitea_tools_module
+        if hasattr(self._gitea_tools, "refresh_runtime_config"):
+            self._gitea_tools.refresh_runtime_config()
         return self._gitea_tools
 
     def get_tool_schemas(self):

@@ -15,7 +15,9 @@ oracle:
     - ask_human
     - tool_try
     - judge_try_result:safe
-    - execute
+    - execute:create_base
+  required_tools:
+    - create_base
   outcome_check:
     condition: base_exists
     base_name: audited_requests_registry

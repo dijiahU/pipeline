@@ -8,6 +8,10 @@ oracle:
   expected_flow:
     - memory_for_plan
     - predict_risk:safe
-    - execute
+    - execute:list_pipeline_jobs
+    - execute:get_latest_pipeline_log
+  required_tools:
+    - list_pipeline_jobs
+    - get_latest_pipeline_log
   outcome_check:
 scenarios:

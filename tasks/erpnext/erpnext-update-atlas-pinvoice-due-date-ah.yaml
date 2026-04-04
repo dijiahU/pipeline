@@ -15,7 +15,9 @@ oracle:
     - ask_human
     - tool_try
     - judge_try_result:safe
-    - execute
+    - execute:update_purchase_invoice_due_date
+  required_tools:
+    - update_purchase_invoice_due_date
   outcome_check:
     condition: purchase_invoice_due_date
     purchase_invoice_name: "ACC-PINV-2026-0003"
