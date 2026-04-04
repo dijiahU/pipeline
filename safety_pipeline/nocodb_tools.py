@@ -21,16 +21,27 @@ except ModuleNotFoundError:
     requests = None
 
 
-_config = {
-    "base_url": os.environ.get("NOCODB_BASE_URL", "http://localhost:8080").rstrip("/"),
-    "token": os.environ.get("NOCODB_API_TOKEN", ""),
-    "admin_email": os.environ.get("NOCODB_ADMIN_EMAIL", "admin@example.com"),
-    "admin_password": os.environ.get("NOCODB_ADMIN_PASSWORD", "Admin123!"),
-}
+_config = {}
 
 _jwt_cache = {"token": None}
 
 _REGISTRY = ServiceToolRegistry(service_id="nocodb")
+
+
+def refresh_runtime_config():
+    new_config = {
+        "base_url": os.environ.get("NOCODB_BASE_URL", "http://localhost:8080").rstrip("/"),
+        "token": os.environ.get("NOCODB_API_TOKEN", ""),
+        "admin_email": os.environ.get("NOCODB_ADMIN_EMAIL", "admin@example.com"),
+        "admin_password": os.environ.get("NOCODB_ADMIN_PASSWORD", "Admin123!"),
+    }
+    if new_config != _config:
+        _jwt_cache["token"] = None
+    _config.update(new_config)
+    return dict(_config)
+
+
+refresh_runtime_config()
 
 
 def nocodb_tool(name, description, params, required=None, is_write=False, group="", short_description=""):
@@ -71,14 +82,15 @@ def _require_requests():
 
 
 def _get_auth_token():
-    if _config["token"]:
-        return _config["token"]
+    config = refresh_runtime_config()
+    if config["token"]:
+        return config["token"]
     if _jwt_cache["token"]:
         return _jwt_cache["token"]
     _require_requests()
     resp = requests.post(
-        f"{_config['base_url']}/api/v1/auth/user/signin",
-        json={"email": _config["admin_email"], "password": _config["admin_password"]},
+        f"{config['base_url']}/api/v1/auth/user/signin",
+        json={"email": config["admin_email"], "password": config["admin_password"]},
         timeout=30,
     )
     if resp.status_code != 200:
@@ -92,8 +104,9 @@ def _get_auth_token():
 
 def _headers():
     token = _get_auth_token()
+    config = refresh_runtime_config()
     headers = {"Content-Type": "application/json"}
-    if _config["token"]:
+    if config["token"]:
         headers["xc-token"] = token
     else:
         headers["xc-auth"] = token
@@ -102,7 +115,8 @@ def _headers():
 
 def _api(method, path, **kwargs):
     _require_requests()
-    url = f"{_config['base_url']}/{path.lstrip('/')}"
+    config = refresh_runtime_config()
+    url = f"{config['base_url']}/{path.lstrip('/')}"
     try:
         return requests.request(method, url, headers=_headers(), timeout=30, **kwargs)
     except requests.RequestException as exc:

@@ -24,12 +24,16 @@ class MailuBackend(EnvironmentBackend):
 
     def _get_mailu_tools(self):
         if self._mailu_tools is not None:
+            if hasattr(self._mailu_tools, "refresh_runtime_config"):
+                self._mailu_tools.refresh_runtime_config()
             return self._mailu_tools
         try:
             from . import mailu_tools as mailu_tools_module
         except ModuleNotFoundError as exc:
             raise RuntimeError("The current environment is missing the mailu_tools module.") from exc
         self._mailu_tools = mailu_tools_module
+        if hasattr(self._mailu_tools, "refresh_runtime_config"):
+            self._mailu_tools.refresh_runtime_config()
         return self._mailu_tools
 
     def get_tool_schemas(self):

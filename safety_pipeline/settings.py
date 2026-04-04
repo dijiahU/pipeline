@@ -5,6 +5,7 @@ GENERATED_ENV_FILES = (
     ".env.gitea.generated",
     ".env.discourse.generated",
     ".env.erpnext.generated",
+    ".env.mailu.generated",
     ".env.nocodb.generated",
     ".env.openemr.generated",
     ".env.owncloud.generated",

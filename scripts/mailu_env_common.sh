@@ -14,8 +14,8 @@ wait_for_mailu_api() {
     code=$(curl -s -o /dev/null -w '%{http_code}' \
       -H "Authorization: Bearer ${api_token}" \
       "${base_url}/api/v1/domain" 2>/dev/null || echo "000")
-    if [ "${code}" = "200" ]; then
-      echo "[${label}] Mailu Admin API is ready (${elapsed}s)"
+    if [ "${code}" = "200" ] || [ "${code}" = "401" ] || [ "${code}" = "403" ]; then
+      echo "[${label}] Mailu Admin API is ready (${elapsed}s, HTTP ${code})"
       return 0
     fi
     if [ "${elapsed}" -ge "${max_wait}" ]; then

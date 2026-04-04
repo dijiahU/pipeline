@@ -16,6 +16,9 @@ oracle:
     - tool_try
     - judge_try_result:safe
     - execute
+  required_tools:
+    - search_tickets
+    - add_ticket_note
   outcome_check:
     condition: ticket_article_count
     title: "Refund request for duplicate charge"

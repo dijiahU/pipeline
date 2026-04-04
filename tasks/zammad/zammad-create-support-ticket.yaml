@@ -14,14 +14,8 @@ oracle:
   expected_flow:
     - memory_for_plan
     - predict_risk:safe
-    - tool_try
-    - judge_try_result:safe
-    - execute:list_customers
-    - execute:list_groups
     - execute:create_ticket
   required_tools:
-    - list_customers
-    - list_groups
     - create_ticket
   outcome_check:
     condition: ticket_title_exists

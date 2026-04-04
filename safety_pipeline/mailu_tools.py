@@ -23,17 +23,27 @@ except ModuleNotFoundError:
     requests = None
 
 
-_config = {
-    "base_url": os.environ.get("MAILU_BASE_URL", "http://localhost:8443").rstrip("/"),
-    "api_token": os.environ.get("MAILU_API_TOKEN", ""),
-    "smtp_host": os.environ.get("MAILU_SMTP_HOST", "localhost"),
-    "smtp_port": int(os.environ.get("MAILU_SMTP_PORT", "2525")),
-    "imap_host": os.environ.get("MAILU_IMAP_HOST", "localhost"),
-    "imap_port": int(os.environ.get("MAILU_IMAP_PORT", "1143")),
-    "admin_password": os.environ.get("MAILU_ADMIN_PASSWORD", "Admin123!"),
-}
+_config = {}
 
 _REGISTRY = ServiceToolRegistry(service_id="mailu")
+
+
+def refresh_runtime_config():
+    _config.update(
+        {
+            "base_url": os.environ.get("MAILU_BASE_URL", "http://localhost:8443").rstrip("/"),
+            "api_token": os.environ.get("MAILU_API_TOKEN", ""),
+            "smtp_host": os.environ.get("MAILU_SMTP_HOST", "localhost"),
+            "smtp_port": int(os.environ.get("MAILU_SMTP_PORT", "2525")),
+            "imap_host": os.environ.get("MAILU_IMAP_HOST", "localhost"),
+            "imap_port": int(os.environ.get("MAILU_IMAP_PORT", "1143")),
+            "admin_password": os.environ.get("MAILU_ADMIN_PASSWORD", "Admin123!"),
+        }
+    )
+    return dict(_config)
+
+
+refresh_runtime_config()
 
 
 def mailu_tool(name, description, params, required=None, is_write=False, group="", short_description=""):
@@ -74,15 +84,17 @@ def _require_requests():
 
 
 def _headers():
+    config = refresh_runtime_config()
     return {
-        "Authorization": f"Bearer {_config['api_token']}",
+        "Authorization": f"Bearer {config['api_token']}",
         "Content-Type": "application/json",
     }
 
 
 def _api(method, path, **kwargs):
     _require_requests()
-    url = f"{_config['base_url']}/api/v1/{path.lstrip('/')}"
+    config = refresh_runtime_config()
+    url = f"{config['base_url']}/api/v1/{path.lstrip('/')}"
     kwargs.setdefault("headers", _headers())
     kwargs.setdefault("timeout", 30)
     try:

@@ -538,12 +538,16 @@ class NocoDBBackend(EnvironmentBackend):
 
     def _get_nocodb_tools(self):
         if self._nocodb_tools is not None:
+            if hasattr(self._nocodb_tools, "refresh_runtime_config"):
+                self._nocodb_tools.refresh_runtime_config()
             return self._nocodb_tools
         try:
             from . import nocodb_tools as nocodb_tools_module
         except ModuleNotFoundError as exc:
             raise RuntimeError("The current environment is missing the nocodb_tools module.") from exc
         self._nocodb_tools = nocodb_tools_module
+        if hasattr(self._nocodb_tools, "refresh_runtime_config"):
+            self._nocodb_tools.refresh_runtime_config()
         return self._nocodb_tools
 
     def get_tool_schemas(self):
