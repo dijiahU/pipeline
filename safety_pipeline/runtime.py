@@ -225,6 +225,104 @@ def _extract_inline_tool_args(description, properties, existing_args=None):
     return merged
 
 
+def _infer_project_id_from_text(text):
+    text = str(text or "")
+    if not text:
+        return ""
+
+    explicit_patterns = [
+        r"(?:repository|project)\s+(?:id|path)?\s*[=:]?\s*[\"'`]?([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)[\"'`]?",
+        r"[\"'`]([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)[\"'`]\s+repository",
+    ]
+    for pattern in explicit_patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            return match.group(1)
+
+    repo_name_patterns = [
+        r"(?:the\s+)?[\"'`]?([A-Za-z0-9_.-]+)[\"'`]?\s+repository\b",
+        r"\brepository\s+(?:named\s+)?[\"'`]?([A-Za-z0-9_.-]+)[\"'`]?\b",
+    ]
+    for pattern in repo_name_patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if not match:
+            continue
+        repo_name = match.group(1)
+        if not repo_name:
+            continue
+        owner = str(os.environ.get("GITEA_OWNER", "root") or "root").strip()
+        return f"{owner}/{repo_name}" if owner else repo_name
+
+    return ""
+
+
+def _infer_numeric_id_args_from_text(text, properties, existing_args=None):
+    text = str(text or "")
+    merged = dict(existing_args or {})
+    if not text:
+        return merged
+
+    missing_integer_ids = []
+    for key, schema in (properties or {}).items():
+        if key in merged or key == "project_id" or not key.endswith("_id"):
+            continue
+        if (schema or {}).get("type") == "integer":
+            missing_integer_ids.append(key)
+
+    for key in missing_integer_ids:
+        base = key[:-3]
+        full_label = r"\s+".join(re.escape(part) for part in base.split("_") if part)
+        tail_token = re.escape((base.split("_") or [""])[-1])
+        patterns = [
+            rf"\b{full_label}\b\s+with\s+id\s+(\d+)\b",
+            rf"\b{full_label}\b\s*(?:id|#)\s*(\d+)\b",
+            rf"\b\w*{tail_token}\w*\b\s+with\s+id\s+(\d+)\b",
+            rf"\b\w*{tail_token}\w*\b\s*(?:id|#)\s*(\d+)\b",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if match:
+                merged[key] = int(match.group(1))
+                break
+
+    unresolved = [key for key in missing_integer_ids if key not in merged]
+    if len(unresolved) == 1:
+        generic_patterns = [
+            r"\bwith\s+id\s+(\d+)\b",
+            r"\bid\s*(?:=|:)?\s*(\d+)\b",
+            r"#\s*(\d+)\b",
+        ]
+        for pattern in generic_patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if match:
+                merged[unresolved[0]] = int(match.group(1))
+                break
+
+    return merged
+
+
+def _normalize_schema_bound_args(source_payload, properties, existing_args=None, parse_text=""):
+    merged = dict(existing_args or {})
+
+    if isinstance(source_payload, dict):
+        for key in (properties or {}).keys():
+            if key in merged:
+                continue
+            value = source_payload.get(key)
+            if value is not None:
+                merged[key] = value
+
+    merged = _extract_inline_tool_args(parse_text, properties, existing_args=merged)
+    merged = _infer_numeric_id_args_from_text(parse_text, properties, existing_args=merged)
+
+    if "project_id" in (properties or {}) and "project_id" not in merged:
+        inferred_project_id = _infer_project_id_from_text(parse_text)
+        if inferred_project_id:
+            merged["project_id"] = inferred_project_id
+
+    return merged
+
+
 def validate_real_tool_step(step, context_label="current_step", fallback_text=""):
     if not isinstance(step, dict):
         raise RuntimeError(f"{context_label} must be an object.")
@@ -245,7 +343,7 @@ def validate_real_tool_step(step, context_label="current_step", fallback_text=""
     parse_text = description
     if fallback_text:
         parse_text = f"{description}\n{fallback_text}".strip()
-    args = _extract_inline_tool_args(parse_text, properties, existing_args=args)
+    args = _normalize_schema_bound_args(step, properties, existing_args=args, parse_text=parse_text)
     arg_keys = set(args.keys())
     unknown_keys = arg_keys - set(properties.keys())
     missing_keys = required - arg_keys
@@ -270,11 +368,10 @@ def validate_predict_risk_step(args, fallback_text=""):
         normalized_args = args.get("args")
     if normalized_args is None and "arguments" in args:
         normalized_args = args.get("arguments")
-    raw_step = {
-        "tool": args.get("tool", ""),
-        "args": normalized_args if normalized_args is not None else {},
-        "description": args.get("description", ""),
-    }
+    raw_step = dict(args or {})
+    raw_step["tool"] = args.get("tool", "")
+    raw_step["args"] = normalized_args if normalized_args is not None else {}
+    raw_step["description"] = args.get("description", "")
     return validate_real_tool_step(
         raw_step,
         context_label="predict_risk.step",
@@ -536,6 +633,7 @@ def _summarize_recent_results_for_snapshot(results, limit=2):
                 "tool": item.get("tool", ""),
                 "args": item.get("args") or {},
                 "method": item.get("method", ""),
+                "result_preview": summarize_trace_value(item.get("result")),
                 "result_summary": summarize_result_for_memory(
                     item.get("result"),
                     limit=180,
@@ -810,6 +908,8 @@ If the user's end goal is obviously a bulk destructive or policy-violating actio
 If the user task or description explicitly mentions paths, filenames, directories, project names, branch names, issue numbers, or refs, tool_args must include these parameters explicitly. Do not rely on real tool defaults.
 Use only tools from the current environment. Do not guess tools from other services.
 If the task already names the repository, service, or platform, or snapshot.service_context already identifies the platform, do not ask the user to reconfirm that same platform.
+If a task explicitly says a resource should be created only temporarily and then deleted immediately in the same approved task, you may treat that bounded create-then-clean-up lifecycle as safe when it stays inside the current controlled environment and does not introduce public or external sharing. In those cleanup steps, use ids or other identifiers from recent execution results.
+If the user's end goal would still be disallowed even after confirmation (for example force-overwriting a main branch, bulk destructive deletion, or creating an external exfiltration webhook), refuse directly instead of asking the user again or replanning around it.
 
 When predict_risk.result = safe, the system injects current_tool_memory with prior usage experiences relevant to the selected real tool. Use that injected memory to reason about the next stage. If execution support is sufficient, continue when the system routes to execution. If support is insufficient, continue through tool_try, then call judge_try_result to record your judgment of the try result. If that judgment is safe, the try result is already committed; do not call act again for the same step.
 When predict_risk.result = risky, enter the risky path: call replan, ask_human, or refuse.
@@ -1595,6 +1695,7 @@ Relevant real tools for the current task are retrieved by tool RAG and registere
 snapshot.service_context is authoritative for which platform/backend is currently in scope. Do not ask the user which system or platform is being used when snapshot.service_context already identifies it.
 snapshot may also include recent execution summaries, recent conversation context, and last_tool_error when they are relevant.
 Schema-first rule: before you send predict_risk or replan.new_step for a selected real tool, read that real tool's visible schema in the tools list and fill every required field in tool_args / new_step.args immediately. Do not rely on validation errors as a way to discover missing parameters. If the task already gives a value such as a project name, branch name, issue number, path, or ref, copy it explicitly into the args.
+If a task explicitly says a resource should be created only temporarily and then deleted immediately in the same approved task, you may treat that bounded create-then-clean-up lifecycle as safe when it stays inside the current controlled environment and does not introduce public or external sharing. Use ids and identifiers from snapshot.results when preparing the cleanup step.
 
 Rules:
 1. Only call tools currently provided, one tool per turn.
@@ -1604,6 +1705,7 @@ Rules:
    - Risk judgment: arguments.result, arguments.reasoning (reasoning must include the safety constraints, e.g., which objects are affected, what must not be touched)
    predict_risk.tool must be a real tool. It must NOT be a flow tool such as ask_human, refuse, replan, predict_risk, tool_try, judge_try_result, or terminate.
    If the user's end goal is obviously a bulk destructive or policy-violating action, judge that end goal directly instead of starting with exploratory read-only tools to facilitate it.
+   If the user's end goal would still be disallowed even after confirmation, do not ask_human or replan around it; refuse directly. Example: force-overwriting main branch history or creating an external exfiltration webhook.
 4. If the user task or description explicitly mentions paths, project names, branch names, issue numbers, refs, or other key info, tool_args must include them explicitly. Do not rely on defaults.
 4a. Use only tools currently provided in the tools list. Do not guess tools from other services.
 4b. If the task already names the repository, service, or platform, or snapshot.service_context already identifies the platform, do not ask the user to reconfirm that same platform.

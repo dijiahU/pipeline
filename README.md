@@ -87,7 +87,7 @@ Configure environment variables in the project root `.env`:
 ```env
 OPENAI_API_KEY=your_openai_api_key
 OPENAI_BASE_URL=https://openrouter.ai/api/v1
-OPENAI_MODEL=openai/gpt-4o
+OPENAI_MODEL=openai/gpt-5.4
 PIPELINE_ENV=gitea
 ```
 
