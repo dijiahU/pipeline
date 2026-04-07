@@ -1,0 +1,713 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "list_domains",
+      "description": "List all mail domains configured in Mailu.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "get_domain",
+      "description": "Get details of a specific mail domain.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "domain": {
+            "type": "string",
+            "description": "The domain name, e.g. 'example.com'."
+          }
+        },
+        "required": [
+          "domain"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "create_domain",
+      "description": "Create a new mail domain.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "domain": {
+            "type": "string",
+            "description": "The domain name to create."
+          },
+          "max_users": {
+            "type": "integer",
+            "description": "Maximum number of users allowed. Default -1 (unlimited)."
+          },
+          "max_aliases": {
+            "type": "integer",
+            "description": "Maximum number of aliases allowed. Default -1 (unlimited)."
+          }
+        },
+        "required": [
+          "domain"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "update_domain",
+      "description": "Update settings for an existing mail domain (e.g. max_users, max_aliases).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "domain": {
+            "type": "string",
+            "description": "The domain name to update."
+          },
+          "max_users": {
+            "type": "integer",
+            "description": "New maximum number of users."
+          },
+          "max_aliases": {
+            "type": "integer",
+            "description": "New maximum number of aliases."
+          }
+        },
+        "required": [
+          "domain"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "delete_domain",
+      "description": "Delete a mail domain and ALL users, aliases, and data under it. This is a cascade-destructive operation.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "domain": {
+            "type": "string",
+            "description": "The domain name to delete."
+          }
+        },
+        "required": [
+          "domain"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_users",
+      "description": "List all users (mailboxes) in a given domain.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "domain": {
+            "type": "string",
+            "description": "The domain to list users for."
+          }
+        },
+        "required": [
+          "domain"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "get_user",
+      "description": "Get details of a specific user (mailbox).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "description": "The user email address, e.g. 'alice@example.com'."
+          }
+        },
+        "required": [
+          "email"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "create_user",
+      "description": "Create a new user (mailbox) in a domain.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "description": "The email address for the new user."
+          },
+          "password": {
+            "type": "string",
+            "description": "Password for the new user."
+          },
+          "display_name": {
+            "type": "string",
+            "description": "Display name for the user."
+          },
+          "quota_bytes": {
+            "type": "integer",
+            "description": "Storage quota in bytes. Default 1GB."
+          }
+        },
+        "required": [
+          "email",
+          "password"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "update_user",
+      "description": "Update an existing user's settings (display name, enabled status, etc.).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "description": "The user email address."
+          },
+          "display_name": {
+            "type": "string",
+            "description": "New display name."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Enable or disable the user account."
+          }
+        },
+        "required": [
+          "email"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "change_user_password",
+      "description": "Change a user's password. This locks the user out of their current session.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "description": "The user email address."
+          },
+          "new_password": {
+            "type": "string",
+            "description": "The new password to set."
+          }
+        },
+        "required": [
+          "email",
+          "new_password"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "delete_user",
+      "description": "Delete a user (mailbox) and all their stored emails. This is destructive.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "description": "The user email address to delete."
+          }
+        },
+        "required": [
+          "email"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_aliases",
+      "description": "List all email aliases in a given domain.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "domain": {
+            "type": "string",
+            "description": "The domain to list aliases for."
+          }
+        },
+        "required": [
+          "domain"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "get_alias",
+      "description": "Get details of a specific email alias.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "alias_email": {
+            "type": "string",
+            "description": "The alias email, e.g. 'support@example.com'."
+          }
+        },
+        "required": [
+          "alias_email"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "create_alias",
+      "description": "Create a new email alias that forwards to one or more destinations.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "alias_email": {
+            "type": "string",
+            "description": "The alias email address, e.g. 'support@example.com'."
+          },
+          "destination": {
+            "type": "string",
+            "description": "Comma-separated list of destination emails."
+          },
+          "comment": {
+            "type": "string",
+            "description": "Optional comment describing the alias."
+          }
+        },
+        "required": [
+          "alias_email",
+          "destination"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "update_alias",
+      "description": "Update an existing alias's destination or enabled status. Changing destination can redirect mail.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "alias_email": {
+            "type": "string",
+            "description": "The alias email address."
+          },
+          "destination": {
+            "type": "string",
+            "description": "New comma-separated list of destination emails."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Enable or disable the alias."
+          }
+        },
+        "required": [
+          "alias_email"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "delete_alias",
+      "description": "Delete an email alias. Mail to this address will no longer be forwarded.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "alias_email": {
+            "type": "string",
+            "description": "The alias email address to delete."
+          }
+        },
+        "required": [
+          "alias_email"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_relays",
+      "description": "List all configured relay hosts.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "get_relay",
+      "description": "Get details of a specific relay host.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "relay_name": {
+            "type": "string",
+            "description": "The relay host name."
+          }
+        },
+        "required": [
+          "relay_name"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "create_relay",
+      "description": "Create a new relay host for outbound mail routing.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "relay_name": {
+            "type": "string",
+            "description": "The relay host name."
+          },
+          "smtp": {
+            "type": "string",
+            "description": "The SMTP target address."
+          }
+        },
+        "required": [
+          "relay_name"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "delete_relay",
+      "description": "Delete a relay host configuration.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "relay_name": {
+            "type": "string",
+            "description": "The relay host name to delete."
+          }
+        },
+        "required": [
+          "relay_name"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_alternative_domains",
+      "description": "List all alternative domain names for a primary domain.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "domain": {
+            "type": "string",
+            "description": "The primary domain name."
+          }
+        },
+        "required": [
+          "domain"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "create_alternative_domain",
+      "description": "Add an alternative domain name that maps to a primary domain.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "domain": {
+            "type": "string",
+            "description": "The primary domain name."
+          },
+          "alternative_name": {
+            "type": "string",
+            "description": "The alternative domain name to add."
+          }
+        },
+        "required": [
+          "domain",
+          "alternative_name"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "delete_alternative_domain",
+      "description": "Remove an alternative domain name mapping.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "domain": {
+            "type": "string",
+            "description": "The primary domain name."
+          },
+          "alternative_name": {
+            "type": "string",
+            "description": "The alternative domain name to remove."
+          }
+        },
+        "required": [
+          "domain",
+          "alternative_name"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_mailbox_folders",
+      "description": "List all IMAP folders (mailbox folders) for a user.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "description": "The user email address."
+          },
+          "password": {
+            "type": "string",
+            "description": "The user's password. If omitted, uses known credentials."
+          }
+        },
+        "required": [
+          "email"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_emails",
+      "description": "List emails in a user's mailbox folder. Returns subject, from, date for each message.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "description": "The user email address."
+          },
+          "password": {
+            "type": "string",
+            "description": "The user's password. If omitted, uses known credentials."
+          },
+          "folder": {
+            "type": "string",
+            "description": "IMAP folder name. Default 'INBOX'."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of emails to return. Default 50."
+          }
+        },
+        "required": [
+          "email"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "read_email",
+      "description": "Read the full content of a specific email by its message ID.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "description": "The user email address."
+          },
+          "message_id": {
+            "type": "string",
+            "description": "The IMAP message sequence number."
+          },
+          "password": {
+            "type": "string",
+            "description": "The user's password. If omitted, uses known credentials."
+          },
+          "folder": {
+            "type": "string",
+            "description": "IMAP folder name. Default 'INBOX'."
+          }
+        },
+        "required": [
+          "email",
+          "message_id"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "send_email",
+      "description": "Send an email from a user. WARNING: This operation is IRREVERSIBLE - sent emails cannot be recalled.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "from_email": {
+            "type": "string",
+            "description": "Sender email address."
+          },
+          "to_email": {
+            "type": "string",
+            "description": "Recipient email address."
+          },
+          "subject": {
+            "type": "string",
+            "description": "Email subject line."
+          },
+          "body": {
+            "type": "string",
+            "description": "Email body text (plain text)."
+          },
+          "password": {
+            "type": "string",
+            "description": "Sender's password. If omitted, uses known credentials."
+          }
+        },
+        "required": [
+          "from_email",
+          "to_email",
+          "subject",
+          "body"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "send_email_with_attachment",
+      "description": "Send an email with a text attachment. WARNING: This operation is IRREVERSIBLE.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "from_email": {
+            "type": "string",
+            "description": "Sender email address."
+          },
+          "to_email": {
+            "type": "string",
+            "description": "Recipient email address."
+          },
+          "subject": {
+            "type": "string",
+            "description": "Email subject line."
+          },
+          "body": {
+            "type": "string",
+            "description": "Email body text (plain text)."
+          },
+          "attachment_name": {
+            "type": "string",
+            "description": "Filename for the attachment."
+          },
+          "attachment_content": {
+            "type": "string",
+            "description": "Text content of the attachment."
+          },
+          "password": {
+            "type": "string",
+            "description": "Sender's password. If omitted, uses known credentials."
+          }
+        },
+        "required": [
+          "from_email",
+          "to_email",
+          "subject",
+          "body",
+          "attachment_name",
+          "attachment_content"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "get_user_quota",
+      "description": "Get the storage quota information for a user.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "description": "The user email address."
+          }
+        },
+        "required": [
+          "email"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "update_user_quota",
+      "description": "Update the storage quota for a user.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "description": "The user email address."
+          },
+          "quota_bytes": {
+            "type": "integer",
+            "description": "New quota in bytes."
+          }
+        },
+        "required": [
+          "email",
+          "quota_bytes"
+        ]
+      }
+    }
+  }
+]

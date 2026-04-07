@@ -1,0 +1,464 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "list_files",
+      "description": "List files and subdirectories under a specific directory.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Directory path, for example 'Documents'. Empty string or '/' means the root directory."
+          },
+          "depth": {
+            "type": "string",
+            "description": "Listing depth: '1' for the current level only, 'infinity' for recursive listing."
+          }
+        },
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_directory_tree",
+      "description": "Recursively list all files and subdirectories in a directory tree.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Directory path, for example 'Projects/Website-Redesign'."
+          }
+        },
+        "required": [
+          "path"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "read_file",
+      "description": "Read the contents of a specific file.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "File path, for example 'Documents/README.md'."
+          }
+        },
+        "required": [
+          "path"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "file_info",
+      "description": "Get detailed metadata for a file or directory.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "File or directory path."
+          }
+        },
+        "required": [
+          "path"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "search_files",
+      "description": "Search files and directories by name or path keyword.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search keyword matched against file names and relative paths."
+          },
+          "path": {
+            "type": "string",
+            "description": "Optional directory scope. Empty string means search everywhere."
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_shares",
+      "description": "List share records visible to the current user.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Optional path filter. Empty string lists all shares."
+          }
+        },
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "get_share",
+      "description": "Get details for a single share link or share record.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "share_id": {
+            "type": "string",
+            "description": "Share record ID."
+          }
+        },
+        "required": [
+          "share_id"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_public_links",
+      "description": "List all public share links.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Optional path filter for public links under a specific path."
+          }
+        },
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_user_shares",
+      "description": "List share records shared with internal users.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Optional path filter for internal shares."
+          }
+        },
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "create_folder",
+      "description": "Create a new directory.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Directory path, for example 'Documents/NewFolder'."
+          }
+        },
+        "required": [
+          "path"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "upload_file",
+      "description": "Upload or overwrite a file.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "File path, for example 'Documents/report.txt'."
+          },
+          "content": {
+            "type": "string",
+            "description": "File content as text."
+          },
+          "overwrite": {
+            "type": "boolean",
+            "description": "Whether overwriting an existing file is allowed. Default: true."
+          }
+        },
+        "required": [
+          "path",
+          "content"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "delete_path",
+      "description": "Delete a file or directory, including all child contents. This is destructive and irreversible.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Path of the file or directory to delete."
+          }
+        },
+        "required": [
+          "path"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "move_path",
+      "description": "Move or rename a file or directory.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "Source path."
+          },
+          "destination": {
+            "type": "string",
+            "description": "Destination path."
+          },
+          "overwrite": {
+            "type": "boolean",
+            "description": "Whether to overwrite the destination if it already exists. Default: false."
+          }
+        },
+        "required": [
+          "source",
+          "destination"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "rename_path",
+      "description": "Rename a file or directory within the current parent directory.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Original file or directory path."
+          },
+          "new_name": {
+            "type": "string",
+            "description": "New file or directory name, without the parent path."
+          },
+          "overwrite": {
+            "type": "boolean",
+            "description": "Whether to overwrite the destination if it already exists. Default: false."
+          }
+        },
+        "required": [
+          "path",
+          "new_name"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "copy_path",
+      "description": "Copy a file or directory.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "Source path."
+          },
+          "destination": {
+            "type": "string",
+            "description": "Destination path."
+          },
+          "overwrite": {
+            "type": "boolean",
+            "description": "Whether to overwrite the destination if it already exists. Default: false."
+          }
+        },
+        "required": [
+          "source",
+          "destination"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "create_public_link",
+      "description": "Create a public share link for a file or directory.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Path of the file or directory to share."
+          },
+          "name": {
+            "type": "string",
+            "description": "Share link name, optional."
+          },
+          "permissions": {
+            "type": "integer",
+            "description": "Permission bitmask, for example 1=read-only, 15=full access."
+          },
+          "password": {
+            "type": "string",
+            "description": "Optional password for the public link."
+          },
+          "expire_date": {
+            "type": "string",
+            "description": "Optional expiration date in YYYY-MM-DD format."
+          }
+        },
+        "required": [
+          "path"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "create_share",
+      "description": "Compatibility alias for creating a public link share.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Path of the file or directory to share."
+          },
+          "name": {
+            "type": "string",
+            "description": "Share link name, optional."
+          },
+          "permissions": {
+            "type": "integer",
+            "description": "Permission bitmask, for example 1=read-only, 15=full access."
+          },
+          "password": {
+            "type": "string",
+            "description": "Optional password for the public link."
+          },
+          "expire_date": {
+            "type": "string",
+            "description": "Optional expiration date in YYYY-MM-DD format."
+          }
+        },
+        "required": [
+          "path"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "create_user_share",
+      "description": "Share a file or directory with an internal user.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Path of the file or directory to share."
+          },
+          "share_with": {
+            "type": "string",
+            "description": "Target username."
+          },
+          "permissions": {
+            "type": "integer",
+            "description": "Permission bitmask, for example 1=read-only, 15=full access."
+          }
+        },
+        "required": [
+          "path",
+          "share_with"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "update_share_permissions",
+      "description": "Update the permissions of a share record.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "share_id": {
+            "type": "string",
+            "description": "Share record ID."
+          },
+          "permissions": {
+            "type": "integer",
+            "description": "New permission bitmask, for example 1=read-only, 15=full access."
+          }
+        },
+        "required": [
+          "share_id",
+          "permissions"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "delete_share",
+      "description": "Delete a share link or share record.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "share_id": {
+            "type": "string",
+            "description": "Share record ID."
+          }
+        },
+        "required": [
+          "share_id"
+        ]
+      }
+    }
+  }
+]

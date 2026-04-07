@@ -1,0 +1,573 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "list_topics",
+      "description": "List forum topics, optionally filtered by category or status.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string",
+            "description": "Category name, such as announcements, support, or product"
+          },
+          "status": {
+            "type": "string",
+            "description": "Status filter, either open or closed"
+          }
+        },
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_open_topics",
+      "description": "List open forum topics, optionally filtered by category.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string",
+            "description": "Category name, such as announcements, support, or product"
+          }
+        },
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_closed_topics",
+      "description": "List closed forum topics, optionally filtered by category.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string",
+            "description": "Category name, such as announcements, support, or product"
+          }
+        },
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "get_topic",
+      "description": "Get details for a single topic.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "topic_id": {
+            "type": "integer",
+            "description": "Topic ID"
+          }
+        },
+        "required": [
+          "topic_id"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "get_topic_by_title",
+      "description": "Get topic details by exact title match.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "Topic title"
+          }
+        },
+        "required": [
+          "title"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_topic_posts",
+      "description": "List the posts inside a specific topic.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "topic_id": {
+            "type": "integer",
+            "description": "Topic ID"
+          }
+        },
+        "required": [
+          "topic_id"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_users",
+      "description": "List community users.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_staff_users",
+      "description": "List admin and moderator users.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "get_user",
+      "description": "Get detailed information for a specific user.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string",
+            "description": "Username"
+          }
+        },
+        "required": [
+          "username"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_user_posts",
+      "description": "List recent posts created by a specific user.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string",
+            "description": "Username"
+          }
+        },
+        "required": [
+          "username"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_user_topics",
+      "description": "List topics created by a specific user.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string",
+            "description": "Username"
+          }
+        },
+        "required": [
+          "username"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_categories",
+      "description": "List all forum categories.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "get_category",
+      "description": "Get detailed information for a specific category.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string",
+            "description": "Category name, slug, or ID"
+          }
+        },
+        "required": [
+          "category"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_category_topics",
+      "description": "List topics in a specific category.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string",
+            "description": "Category name, slug, or ID"
+          },
+          "include_about_topics": {
+            "type": "boolean",
+            "description": "Whether to include the system-generated about topic"
+          }
+        },
+        "required": [
+          "category"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "search_topics",
+      "description": "Search forum topics.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search keyword"
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "search_posts",
+      "description": "Search forum post content.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search keyword"
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "create_post",
+      "description": "Append a reply to a specific topic.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "topic_id": {
+            "type": "integer",
+            "description": "Topic ID"
+          },
+          "raw": {
+            "type": "string",
+            "description": "Reply content"
+          },
+          "username": {
+            "type": "string",
+            "description": "Posting username"
+          }
+        },
+        "required": [
+          "topic_id",
+          "raw"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "create_topic",
+      "description": "Create a new forum topic.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "Topic title"
+          },
+          "raw": {
+            "type": "string",
+            "description": "Topic body (the first post)"
+          },
+          "category": {
+            "type": "string",
+            "description": "Category name"
+          },
+          "username": {
+            "type": "string",
+            "description": "Posting username"
+          }
+        },
+        "required": [
+          "title",
+          "raw",
+          "category"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "rename_topic",
+      "description": "Rename a topic.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "topic_id": {
+            "type": "integer",
+            "description": "Topic ID"
+          },
+          "new_title": {
+            "type": "string",
+            "description": "New topic title"
+          }
+        },
+        "required": [
+          "topic_id",
+          "new_title"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "move_topic_to_category",
+      "description": "Move a topic to a new category.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "topic_id": {
+            "type": "integer",
+            "description": "Topic ID"
+          },
+          "category": {
+            "type": "string",
+            "description": "Target category name, slug, or ID"
+          }
+        },
+        "required": [
+          "topic_id",
+          "category"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "set_topic_pinned",
+      "description": "Set whether a topic is pinned.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "topic_id": {
+            "type": "integer",
+            "description": "Topic ID"
+          },
+          "pinned": {
+            "type": "boolean",
+            "description": "Whether the topic should be pinned"
+          }
+        },
+        "required": [
+          "topic_id"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "unpin_topic",
+      "description": "Unpin a topic.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "topic_id": {
+            "type": "integer",
+            "description": "Topic ID"
+          }
+        },
+        "required": [
+          "topic_id"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "close_topic",
+      "description": "Close or reopen a forum topic.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "topic_id": {
+            "type": "integer",
+            "description": "Topic ID"
+          },
+          "closed": {
+            "type": "boolean",
+            "description": "true closes the topic, false reopens it"
+          }
+        },
+        "required": [
+          "topic_id"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "reopen_topic",
+      "description": "Reopen a closed forum topic.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "topic_id": {
+            "type": "integer",
+            "description": "Topic ID"
+          }
+        },
+        "required": [
+          "topic_id"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "delete_topic",
+      "description": "Delete a forum topic.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "topic_id": {
+            "type": "integer",
+            "description": "Topic ID"
+          }
+        },
+        "required": [
+          "topic_id"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "create_category",
+      "description": "Create a new forum category.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Category name"
+          },
+          "color": {
+            "type": "string",
+            "description": "Category color as a hex string, such as 0088CC"
+          },
+          "text_color": {
+            "type": "string",
+            "description": "Text color as a hex string, such as FFFFFF"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "suspend_user",
+      "description": "Suspend a user account to block posting and login.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "user_id": {
+            "type": "integer",
+            "description": "User ID"
+          },
+          "duration_days": {
+            "type": "integer",
+            "description": "Number of suspension days"
+          },
+          "reason": {
+            "type": "string",
+            "description": "Suspension reason"
+          }
+        },
+        "required": [
+          "user_id",
+          "reason"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "unsuspend_user",
+      "description": "Remove a user's suspended status.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "user_id": {
+            "type": "integer",
+            "description": "User ID"
+          }
+        },
+        "required": [
+          "user_id"
+        ]
+      }
+    }
+  }
+]

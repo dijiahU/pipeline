@@ -1,0 +1,499 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "list_bases",
+      "description": "List all databases (bases) in NocoDB.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "per_page": {
+            "type": "integer",
+            "description": "Results per page. Default: 20."
+          }
+        },
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "get_base",
+      "description": "Get details for a specific database (base).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "base_id": {
+            "type": "string",
+            "description": "Database ID or name."
+          }
+        },
+        "required": [
+          "base_id"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "create_base",
+      "description": "Create a new database (base).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "New database name."
+          },
+          "description": {
+            "type": "string",
+            "description": "Optional database description."
+          }
+        },
+        "required": [
+          "name"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_tables",
+      "description": "List all tables in a specific database.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "base_id": {
+            "type": "string",
+            "description": "Database (base) ID or name."
+          }
+        },
+        "required": [
+          "base_id"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "get_table",
+      "description": "Get details for a specific table, including column definitions.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "table_id": {
+            "type": "string",
+            "description": "Table ID or name. If a name is used, provide base_id too."
+          },
+          "base_id": {
+            "type": "string",
+            "description": "Database ID or name. Required when table_id is a name."
+          }
+        },
+        "required": [
+          "table_id"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_columns",
+      "description": "List column definitions for a specific table.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "table_id": {
+            "type": "string",
+            "description": "Table ID or name. If a name is used, provide base_id too."
+          },
+          "base_id": {
+            "type": "string",
+            "description": "Database ID or name. Required when table_id is a name."
+          }
+        },
+        "required": [
+          "table_id"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "create_table",
+      "description": "Create a new table in a specific database.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "base_id": {
+            "type": "string",
+            "description": "Database ID or name."
+          },
+          "table_name": {
+            "type": "string",
+            "description": "New table name."
+          },
+          "columns": {
+            "type": "array",
+            "description": "Array of column definitions, for example [{\"name\": \"TaskCode\", \"uidt\": \"SingleLineText\"}].",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "uidt": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "uidt"
+              ]
+            }
+          }
+        },
+        "required": [
+          "base_id",
+          "table_name",
+          "columns"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_records",
+      "description": "List records in a specific table.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "table_id": {
+            "type": "string",
+            "description": "Table ID or name."
+          },
+          "base_id": {
+            "type": "string",
+            "description": "Database ID or name. Required when table_id is a name."
+          },
+          "where": {
+            "type": "string",
+            "description": "Filter condition using NocoDB where syntax, for example '(Status,eq,active)'."
+          },
+          "sort": {
+            "type": "string",
+            "description": "Sort field, for example '-Salary' or 'FullName'."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of results to return. Default: 25."
+          },
+          "offset": {
+            "type": "integer",
+            "description": "Offset. Default: 0."
+          }
+        },
+        "required": [
+          "table_id"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "query_records",
+      "description": "Query records in a specific table with a filter condition.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "table_id": {
+            "type": "string",
+            "description": "Table ID or name."
+          },
+          "where": {
+            "type": "string",
+            "description": "Filter condition using NocoDB where syntax, for example '(ProjectCode,eq,PRJ-DATA)'."
+          },
+          "base_id": {
+            "type": "string",
+            "description": "Database ID or name. Required when table_id is a name."
+          },
+          "sort": {
+            "type": "string",
+            "description": "Sort field, for example '-Priority'."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of results to return. Default: 25."
+          },
+          "offset": {
+            "type": "integer",
+            "description": "Offset. Default: 0."
+          }
+        },
+        "required": [
+          "table_id",
+          "where"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "find_records",
+      "description": "Find records that match a specific field value.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "table_id": {
+            "type": "string",
+            "description": "Table ID or name."
+          },
+          "field_name": {
+            "type": "string",
+            "description": "Field name to match, for example 'ProjectCode'."
+          },
+          "field_value": {
+            "type": "string",
+            "description": "Field value to match."
+          },
+          "base_id": {
+            "type": "string",
+            "description": "Database ID or name. Required when table_id is a name."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of results to return. Default: 10."
+          }
+        },
+        "required": [
+          "table_id",
+          "field_name",
+          "field_value"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "get_record",
+      "description": "Get a single record from a specific table.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "table_id": {
+            "type": "string",
+            "description": "Table ID or name."
+          },
+          "record_id": {
+            "type": "string",
+            "description": "Record ID (row ID)."
+          },
+          "base_id": {
+            "type": "string",
+            "description": "Database ID or name. Required when table_id is a name."
+          }
+        },
+        "required": [
+          "table_id",
+          "record_id"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "create_record",
+      "description": "Create a new record in a specific table.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "table_id": {
+            "type": "string",
+            "description": "Table ID or name."
+          },
+          "base_id": {
+            "type": "string",
+            "description": "Database ID or name. Required when table_id is a name."
+          },
+          "fields": {
+            "type": "object",
+            "description": "Field key/value pairs for the record, for example {\"TaskCode\": \"TASK-001\", \"Status\": \"todo\"}."
+          }
+        },
+        "required": [
+          "table_id",
+          "fields"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "update_record",
+      "description": "Update a single record in a specific table.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "table_id": {
+            "type": "string",
+            "description": "Table ID or name."
+          },
+          "record_id": {
+            "type": "string",
+            "description": "Record ID (row ID)."
+          },
+          "base_id": {
+            "type": "string",
+            "description": "Database ID or name. Required when table_id is a name."
+          },
+          "fields": {
+            "type": "object",
+            "description": "Field key/value pairs to update."
+          }
+        },
+        "required": [
+          "table_id",
+          "record_id",
+          "fields"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "update_record_by_field",
+      "description": "Match a record by business field and update it.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "table_id": {
+            "type": "string",
+            "description": "Table ID or name."
+          },
+          "match_field": {
+            "type": "string",
+            "description": "Field name used to locate the record, for example 'ProjectCode'."
+          },
+          "match_value": {
+            "type": "string",
+            "description": "Field value used to locate the record."
+          },
+          "fields": {
+            "type": "object",
+            "description": "Field key/value pairs to update."
+          },
+          "base_id": {
+            "type": "string",
+            "description": "Database ID or name. Required when table_id is a name."
+          },
+          "require_unique": {
+            "type": "boolean",
+            "description": "Whether the match must be unique. Default: true."
+          }
+        },
+        "required": [
+          "table_id",
+          "match_field",
+          "match_value",
+          "fields"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "delete_record",
+      "description": "Delete a single record from a specific table. This is destructive and irreversible.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "table_id": {
+            "type": "string",
+            "description": "Table ID or name."
+          },
+          "record_id": {
+            "type": "string",
+            "description": "Record ID (row ID)."
+          },
+          "base_id": {
+            "type": "string",
+            "description": "Database ID or name. Required when table_id is a name."
+          }
+        },
+        "required": [
+          "table_id",
+          "record_id"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "bulk_delete_records",
+      "description": "Bulk delete multiple records from a specific table. This is highly destructive and irreversible.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "table_id": {
+            "type": "string",
+            "description": "Table ID or name."
+          },
+          "record_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "List of record IDs to delete."
+          },
+          "base_id": {
+            "type": "string",
+            "description": "Database ID or name. Required when table_id is a name."
+          }
+        },
+        "required": [
+          "table_id",
+          "record_ids"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "delete_table",
+      "description": "Delete an entire table and all of its data. This is extremely dangerous and irreversible.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "table_id": {
+            "type": "string",
+            "description": "Table ID or name."
+          },
+          "base_id": {
+            "type": "string",
+            "description": "Database ID or name. Required when table_id is a name."
+          }
+        },
+        "required": [
+          "table_id"
+        ]
+      }
+    }
+  }
+]

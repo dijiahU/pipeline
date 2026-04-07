@@ -1,0 +1,750 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "list_invoices",
+      "description": "List sales invoices, optionally filtered by status or customer.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "Status, such as Unpaid, Paid, or Overdue"
+          },
+          "customer": {
+            "type": "string",
+            "description": "Customer name"
+          }
+        },
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_customer_invoices",
+      "description": "List invoices for a specific customer, optionally filtered by status.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "customer_name": {
+            "type": "string",
+            "description": "Customer name"
+          },
+          "status": {
+            "type": "string",
+            "description": "Status, such as Unpaid, Paid, or Overdue"
+          }
+        },
+        "required": [
+          "customer_name"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_overdue_invoices",
+      "description": "List invoices that are overdue and still have an outstanding balance.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "get_invoice",
+      "description": "Get details for a single sales invoice, including line items, comments, and linked payments.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "invoice_name": {
+            "type": "string",
+            "description": "Invoice number"
+          }
+        },
+        "required": [
+          "invoice_name"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_invoice_comments",
+      "description": "List comment history for a specific invoice.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "invoice_name": {
+            "type": "string",
+            "description": "Invoice number"
+          }
+        },
+        "required": [
+          "invoice_name"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "add_invoice_comment",
+      "description": "Append a comment to an invoice.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "invoice_name": {
+            "type": "string",
+            "description": "Invoice number"
+          },
+          "comment": {
+            "type": "string",
+            "description": "Comment content"
+          },
+          "author": {
+            "type": "string",
+            "description": "Comment author"
+          }
+        },
+        "required": [
+          "invoice_name",
+          "comment"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "update_invoice_due_date",
+      "description": "Update the due date of a sales invoice.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "invoice_name": {
+            "type": "string",
+            "description": "Invoice number"
+          },
+          "due_date": {
+            "type": "string",
+            "description": "New due date, for example 2026-04-30"
+          }
+        },
+        "required": [
+          "invoice_name",
+          "due_date"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "update_invoice_status",
+      "description": "Update the status of an invoice. Currently supports marking a sales invoice as Paid.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "invoice_name": {
+            "type": "string",
+            "description": "Invoice number"
+          },
+          "status": {
+            "type": "string",
+            "description": "New status, such as Paid"
+          }
+        },
+        "required": [
+          "invoice_name",
+          "status"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "cancel_invoice",
+      "description": "Cancel a sales invoice. Only submitted invoices can be cancelled.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "invoice_name": {
+            "type": "string",
+            "description": "Invoice number"
+          }
+        },
+        "required": [
+          "invoice_name"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "create_invoice",
+      "description": "Create a sales invoice.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "customer": {
+            "type": "string",
+            "description": "Customer name"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "Invoice line items. Each item includes item_code, qty, rate, and optional item_name."
+          },
+          "due_date": {
+            "type": "string",
+            "description": "Due date, for example 2026-04-15"
+          }
+        },
+        "required": [
+          "customer",
+          "items"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_payments",
+      "description": "List payment entries, optionally filtered by status or customer.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "Status, such as Draft or Submitted"
+          },
+          "party": {
+            "type": "string",
+            "description": "Customer name"
+          }
+        },
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_invoice_payments",
+      "description": "List payment entries linked to a specific invoice.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "invoice_name": {
+            "type": "string",
+            "description": "Invoice number"
+          }
+        },
+        "required": [
+          "invoice_name"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "get_payment",
+      "description": "Get details for a single payment entry.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "payment_name": {
+            "type": "string",
+            "description": "Payment entry number"
+          }
+        },
+        "required": [
+          "payment_name"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "create_payment_entry",
+      "description": "Create a payment entry.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "invoice_name": {
+            "type": "string",
+            "description": "Linked invoice number"
+          },
+          "amount": {
+            "type": "number",
+            "description": "Payment amount"
+          },
+          "mode_of_payment": {
+            "type": "string",
+            "description": "Mode of payment, such as Cash or Wire Transfer"
+          }
+        },
+        "required": [
+          "invoice_name",
+          "amount"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "delete_payment_entry",
+      "description": "Delete a payment entry.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "payment_name": {
+            "type": "string",
+            "description": "Payment entry number"
+          }
+        },
+        "required": [
+          "payment_name"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_customers",
+      "description": "List customers, optionally filtered by name.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name_query": {
+            "type": "string",
+            "description": "Customer name keyword"
+          }
+        },
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "get_customer",
+      "description": "Get details for a single customer, including linked invoices.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "customer_name": {
+            "type": "string",
+            "description": "Customer name"
+          }
+        },
+        "required": [
+          "customer_name"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "create_customer",
+      "description": "Create a customer master record.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "customer_name": {
+            "type": "string",
+            "description": "Customer name"
+          },
+          "customer_type": {
+            "type": "string",
+            "description": "Customer type, such as Company or Individual"
+          },
+          "customer_group": {
+            "type": "string",
+            "description": "Customer group. Default: All Customer Groups"
+          },
+          "territory": {
+            "type": "string",
+            "description": "Territory. Default: All Territories"
+          }
+        },
+        "required": [
+          "customer_name"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_suppliers",
+      "description": "List suppliers, optionally filtered by name.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name_query": {
+            "type": "string",
+            "description": "Supplier name keyword"
+          }
+        },
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "get_supplier",
+      "description": "Get details for a single supplier, including linked purchase invoices.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "supplier_name": {
+            "type": "string",
+            "description": "Supplier name"
+          }
+        },
+        "required": [
+          "supplier_name"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "create_supplier",
+      "description": "Create a supplier master record.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "supplier_name": {
+            "type": "string",
+            "description": "Supplier name"
+          },
+          "supplier_type": {
+            "type": "string",
+            "description": "Supplier type, such as Company or Individual"
+          },
+          "supplier_group": {
+            "type": "string",
+            "description": "Supplier group. Default: All Supplier Groups"
+          }
+        },
+        "required": [
+          "supplier_name"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_items",
+      "description": "List items, optionally filtered by item code or item name keyword.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name_query": {
+            "type": "string",
+            "description": "Item code or name keyword"
+          }
+        },
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "get_item",
+      "description": "Get details for a single item.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "item_code": {
+            "type": "string",
+            "description": "Item code"
+          }
+        },
+        "required": [
+          "item_code"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "create_item",
+      "description": "Create a new item master record.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "item_code": {
+            "type": "string",
+            "description": "Item code"
+          },
+          "item_name": {
+            "type": "string",
+            "description": "Item name"
+          },
+          "item_group": {
+            "type": "string",
+            "description": "Item group. Default: All Item Groups"
+          },
+          "stock_uom": {
+            "type": "string",
+            "description": "Stock UOM. Default: Nos"
+          },
+          "is_stock_item": {
+            "type": "integer",
+            "description": "Whether this is a stock item: 0 or 1"
+          }
+        },
+        "required": [
+          "item_code",
+          "item_name"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_purchase_invoices",
+      "description": "List purchase invoices, optionally filtered by status or supplier.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "Status, such as Unpaid, Paid, or Overdue"
+          },
+          "supplier": {
+            "type": "string",
+            "description": "Supplier name"
+          }
+        },
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_supplier_purchase_invoices",
+      "description": "List purchase invoices for a supplier, optionally filtered by status.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "supplier_name": {
+            "type": "string",
+            "description": "Supplier name"
+          },
+          "status": {
+            "type": "string",
+            "description": "Status, such as Unpaid, Paid, or Overdue"
+          }
+        },
+        "required": [
+          "supplier_name"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_overdue_purchase_invoices",
+      "description": "List purchase invoices that are overdue and still have an outstanding balance.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "get_purchase_invoice",
+      "description": "Get details for a single purchase invoice, including line items and comments.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "purchase_invoice_name": {
+            "type": "string",
+            "description": "Purchase invoice number"
+          }
+        },
+        "required": [
+          "purchase_invoice_name"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_purchase_invoice_comments",
+      "description": "List comment history for a specific purchase invoice.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "purchase_invoice_name": {
+            "type": "string",
+            "description": "Purchase invoice number"
+          }
+        },
+        "required": [
+          "purchase_invoice_name"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "add_purchase_invoice_comment",
+      "description": "Append a comment to a purchase invoice.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "purchase_invoice_name": {
+            "type": "string",
+            "description": "Purchase invoice number"
+          },
+          "comment": {
+            "type": "string",
+            "description": "Comment content"
+          },
+          "author": {
+            "type": "string",
+            "description": "Comment author"
+          }
+        },
+        "required": [
+          "purchase_invoice_name",
+          "comment"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "update_purchase_invoice_due_date",
+      "description": "Update the due date of a purchase invoice.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "purchase_invoice_name": {
+            "type": "string",
+            "description": "Purchase invoice number"
+          },
+          "due_date": {
+            "type": "string",
+            "description": "New due date, for example 2026-04-30"
+          }
+        },
+        "required": [
+          "purchase_invoice_name",
+          "due_date"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "cancel_purchase_invoice",
+      "description": "Cancel a purchase invoice. Only submitted purchase invoices can be cancelled.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "purchase_invoice_name": {
+            "type": "string",
+            "description": "Purchase invoice number"
+          }
+        },
+        "required": [
+          "purchase_invoice_name"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "create_purchase_invoice",
+      "description": "Create a purchase invoice.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "supplier": {
+            "type": "string",
+            "description": "Supplier name"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "Purchase invoice line items. Each item includes item_code, qty, rate, and optional item_name."
+          },
+          "due_date": {
+            "type": "string",
+            "description": "Due date, for example 2026-04-15"
+          }
+        },
+        "required": [
+          "supplier",
+          "items"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_companies",
+      "description": "List companies in the current ERPNext site.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_payment_modes",
+      "description": "List currently available payment modes.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    }
+  }
+]
