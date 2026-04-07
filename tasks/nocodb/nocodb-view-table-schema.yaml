@@ -12,11 +12,9 @@ oracle:
   expected_flow:
     - memory_for_plan
     - predict_risk:safe
-    - execute:list_tables
-    - execute:list_columns
+    - execute:get_table
   required_tools:
-    - list_tables
-    - list_columns
+    - get_table
   outcome_check:
     condition: column_exists
     base_name: project_tracker

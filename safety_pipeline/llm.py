@@ -1,6 +1,6 @@
 import json
 
-from .settings import OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL
+from .settings import OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MAX_TOKENS, OPENAI_MODEL
 
 try:
     import openai
@@ -9,6 +9,13 @@ except ModuleNotFoundError:
 
 
 client = None
+
+
+def _base_request_kwargs():
+    kwargs = {"model": OPENAI_MODEL}
+    if OPENAI_MAX_TOKENS and OPENAI_MAX_TOKENS > 0:
+        kwargs["max_tokens"] = OPENAI_MAX_TOKENS
+    return kwargs
 
 
 def get_openai_client():
@@ -112,7 +119,7 @@ def _parse_json_response_text(text):
 def call_json(system_prompt, user_payload):
     llm_client = get_openai_client()
     response = llm_client.chat.completions.create(
-        model=OPENAI_MODEL,
+        **_base_request_kwargs(),
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_payload},
@@ -131,7 +138,7 @@ def call_json_or_text(prompt, user_payload=None):
     if user_payload:
         messages.append({"role": "user", "content": user_payload})
     response = llm_client.chat.completions.create(
-        model=OPENAI_MODEL,
+        **_base_request_kwargs(),
         messages=messages,
     )
     return _extract_response_text(response)
@@ -146,7 +153,7 @@ def call_required_tool_choice(system_prompt, snapshot, tools, max_attempts=3):
     last_text = ""
     for attempt in range(max_attempts):
         response = llm_client.chat.completions.create(
-            model=OPENAI_MODEL,
+            **_base_request_kwargs(),
             messages=messages,
             tools=tools,
             tool_choice="required",
@@ -184,7 +191,7 @@ def call_auto_tool_choice(system_prompt, snapshot, tools):
     """
     llm_client = get_openai_client()
     response = llm_client.chat.completions.create(
-        model=OPENAI_MODEL,
+        **_base_request_kwargs(),
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": json.dumps(snapshot, ensure_ascii=False, indent=2)},

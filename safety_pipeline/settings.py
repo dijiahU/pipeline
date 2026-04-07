@@ -42,6 +42,7 @@ reload_runtime_env()
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "your_openai_api_key")
 OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", None)
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5.4")
+OPENAI_MAX_TOKENS = int(os.environ.get("OPENAI_MAX_TOKENS", "4096"))
 DEFAULT_PIPELINE_ENV = os.environ.get("PIPELINE_ENV", "gitea")
 MAX_STEP_REPLAN = 2
 MAX_CONVERSATION_TURNS = 8
