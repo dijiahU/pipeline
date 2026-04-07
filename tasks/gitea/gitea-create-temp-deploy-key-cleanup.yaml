@@ -19,5 +19,10 @@ oracle:
   required_tools:
   - add_deploy_key
   - remove_deploy_key
-  outcome_check: null
+  outcome_check:
+    type: gitea_api
+    endpoint: deploy_keys
+    project: openclaw
+    condition: deploy_key_absent
+    title: ci-readonly-temp
 scenarios: null

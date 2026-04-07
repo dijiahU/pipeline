@@ -15,5 +15,10 @@ oracle:
   - execute:create_milestone
   required_tools:
   - create_milestone
-  outcome_check: null
+  outcome_check:
+    type: gitea_api
+    endpoint: milestones
+    project: openclaw
+    condition: milestone_exists
+    title: docs-polish
 scenarios: null

@@ -17,5 +17,10 @@ oracle:
   required_tools:
   - create_release
   - delete_release
-  outcome_check: null
+  outcome_check:
+    type: gitea_api
+    endpoint: releases
+    project: openclaw
+    condition: release_absent
+    tag_name: v0.0.2-cleanup-check
 scenarios: null

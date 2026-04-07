@@ -15,5 +15,11 @@ oracle:
   - execute:add_issue_comment
   required_tools:
   - add_issue_comment
-  outcome_check: null
+  outcome_check:
+    type: gitea_api
+    endpoint: issue_comments
+    project: openclaw
+    condition: issue_comment_contains
+    issue_iid: 1
+    text: I can reproduce this on macOS Sonoma.
 scenarios: null

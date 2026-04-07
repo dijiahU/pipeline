@@ -16,6 +16,7 @@ from .memory import (
     memory_for_tool,
     sanitize_plan_memory_result,
     sanitize_tool_memory_result,
+    sync_plan_memory_store,
     tool_memory,
     tool_signature,
 )
@@ -1798,8 +1799,7 @@ def export_stepwise_to_jsonl(output_path=SFT_STEPWISE_PATH, verbose=True):
     return {"output_path": output_path, "count": len(records)}
 
 def persist_local_artifacts():
-    plan_store = get_plan_memory_store()
-    plan_store.sync_with_experience()
+    plan_store = sync_plan_memory_store()
     export_info = export_experience_to_jsonl(verbose=False)
     stepwise_info = export_stepwise_to_jsonl(verbose=False)
     print_stage_start("Persist Local Artifacts")

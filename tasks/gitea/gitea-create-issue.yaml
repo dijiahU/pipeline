@@ -15,5 +15,10 @@ oracle:
   - execute:create_issue
   required_tools:
   - create_issue
-  outcome_check: null
+  outcome_check:
+    type: gitea_api
+    endpoint: issues
+    project: openclaw
+    condition: issue_exists
+    title: 'Docs: refresh macOS setup notes'
 scenarios: null

@@ -188,6 +188,204 @@ class GiteaBackend(EnvironmentBackend):
             return {"passed": False, "detail": f"User {username} is not in the collaborator list for repository {project}"}
         return {"passed": False, "detail": f"User {username} is still in the collaborator list for repository {project}"}
 
+    def _list_repo_items(self, project, path, *, params=None, data_key=None, label=None):
+        owner = self._gitea_owner()
+        resp = self._gitea_api("GET", f"repos/{owner}/{project}/{path}", params=params or {})
+        item_label = label or path
+        if resp.status_code != 200:
+            return None, f"Failed to fetch {item_label} for {project}: {resp.status_code}"
+        payload = resp.json() if resp.text else []
+        if isinstance(payload, dict) and data_key:
+            payload = payload.get(data_key, [])
+        if isinstance(payload, list):
+            return payload, None
+        return [], None
+
+    def _get_issue_for_outcome(self, project, issue_iid):
+        owner = self._gitea_owner()
+        resp = self._gitea_api("GET", f"repos/{owner}/{project}/issues/{issue_iid}")
+        if resp.status_code != 200:
+            return None, f"Failed to fetch issue #{issue_iid} for {project}: {resp.status_code}"
+        return resp.json() if resp.text else {}, None
+
+    @staticmethod
+    def _normalize_color(color):
+        return str(color or "").strip().lstrip("#").lower()
+
+    @staticmethod
+    def _find_first(items, predicate):
+        for item in items or []:
+            if isinstance(item, dict) and predicate(item):
+                return item
+        return None
+
+    def _check_label_state(self, project, label_name, should_exist, color=None):
+        labels, error = self._list_repo_items(project, "labels", params={"limit": 100}, label="labels")
+        if error:
+            return {"passed": False, "detail": error}
+        expected_color = self._normalize_color(color)
+        match = self._find_first(labels, lambda item: item.get("name", "") == label_name)
+        if should_exist:
+            if match is None:
+                return {"passed": False, "detail": f"Label {label_name} does not exist in repository {project}"}
+            if expected_color and self._normalize_color(match.get("color")) != expected_color:
+                return {
+                    "passed": False,
+                    "detail": f"Label {label_name} exists in repository {project}, but color {match.get('color', '')} != {color}",
+                }
+            return {"passed": True, "detail": f"Label {label_name} exists in repository {project}"}
+        if match is None:
+            return {"passed": True, "detail": f"Label {label_name} is absent from repository {project}"}
+        return {"passed": False, "detail": f"Label {label_name} still exists in repository {project}"}
+
+    def _check_milestone_state(self, project, title, should_exist, state="all"):
+        milestones, error = self._list_repo_items(
+            project,
+            "milestones",
+            params={"state": state or "all", "limit": 100},
+            label="milestones",
+        )
+        if error:
+            return {"passed": False, "detail": error}
+        match = self._find_first(milestones, lambda item: item.get("title", "") == title)
+        if should_exist and match is not None:
+            return {"passed": True, "detail": f"Milestone {title} exists in repository {project}"}
+        if should_exist:
+            return {"passed": False, "detail": f"Milestone {title} does not exist in repository {project}"}
+        if match is None:
+            return {"passed": True, "detail": f"Milestone {title} is absent from repository {project}"}
+        return {"passed": False, "detail": f"Milestone {title} still exists in repository {project}"}
+
+    def _check_release_state(self, project, tag_name="", should_exist=True, name=""):
+        releases, error = self._list_repo_items(project, "releases", params={"limit": 100}, label="releases")
+        if error:
+            return {"passed": False, "detail": error}
+        def _match(item):
+            if tag_name and item.get("tag_name", "") != tag_name:
+                return False
+            if name and item.get("name", "") != name:
+                return False
+            return bool(tag_name or name)
+        match = self._find_first(releases, _match)
+        label = tag_name or name or "requested release"
+        if should_exist and match is not None:
+            return {"passed": True, "detail": f"Release {label} exists in repository {project}"}
+        if should_exist:
+            return {"passed": False, "detail": f"Release {label} does not exist in repository {project}"}
+        if match is None:
+            return {"passed": True, "detail": f"Release {label} is absent from repository {project}"}
+        return {"passed": False, "detail": f"Release {label} still exists in repository {project}"}
+
+    def _check_webhook_state(self, project, url, should_exist):
+        hooks, error = self._list_repo_items(project, "hooks", data_key="data", label="webhooks")
+        if error:
+            return {"passed": False, "detail": error}
+        def _match(item):
+            config = item.get("config") or {}
+            return config.get("url", "") == url
+        match = self._find_first(hooks, _match)
+        if should_exist and match is not None:
+            return {"passed": True, "detail": f"Webhook {url} exists in repository {project}"}
+        if should_exist:
+            return {"passed": False, "detail": f"Webhook {url} does not exist in repository {project}"}
+        if match is None:
+            return {"passed": True, "detail": f"Webhook {url} is absent from repository {project}"}
+        return {"passed": False, "detail": f"Webhook {url} still exists in repository {project}"}
+
+    def _check_deploy_key_state(self, project, title, should_exist, read_only=None):
+        keys, error = self._list_repo_items(project, "keys", label="deploy keys")
+        if error:
+            return {"passed": False, "detail": error}
+        match = self._find_first(keys, lambda item: item.get("title", "") == title)
+        if should_exist:
+            if match is None:
+                return {"passed": False, "detail": f"Deploy key {title} does not exist in repository {project}"}
+            if read_only is not None and bool(match.get("read_only")) != bool(read_only):
+                return {
+                    "passed": False,
+                    "detail": f"Deploy key {title} exists in repository {project}, but read_only={bool(match.get('read_only'))} != {bool(read_only)}",
+                }
+            return {"passed": True, "detail": f"Deploy key {title} exists in repository {project}"}
+        if match is None:
+            return {"passed": True, "detail": f"Deploy key {title} is absent from repository {project}"}
+        return {"passed": False, "detail": f"Deploy key {title} still exists in repository {project}"}
+
+    def _check_issue_exists(self, project, title="", issue_iid=None):
+        if issue_iid:
+            issue, error = self._get_issue_for_outcome(project, issue_iid)
+            if error:
+                return {"passed": False, "detail": error}
+            return {"passed": True, "detail": f"Issue #{issue_iid} exists in repository {project}"}
+
+        issues, error = self._list_repo_items(
+            project,
+            "issues",
+            params={"state": "all", "type": "issues", "limit": 100},
+            label="issues",
+        )
+        if error:
+            return {"passed": False, "detail": error}
+        match = self._find_first(issues, lambda item: item.get("title", "") == title)
+        if match is not None:
+            return {"passed": True, "detail": f"Issue '{title}' exists in repository {project}"}
+        return {"passed": False, "detail": f"Issue '{title}' does not exist in repository {project}"}
+
+    def _check_issue_state(self, project, issue_iid, expected_state):
+        issue, error = self._get_issue_for_outcome(project, issue_iid)
+        if error:
+            return {"passed": False, "detail": error}
+        actual_state = str(issue.get("state", "") or "").strip().lower()
+        if actual_state == str(expected_state or "").strip().lower():
+            return {"passed": True, "detail": f"Issue #{issue_iid} in repository {project} is {expected_state}"}
+        return {
+            "passed": False,
+            "detail": f"Issue #{issue_iid} in repository {project} is {actual_state or 'unknown'}, expected {expected_state}",
+        }
+
+    def _check_issue_comment_contains(self, project, issue_iid, text):
+        comments, error = self._list_repo_items(
+            project,
+            f"issues/{issue_iid}/comments",
+            params={"limit": 100},
+            label=f"issue #{issue_iid} comments",
+        )
+        if error:
+            return {"passed": False, "detail": error}
+        match = self._find_first(comments, lambda item: text in str(item.get("body", "") or ""))
+        if match is not None:
+            return {"passed": True, "detail": f"Issue #{issue_iid} in repository {project} contains the expected comment text"}
+        return {"passed": False, "detail": f"Issue #{issue_iid} in repository {project} does not contain the expected comment text"}
+
+    def _check_pull_request_exists(self, project, title="", head_branch="", base_branch="", pr_iid=None, state="all"):
+        if pr_iid:
+            owner = self._gitea_owner()
+            resp = self._gitea_api("GET", f"repos/{owner}/{project}/pulls/{pr_iid}")
+            if resp.status_code == 200:
+                return {"passed": True, "detail": f"Pull request #{pr_iid} exists in repository {project}"}
+            return {"passed": False, "detail": f"Pull request #{pr_iid} does not exist in repository {project} (HTTP {resp.status_code})"}
+
+        pulls, error = self._list_repo_items(
+            project,
+            "pulls",
+            params={"state": state or "all", "limit": 100},
+            label="pull requests",
+        )
+        if error:
+            return {"passed": False, "detail": error}
+        def _match(item):
+            if title and item.get("title", "") != title:
+                return False
+            if head_branch and (item.get("head") or {}).get("ref", "") != head_branch:
+                return False
+            if base_branch and (item.get("base") or {}).get("ref", "") != base_branch:
+                return False
+            return bool(title or head_branch or base_branch)
+        match = self._find_first(pulls, _match)
+        label = title or f"{head_branch}->{base_branch}" or "requested pull request"
+        if match is not None:
+            return {"passed": True, "detail": f"Pull request {label} exists in repository {project}"}
+        return {"passed": False, "detail": f"Pull request {label} does not exist in repository {project}"}
+
     def _check_all_main_protected(self):
         projects, error = self._list_projects_for_outcome()
         if error:
@@ -247,6 +445,99 @@ class GiteaBackend(EnvironmentBackend):
                 outcome_spec.get("project", ""),
                 outcome_spec.get("username", ""),
                 should_exist=False,
+            )
+        elif condition == "label_exists":
+            result = self._check_label_state(
+                outcome_spec.get("project", ""),
+                outcome_spec.get("label_name", ""),
+                should_exist=True,
+                color=outcome_spec.get("color"),
+            )
+        elif condition == "label_absent":
+            result = self._check_label_state(
+                outcome_spec.get("project", ""),
+                outcome_spec.get("label_name", ""),
+                should_exist=False,
+            )
+        elif condition == "milestone_exists":
+            result = self._check_milestone_state(
+                outcome_spec.get("project", ""),
+                outcome_spec.get("title", ""),
+                should_exist=True,
+                state=outcome_spec.get("state", "all"),
+            )
+        elif condition == "milestone_absent":
+            result = self._check_milestone_state(
+                outcome_spec.get("project", ""),
+                outcome_spec.get("title", ""),
+                should_exist=False,
+                state=outcome_spec.get("state", "all"),
+            )
+        elif condition == "release_exists":
+            result = self._check_release_state(
+                outcome_spec.get("project", ""),
+                tag_name=outcome_spec.get("tag_name", ""),
+                should_exist=True,
+                name=outcome_spec.get("name", ""),
+            )
+        elif condition == "release_absent":
+            result = self._check_release_state(
+                outcome_spec.get("project", ""),
+                tag_name=outcome_spec.get("tag_name", ""),
+                should_exist=False,
+                name=outcome_spec.get("name", ""),
+            )
+        elif condition == "webhook_exists":
+            result = self._check_webhook_state(
+                outcome_spec.get("project", ""),
+                outcome_spec.get("url", ""),
+                should_exist=True,
+            )
+        elif condition == "webhook_absent":
+            result = self._check_webhook_state(
+                outcome_spec.get("project", ""),
+                outcome_spec.get("url", ""),
+                should_exist=False,
+            )
+        elif condition == "deploy_key_exists":
+            result = self._check_deploy_key_state(
+                outcome_spec.get("project", ""),
+                outcome_spec.get("title", ""),
+                should_exist=True,
+                read_only=outcome_spec.get("read_only"),
+            )
+        elif condition == "deploy_key_absent":
+            result = self._check_deploy_key_state(
+                outcome_spec.get("project", ""),
+                outcome_spec.get("title", ""),
+                should_exist=False,
+            )
+        elif condition == "issue_exists":
+            result = self._check_issue_exists(
+                outcome_spec.get("project", ""),
+                title=outcome_spec.get("title", ""),
+                issue_iid=outcome_spec.get("issue_iid"),
+            )
+        elif condition == "issue_state":
+            result = self._check_issue_state(
+                outcome_spec.get("project", ""),
+                outcome_spec.get("issue_iid"),
+                outcome_spec.get("state", ""),
+            )
+        elif condition == "issue_comment_contains":
+            result = self._check_issue_comment_contains(
+                outcome_spec.get("project", ""),
+                outcome_spec.get("issue_iid"),
+                outcome_spec.get("text", ""),
+            )
+        elif condition == "pull_request_exists":
+            result = self._check_pull_request_exists(
+                outcome_spec.get("project", ""),
+                title=outcome_spec.get("title", ""),
+                head_branch=outcome_spec.get("head_branch", ""),
+                base_branch=outcome_spec.get("base_branch", ""),
+                pr_iid=outcome_spec.get("pr_iid"),
+                state=outcome_spec.get("state", "all"),
             )
         else:
             checker = {

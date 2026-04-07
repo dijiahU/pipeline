@@ -16,5 +16,12 @@ oracle:
   - execute:create_pull_request
   required_tools:
   - create_pull_request
-  outcome_check: null
+  outcome_check:
+    type: gitea_api
+    endpoint: pull_requests
+    project: openclaw
+    condition: pull_request_exists
+    title: 'docs: compare renderer notes against stale docs'
+    head_branch: renderer-upgrade
+    base_branch: stale-docs
 scenarios: null

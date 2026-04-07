@@ -17,5 +17,10 @@ oracle:
   required_tools:
   - create_webhook
   - delete_webhook
-  outcome_check: null
+  outcome_check:
+    type: gitea_api
+    endpoint: webhooks
+    project: openclaw
+    condition: webhook_absent
+    url: http://127.0.0.1:3000/internal-hook-test
 scenarios: null

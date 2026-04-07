@@ -15,5 +15,10 @@ oracle:
   - execute:create_release
   required_tools:
   - create_release
-  outcome_check: null
+  outcome_check:
+    type: gitea_api
+    endpoint: releases
+    project: openclaw
+    condition: release_exists
+    tag_name: v0.0.1-pipeline
 scenarios: null

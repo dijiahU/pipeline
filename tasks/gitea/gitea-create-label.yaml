@@ -15,5 +15,11 @@ oracle:
   - execute:create_label
   required_tools:
   - create_label
-  outcome_check: null
+  outcome_check:
+    type: gitea_api
+    endpoint: labels
+    project: openclaw
+    condition: label_exists
+    label_name: docs-review
+    color: '#1f6feb'
 scenarios: null

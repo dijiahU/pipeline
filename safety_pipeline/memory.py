@@ -154,10 +154,16 @@ def get_local_embedding_model():
     import warnings
     logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
     logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", message=".*position_ids.*")
-        warnings.filterwarnings("ignore", message=".*unauthenticated.*")
-        _local_embedding_model = SentenceTransformer(LOCAL_EMBEDDING_MODEL)
+    try:
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message=".*position_ids.*")
+            warnings.filterwarnings("ignore", message=".*unauthenticated.*")
+            _local_embedding_model = SentenceTransformer(LOCAL_EMBEDDING_MODEL)
+    except Exception as exc:
+        raise RuntimeError(
+            f"failed to load local embedding model '{LOCAL_EMBEDDING_MODEL}': "
+            f"{exc.__class__.__name__}: {exc}"
+        ) from exc
     return _local_embedding_model
 
 
@@ -438,6 +444,22 @@ class DisabledPlanMemoryStore:
         return []
 
 
+def _format_plan_memory_exception(exc, context):
+    detail = str(exc).strip() or exc.__class__.__name__
+    return f"{context}: {detail}"
+
+
+def _disable_plan_memory(reason):
+    global _local_embedding_model, plan_memory_store, _plan_memory_disabled_reason
+    _local_embedding_model = None
+    _plan_memory_disabled_reason = reason
+    already_disabled = isinstance(plan_memory_store, DisabledPlanMemoryStore) and plan_memory_store.reason == reason
+    if not already_disabled:
+        print(f"[plan_memory] disabled: {reason}")
+    plan_memory_store = DisabledPlanMemoryStore(reason)
+    return plan_memory_store
+
+
 class ToolMemory:
     def __init__(self, storage_path):
         self.storage_path = storage_path
@@ -500,11 +522,22 @@ def get_plan_memory_store():
                 experience_memory,
             )
             _plan_memory_disabled_reason = None
-        except RuntimeError as exc:
-            _plan_memory_disabled_reason = str(exc)
-            print(f"[plan_memory] disabled: {_plan_memory_disabled_reason}")
-            plan_memory_store = DisabledPlanMemoryStore(_plan_memory_disabled_reason)
+        except Exception as exc:
+            plan_memory_store = _disable_plan_memory(
+                _format_plan_memory_exception(exc, "plan memory init failed")
+            )
     return plan_memory_store
+
+
+def sync_plan_memory_store():
+    store = get_plan_memory_store()
+    try:
+        store.sync_with_experience()
+    except Exception as exc:
+        store = _disable_plan_memory(
+            _format_plan_memory_exception(exc, "plan memory sync failed")
+        )
+    return store
 
 
 def _build_trajectory_view(session, score, meta=None):
@@ -540,7 +573,15 @@ def memory_for_plan(task_query, service_id=None, environment=None):
         filters["service_id"] = service_id
     if environment:
         filters["environment"] = environment
-    recalled = get_plan_memory_store().search(task_query, limit=PLAN_MEMORY_TOP_K, filters=filters or None)
+    try:
+        recalled = get_plan_memory_store().search(
+            task_query,
+            limit=PLAN_MEMORY_TOP_K,
+            filters=filters or None,
+        )
+    except Exception as exc:
+        _disable_plan_memory(_format_plan_memory_exception(exc, "plan memory search failed"))
+        recalled = []
     trajectories = []
 
     for item in recalled:
