@@ -20,6 +20,17 @@ def _fake_response(tool_calls=None, content=None):
     return SimpleNamespace(choices=[choice], output_text=content)
 
 
+def _tool_schema(name):
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": f"Schema for {name}",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    }
+
+
 class FlowRegressionTests(unittest.TestCase):
     def test_parse_user_reply_falls_back_to_heuristics_for_approval(self):
         conversation = state.init_conversation_state("add a note")
@@ -93,6 +104,84 @@ class FlowRegressionTests(unittest.TestCase):
 
         self.assertEqual(tool_call.function.name, "predict_risk")
         self.assertEqual(fake_client.chat.completions.create.call_count, 2)
+
+    def test_call_required_tool_choice_retries_after_invalid_json_arguments(self):
+        fake_client = SimpleNamespace(
+            chat=SimpleNamespace(
+                completions=SimpleNamespace(
+                    create=Mock(
+                        side_effect=[
+                            _fake_response(
+                                tool_calls=[
+                                    _fake_tool_call(
+                                        "predict_risk",
+                                        '{"tool":"list_patients","tool_args":{"patient_id":"PT-100}',
+                                    )
+                                ]
+                            ),
+                            _fake_response(
+                                tool_calls=[
+                                    _fake_tool_call(
+                                        "predict_risk",
+                                        '{"tool":"list_patients","tool_args":{"patient_id":"PT-100"},"description":"List patients","result":"safe","reasoning":"Read-only."}',
+                                    )
+                                ]
+                            ),
+                        ]
+                    )
+                )
+            )
+        )
+
+        with patch("safety_pipeline.llm.get_openai_client", return_value=fake_client):
+            tool_call = llm.call_required_tool_choice(
+                "system",
+                {"flow_phase": "need_risk"},
+                tools=[_tool_schema("predict_risk")],
+            )
+
+        self.assertEqual(tool_call.function.name, "predict_risk")
+        self.assertEqual(
+            tool_call.function.arguments,
+            '{"tool": "list_patients", "tool_args": {"patient_id": "PT-100"}, "description": "List patients", "result": "safe", "reasoning": "Read-only."}',
+        )
+        self.assertEqual(fake_client.chat.completions.create.call_count, 2)
+
+    def test_call_required_tool_choice_falls_back_to_json_mode(self):
+        fake_client = SimpleNamespace(
+            chat=SimpleNamespace(
+                completions=SimpleNamespace(
+                    create=Mock(
+                        side_effect=[
+                            _fake_response(content="Use predict_risk next."),
+                            _fake_response(content="Call the tool."),
+                            _fake_response(content="Still no tool call."),
+                            _fake_response(
+                                content='{"tool_name":"predict_risk","arguments":{"tool":"get_patient","tool_args":{"patient_id":"PT-100"},"description":"Read patient","result":"safe","reasoning":"Read-only access."}}'
+                            ),
+                        ]
+                    )
+                )
+            )
+        )
+
+        with patch("safety_pipeline.llm.get_openai_client", return_value=fake_client):
+            tool_call = llm.call_required_tool_choice(
+                "system",
+                {"flow_phase": "need_risk"},
+                tools=[_tool_schema("predict_risk")],
+            )
+
+        self.assertEqual(tool_call.function.name, "predict_risk")
+        self.assertEqual(
+            tool_call.function.arguments,
+            '{"tool": "get_patient", "tool_args": {"patient_id": "PT-100"}, "description": "Read patient", "result": "safe", "reasoning": "Read-only access."}',
+        )
+        self.assertEqual(fake_client.chat.completions.create.call_count, 4)
+
+    def test_parse_tool_call_arguments_rejects_non_object_json(self):
+        with self.assertRaises(RuntimeError):
+            runtime._parse_tool_call_arguments("predict_risk", '["not", "an", "object"]')
 
     def test_replanned_read_only_step_cannot_stay_risky_due_to_original_cancel_goal(self):
         conversation = state.init_conversation_state("Please cancel all Unpaid sales invoices.")

@@ -110,6 +110,33 @@ def build_tool_schema_hint(tool_name):
     )
 
 
+def _parse_tool_call_arguments(tool_name, raw_arguments):
+    if raw_arguments in (None, ""):
+        return {}
+    if isinstance(raw_arguments, dict):
+        return raw_arguments
+    if not isinstance(raw_arguments, str):
+        raise RuntimeError(
+            f"Tool call arguments for {tool_name or '[unknown]'} must be a JSON object string, "
+            f"got {type(raw_arguments).__name__}."
+        )
+    try:
+        parsed = json.loads(raw_arguments)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"Tool call arguments for {tool_name or '[unknown]'} were not valid JSON: "
+            f"{exc.msg} at line {exc.lineno} column {exc.colno}."
+        ) from exc
+    if parsed is None:
+        return {}
+    if not isinstance(parsed, dict):
+        raise RuntimeError(
+            f"Tool call arguments for {tool_name or '[unknown]'} must decode to a JSON object, "
+            f"got {type(parsed).__name__}."
+        )
+    return parsed
+
+
 def resolve_real_tool_name(tool_name, context_label="current_step"):
     tool_name = str(tool_name).strip()
     tool_map = get_real_tool_schema_map()
@@ -2542,34 +2569,41 @@ def pipeline(user_input, npc_scenario=None, task_config=None):
                     break
 
             while True:
-                if state["flow_phase"] == "need_next_or_done":
-                    # auto has already returned a tool_call; use it directly on the first round.
-                    # Later retries still use required.
-                    if retry_count == 0 and tool_call is not None:
-                        pass  # Use the tool_call returned by auto above.
+                phase = state["flow_phase"]
+                tool_name = ""
+                tool_args = {}
+                raw_tool_args = ""
+                tool_record = None
+                try:
+                    if state["flow_phase"] == "need_next_or_done":
+                        # auto has already returned a tool_call; use it directly on the first round.
+                        # Later retries still use required.
+                        if retry_count == 0 and tool_call is not None:
+                            pass  # Use the tool_call returned by auto above.
+                        else:
+                            tool_call = call_required_tool_choice(
+                                TOOL_AGENT_SYSTEM_PROMPT,
+                                build_agent_state_snapshot(state),
+                                available_tools,
+                            )
                     else:
                         tool_call = call_required_tool_choice(
                             TOOL_AGENT_SYSTEM_PROMPT,
                             build_agent_state_snapshot(state),
                             available_tools,
                         )
-                else:
-                    tool_call = call_required_tool_choice(
-                        TOOL_AGENT_SYSTEM_PROMPT,
-                        build_agent_state_snapshot(state),
-                        available_tools,
-                    )
-                tool_name = tool_call.function.name
-                tool_args = json.loads(tool_call.function.arguments or "{}")
-                phase = state["flow_phase"]
-                state["tool_call_counter"] += 1
-                call_idx = state["tool_call_counter"]
-                print_stage_start("Model Selected Tool")
-                print_json_block("tool_call", {"name": tool_name, "arguments": tool_args, "phase": phase, "call_index": call_idx})
-                print_stage_end("Model Selected Tool", tool_name)
-                tool_record = build_flow_tool_call_record(call_idx, phase, tool_name, tool_args, None)
-                state["current_flow_tool_calls"].append(tool_record)
-                try:
+
+                    tool_name = str(getattr(tool_call.function, "name", "") or "").strip()
+                    raw_tool_args = getattr(tool_call.function, "arguments", "{}")
+                    tool_args = _parse_tool_call_arguments(tool_name, raw_tool_args)
+
+                    state["tool_call_counter"] += 1
+                    call_idx = state["tool_call_counter"]
+                    print_stage_start("Model Selected Tool")
+                    print_json_block("tool_call", {"name": tool_name, "arguments": tool_args, "phase": phase, "call_index": call_idx})
+                    print_stage_end("Model Selected Tool", tool_name)
+                    tool_record = build_flow_tool_call_record(call_idx, phase, tool_name, tool_args, None)
+                    state["current_flow_tool_calls"].append(tool_record)
                     tool_result = dispatch_tool_call(state, tool_name, tool_args)
                     tool_record["result"] = summarize_trace_value(tool_result)
                     state["last_tool_error"] = ""
@@ -2586,9 +2620,11 @@ def pipeline(user_input, npc_scenario=None, task_config=None):
                     break
                 except RuntimeError as exc:
                     message = str(exc)
-                    tool_record["result"] = {"accepted": False, "error": message}
+                    if tool_record is not None:
+                        tool_record["result"] = {"accepted": False, "error": message}
                     state["last_tool_error"] = (
-                        f"Previous tool call was invalid: name={tool_name}, arguments={json.dumps(tool_args, ensure_ascii=False)}; "
+                        f"Previous tool call was invalid: name={tool_name or '[unknown]'}, "
+                        f"arguments={json.dumps(tool_args, ensure_ascii=False) if tool_args else json.dumps(raw_tool_args, ensure_ascii=False)}; "
                         f"error={message}"
                     )
                     retry_count += 1
