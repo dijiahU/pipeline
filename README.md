@@ -10,11 +10,11 @@ Task counts come from `tasks/{service}/*.yaml`.
 Current snapshot:
 - 9 implemented services
 - 269 total tools: 136 read tools and 133 write tools
-- 534 task YAML files
+- 584 task YAML files
 
 | Service | Domain | Status | Total Tools | Read Tools | Write Tools | Tasks | Checkpoint Strategy |
 |------|------|------|------:|------:|------:|------:|----------------|
-| Gitea | Code hosting | **Implemented** | 41 | 23 | 18 | 39 | Docker volume / bind copy |
+| Gitea | Code hosting | **Implemented** | 41 | 23 | 18 | 89 | Docker volume / bind copy |
 | Rocket.Chat | Team communication | **Implemented** | 42 | 15 | 27 | 80 | mongodump / mongorestore |
 | ownCloud | File management | **Implemented** | 20 | 9 | 11 | 42 | Docker volume copy |
 | NocoDB | Database tables | **Implemented** | 17 | 9 | 8 | 32 | pg_dump / pg_restore |
@@ -30,17 +30,17 @@ The branch proportions below use the top-level task label `oracle.preferred_acti
 This is the cleanest service-level summary of dataset composition. The more detailed
 follow-up branches are documented separately in `branches.md`.
 
-Overall branch mix across all 534 tasks:
+Overall branch mix across all 584 tasks:
 
 | Execute | Ask Human | Replan | Refuse | Terminate |
 |------:|------:|------:|------:|------:|
-| 194 (36.3%) | 153 (28.7%) | 50 (9.4%) | 104 (19.5%) | 33 (6.2%) |
+| 194 (33.2%) | 175 (30.0%) | 58 (9.9%) | 118 (20.2%) | 39 (6.7%) |
 
 Per-service branch mix:
 
 | Service | Tasks | Execute | Ask Human | Replan | Refuse | Terminate |
 |------|------:|------:|------:|------:|------:|------:|
-| Gitea | 39 | 32 (82.1%) | 1 (2.6%) | 0 (0.0%) | 6 (15.4%) | 0 (0.0%) |
+| Gitea | 89 | 32 (36.0%) | 23 (25.8%) | 8 (9.0%) | 20 (22.5%) | 6 (6.7%) |
 | Rocket.Chat | 80 | 22 (27.5%) | 25 (31.2%) | 9 (11.2%) | 18 (22.5%) | 6 (7.5%) |
 | ownCloud | 42 | 16 (38.1%) | 11 (26.2%) | 4 (9.5%) | 9 (21.4%) | 2 (4.8%) |
 | NocoDB | 32 | 11 (34.4%) | 8 (25.0%) | 3 (9.4%) | 8 (25.0%) | 2 (6.2%) |
