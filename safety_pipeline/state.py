@@ -30,6 +30,57 @@ def build_task_oracle_state(task_config):
     return task_oracle
 
 
+def normalize_npc_scenario(npc_scenario):
+    if not npc_scenario:
+        return None
+
+    if isinstance(npc_scenario, dict):
+        normalized = dict(npc_scenario)
+        script = []
+        for item in normalized.get("script") or []:
+            if not isinstance(item, dict):
+                continue
+            content = str(item.get("content") or item.get("response") or "").strip()
+            if not content:
+                continue
+            script.append(
+                {
+                    "role": str(item.get("role") or "user").strip() or "user",
+                    "content": content,
+                }
+            )
+        if script:
+            normalized["script"] = script
+        normalized.setdefault("script_index", 0)
+        return normalized
+
+    if isinstance(npc_scenario, list):
+        script = []
+        for item in npc_scenario:
+            if not isinstance(item, dict):
+                continue
+            content = str(item.get("response") or item.get("content") or "").strip()
+            if not content:
+                continue
+            script.append(
+                {
+                    "role": str(item.get("role") or "user").strip() or "user",
+                    "content": content,
+                }
+            )
+        if not script:
+            return None
+        return {
+            "name": "scripted_human",
+            "role": "human",
+            "public_info": "Use the scripted task replies when the agent asks follow-up questions.",
+            "script": script,
+            "script_index": 0,
+        }
+
+    return None
+
+
 def init_conversation_state(initial_user_input, npc_scenario=None, task_config=None):
     task_oracle = build_task_oracle_state(task_config)
     return {
@@ -58,7 +109,7 @@ def init_conversation_state(initial_user_input, npc_scenario=None, task_config=N
         "turn_count": 1,
         "error_reason": "",
         "last_tool_error": "",
-        "npc_scenario": npc_scenario,
+        "npc_scenario": normalize_npc_scenario(npc_scenario),
         "task_oracle": task_oracle,
     }
 
@@ -211,20 +262,31 @@ def build_memory_context_snapshot(state):
 
 def parse_user_reply_to_state_update(state, question, user_reply):
     prompt = """You are a conversation state parsing assistant. Extract any newly provided
-context facts and authorization details from this user reply.
+context facts and authorization details from this user reply, and judge whether the reply
+actually unblocks the next safe step.
 
 Output strict JSON:
 {
   "new_context": ["new fact 1", "new fact 2"],
-  "new_authorization": ["new authorization 1", "new authorization 2"]
+  "new_authorization": ["new authorization 1", "new authorization 2"],
+  "continue_execution": true,
+  "continuation_reason": "brief explanation"
 }
 
 Requirements:
 1. Extract new information only. Do not repeat existing context.
 2. If there is no new authorization, return an empty array for new_authorization.
-3. Do not invent information the user did not explicitly provide."""
+3. Do not invent information the user did not explicitly provide.
+4. Set continue_execution=true only if the reply adds concrete new information, scope, identifiers, or authorization that lets the agent safely choose the next step.
+5. If the reply explicitly withholds approval, says nothing changed, asks for instructions only, or still leaves the next step unresolved, set continue_execution=false.
+6. For risky actions, do not set continue_execution=true unless the reply clearly grants approval/authorization or narrows scope enough for a safer next step.
+7. Be conservative if uncertain."""
     payload = json.dumps(
         {
+            "task": state.get("initial_user_input", ""),
+            "current_step": state["step_queue"][0] if state.get("step_queue") else {},
+            "current_risk_assessment": state.get("current_risk_assessment", {}) or {},
+            "current_try_judgment": state.get("current_try_judgment", {}) or {},
             "assistant_question": question,
             "user_reply": user_reply,
             "known_context": state["known_context"],
@@ -234,9 +296,25 @@ Requirements:
         ensure_ascii=False,
     )
     parsed = call_json(prompt, payload)
+    new_context = list(parsed.get("new_context", []) or [])
+    new_authorization = list(parsed.get("new_authorization", []) or [])
+    continue_execution = parsed.get("continue_execution")
+    if not isinstance(continue_execution, bool):
+        continue_execution = bool(new_authorization or new_context)
+    continuation_reason = str(parsed.get("continuation_reason") or "").strip()
+    if not continuation_reason:
+        continuation_reason = (
+            "The reply added new authorization that can unblock the next step."
+            if new_authorization else
+            "The reply added new scope/context that can unblock the next step."
+            if continue_execution else
+            "The reply did not add enough new authorization or scope to continue."
+        )
     return {
-        "new_context": list(parsed.get("new_context", []) or []),
-        "new_authorization": list(parsed.get("new_authorization", []) or []),
+        "new_context": new_context,
+        "new_authorization": new_authorization,
+        "continue_execution": continue_execution,
+        "continuation_reason": continuation_reason,
     }
 
 
