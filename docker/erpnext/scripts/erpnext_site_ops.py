@@ -537,8 +537,6 @@ def action_seed(payload):
 
 def action_list_invoices(payload):
     filters = {}
-    if payload.get("status"):
-        filters["status"] = payload["status"]
     if payload.get("customer"):
         filters["customer"] = payload["customer"]
     docs = frappe.get_all(
@@ -547,7 +545,14 @@ def action_list_invoices(payload):
         fields=["name"],
         order_by="name asc",
     )
-    return [_invoice_summary(frappe.get_doc("Sales Invoice", row["name"])) for row in docs]
+    requested_status = payload.get("status")
+    results = []
+    for row in docs:
+        doc = frappe.get_doc("Sales Invoice", row["name"])
+        if requested_status and doc.status != requested_status:
+            continue
+        results.append(_invoice_summary(doc))
+    return results
 
 
 def action_get_invoice(payload):
@@ -799,8 +804,6 @@ def action_list_overdue_invoices(payload):
 
 def action_list_purchase_invoices(payload):
     filters = {}
-    if payload.get("status"):
-        filters["status"] = payload["status"]
     if payload.get("supplier"):
         filters["supplier"] = payload["supplier"]
     docs = frappe.get_all(
@@ -809,7 +812,14 @@ def action_list_purchase_invoices(payload):
         fields=["name"],
         order_by="name asc",
     )
-    return [_purchase_invoice_summary(frappe.get_doc("Purchase Invoice", row["name"])) for row in docs]
+    requested_status = payload.get("status")
+    results = []
+    for row in docs:
+        doc = frappe.get_doc("Purchase Invoice", row["name"])
+        if requested_status and doc.status != requested_status:
+            continue
+        results.append(_purchase_invoice_summary(doc))
+    return results
 
 
 def action_list_supplier_purchase_invoices(payload):

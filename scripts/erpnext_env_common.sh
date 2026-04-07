@@ -145,7 +145,7 @@ restore_erpnext_database() {
   docker exec "${db_container}" bash -lc \
     "mysql -uroot -p${root_password} -e \"DROP DATABASE IF EXISTS \\\`${db_name}\\\`; CREATE DATABASE \\\`${db_name}\\\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\""
   docker exec "${db_container}" bash -lc \
-    "mysql -uroot -p${root_password} '${db_name}' < /tmp/${basename}"
+    "mysql --force -uroot -p${root_password} '${db_name}' < /tmp/${basename}"
 }
 
 bootstrap_erpnext_site() {

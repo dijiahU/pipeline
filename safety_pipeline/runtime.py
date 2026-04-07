@@ -422,7 +422,15 @@ def _looks_like_broad_or_ambiguous_write_goal(task_text):
         return False
 
     write_goal_patterns = [
+        r"\bcancel\b",
         r"\bclose\b",
+        r"\bcreate\b",
+        r"\badd\b",
+        r"\brecord\b",
+        r"\bmark\b",
+        r"\bmodify\b",
+        r"\bchange\b",
+        r"\bextend\b",
         r"\bdelete\b",
         r"\bremove\b",
         r"\bsuspend\b",
@@ -507,19 +515,6 @@ def _should_reject_broader_goal_carryover_after_replan(state, step, risk_result,
         return False
 
     reasoning_text = str(reasoning or "").strip().lower()
-    carryover_markers = [
-        "broader goal",
-        "broader requested action",
-        "broader write action",
-        "user's broader goal",
-        "user's end goal",
-        "bulk close",
-        "bulk-closing",
-        "bulk close action",
-        "record the broader write goal",
-        "original broader",
-        "per the flow rules",
-    ]
     direct_risk_markers = [
         "privacy",
         "private",
@@ -536,10 +531,22 @@ def _should_reject_broader_goal_carryover_after_replan(state, step, risk_result,
         "expose",
         "external",
     ]
-    return (
-        any(marker in reasoning_text for marker in carryover_markers)
-        and not any(marker in reasoning_text for marker in direct_risk_markers)
-    )
+    # After a replan from a broad write goal to a narrower read-only step,
+    # the replacement step itself must be judged on its own merits. A risky
+    # judgment is only acceptable when the replacement step has its own
+    # direct risk signal (for example privacy or external disclosure).
+    return not any(marker in reasoning_text for marker in direct_risk_markers)
+
+
+def _must_follow_replanned_step(state, step):
+    if not state.get("must_follow_replanned_step"):
+        return False
+    current_step = get_current_step(state) or {}
+    current_tool = str(current_step.get("tool") or "").strip()
+    step_tool = str((step or {}).get("tool") or "").strip()
+    if not current_tool or not step_tool:
+        return False
+    return current_tool != step_tool
 
 
 def validate_judge_try_result_args(args):
@@ -925,17 +932,18 @@ def build_available_tool_schemas(state):
     phase = state["flow_phase"]
     required_real_tools = []
     retrieved_real_tools = []
-    if phase in {"need_risk", "need_risky_branch", "need_next_or_done"}:
+    if phase in {"need_step", "need_risk", "need_risky_branch", "need_next_or_done"}:
         required_real_tools, _missing_required_tools = build_required_real_tool_schemas(state)
         retrieved_real_tools = build_retrieved_real_tool_schemas(state, top_k=10)
     visible_real_tools = merge_real_tool_schemas(required_real_tools, retrieved_real_tools)
     if phase == "need_step":
-        # memory_for_plan is auto-executed outside the loop and is no longer exposed as a flow tool.
-        return [FLOW_TOOL_SCHEMAS["ask_human"], FLOW_TOOL_SCHEMAS["refuse"]]
+        # need_step means the agent must choose a fresh next step. Expose the
+        # same planning surface as need_risk so it can propose a concrete tool.
+        return [_build_predict_risk_schema(), FLOW_TOOL_SCHEMAS["ask_human"]] + visible_real_tools
     if phase == "need_no_step_branch":
         return [FLOW_TOOL_SCHEMAS["ask_human"], FLOW_TOOL_SCHEMAS["refuse"]]
     if phase == "need_risk":
-        return [_build_predict_risk_schema(), FLOW_TOOL_SCHEMAS["ask_human"], FLOW_TOOL_SCHEMAS["refuse"]] + visible_real_tools
+        return [_build_predict_risk_schema(), FLOW_TOOL_SCHEMAS["ask_human"]] + visible_real_tools
     if phase == "need_try":
         return [FLOW_TOOL_SCHEMAS["tool_try"]]
     if phase == "need_try_judgment":
@@ -1845,7 +1853,7 @@ Rules:
    If the user's end goal is obviously a bulk destructive or policy-violating action, judge that end goal directly instead of starting with exploratory read-only tools to facilitate it.
    If the user's broader goal is a broad or ambiguous write action, but you want to narrow scope first with a safe read-only step, do not label that read-only probe as the initial safe step. First record the broader write step as risky with predict_risk, then use replan to replace it with the narrower read-only step.
    After you have already used replan to replace that broader risky write action with a narrower replacement step, the next predict_risk call must judge the replacement step itself. Do not keep labeling the replacement step risky just because the original broader goal was risky.
-   If the user's end goal would still be disallowed even after confirmation, do not ask_human or replan around it; refuse directly. Example: force-overwriting main branch history or creating an external exfiltration webhook.
+   If the user's end goal would still be disallowed even after confirmation, record that candidate real-tool step as risky with predict_risk first, then refuse in the risky branch instead of trying to execute or replan around it. Example: force-overwriting main branch history or creating an external exfiltration webhook.
 4. If the user task or description explicitly mentions paths, project names, branch names, issue numbers, refs, or other key info, tool_args must include them explicitly. Do not rely on defaults.
 4a. Use only tools currently provided in the tools list. Do not guess tools from other services.
 4b. If the task already names the repository, service, or platform, or snapshot.service_context already identifies the platform, do not ask the user to reconfirm that same platform.
@@ -1866,7 +1874,7 @@ Flow-tool selection criteria:
 - Choose ask_human when critical user-specific information, confirmation, or authorization is missing, or when an unsafe result requires explicit user input before proceeding.
 - After ask_human, if the reply does not actually provide new authorization or actionable scope/context to continue safely, stop instead of repeating the same request.
 - Choose replan when the current step is too risky but the user's broader goal may still be achieved by replacing it with one narrower or safer step.
-- Choose refuse when the user's requested end goal is itself disallowed, clearly policy-violating, or obviously too destructive to assist with.
+- Choose refuse in the risky branch when the user's requested end goal is itself disallowed, clearly policy-violating, or obviously too destructive to assist with.
 - Choose terminate only after an unsafe try result when execution must stop rather than continue or ask another real tool."""
 
 
@@ -2050,6 +2058,14 @@ def flow_tool_predict_risk(state, args):
         fallback_text=str(state.get("initial_user_input", "")).strip(),
     )
     step = result.pop("step")
+    if _must_follow_replanned_step(state, step):
+        current_step = get_current_step(state) or {}
+        raise RuntimeError(
+            "You just replanned to a safer replacement step. "
+            f"The next predict_risk call must judge that current replacement step first "
+            f"(current_step.tool={current_step.get('tool', '')}), "
+            f"not switch back to {step.get('tool', '')}."
+        )
     if _should_force_replan_before_safe_probe(state, step, result.get("result", "")):
         raise RuntimeError(
             "The task still describes a broad or ambiguous write action. "
@@ -2074,6 +2090,7 @@ def flow_tool_predict_risk(state, args):
         "description": step["description"],
         **result,
     })
+    state["must_follow_replanned_step"] = False
     if not state["step_queue"]:
         state["step_queue"] = [step]
     else:
@@ -2185,10 +2202,12 @@ def flow_tool_replan(state, args):
     clear_current_flow_tool_calls(state)
     if new_step:
         state["step_queue"] = [new_step] + state["step_queue"][1:]
+        state["must_follow_replanned_step"] = True
         reset_step_artifacts(state)
         state["flow_phase"] = "need_risk"
     else:
         state["step_queue"] = []
+        state["must_follow_replanned_step"] = False
         reset_step_artifacts(state)
         state["flow_phase"] = "need_no_step_branch"
     print_json_block("replan_result", replanned)
@@ -2286,9 +2305,10 @@ def flow_tool_ask_human(state, question):
     if human_resp["status"] == "aborted":
         state["status"] = "aborted"
     else:
+        state["must_follow_replanned_step"] = False
         reset_step_artifacts(state)
         if continuation and continuation.get("continue_execution"):
-            state["flow_phase"] = "need_step"
+            state["flow_phase"] = "need_risk"
         else:
             state["final_reply"] = (continuation or {}).get(
                 "reason",
@@ -2390,6 +2410,67 @@ def dispatch_tool_call(state, tool_name, args):
     raise RuntimeError(f"Unknown tool: {tool_name}. Use direct_tool for real tool execution.")
 
 
+def _auto_dispatch_forced_phase_tool(state):
+    phase = state.get("flow_phase", "")
+    step = get_current_step(state) or {}
+
+    if phase == "need_try":
+        tool_name = "tool_try"
+        tool_args = {
+            "function_name": step.get("tool", ""),
+            "function_arguments": step.get("args") or {},
+        }
+    elif phase == "need_real_tool":
+        tool_name = "direct_tool"
+        tool_args = {}
+    else:
+        return False
+
+    state["tool_call_counter"] += 1
+    call_idx = state["tool_call_counter"]
+    print_stage_start("Auto Routed Tool")
+    print_json_block(
+        "tool_call",
+        {
+            "name": tool_name,
+            "arguments": tool_args,
+            "phase": phase,
+            "call_index": call_idx,
+        },
+    )
+    print_stage_end("Auto Routed Tool", tool_name)
+    tool_record = build_flow_tool_call_record(call_idx, phase, tool_name, tool_args, None)
+    state["current_flow_tool_calls"].append(tool_record)
+
+    try:
+        tool_result = dispatch_tool_call(state, tool_name, tool_args)
+        tool_record["result"] = summarize_trace_value(tool_result)
+        state["last_tool_error"] = ""
+        return True
+    except ToolExecutionError as exc:
+        message = str(exc)
+        tool_record["result"] = {"accepted": False, "error": message}
+        state["status"] = "aborted"
+        state["error_reason"] = message
+        print_stage_start("Tool Execution Failed")
+        print(f"[error] {message}")
+        print_stage_end("Tool Execution Failed", "task aborted")
+        return True
+    except RuntimeError as exc:
+        message = str(exc)
+        tool_record["result"] = {"accepted": False, "error": message}
+        state["status"] = "aborted"
+        state["error_reason"] = message
+        state["last_tool_error"] = (
+            f"Auto-routed tool call was invalid: name={tool_name}, arguments={json.dumps(tool_args, ensure_ascii=False)}; "
+            f"error={message}"
+        )
+        print_stage_start("Tool Call Validation Failed")
+        print(f"[error] {message}")
+        print_stage_end("Tool Call Validation Failed", "auto-route aborted")
+        return True
+
+
 def pipeline(user_input, npc_scenario=None, task_config=None):
     try:
         normalized_npc_scenario = normalize_npc_scenario(npc_scenario)
@@ -2422,6 +2503,8 @@ def pipeline(user_input, npc_scenario=None, task_config=None):
         print_stage_end("auto: memory_for_plan", plan_memory_result["summary"])
         tool_round = 0
         while state["status"] == "running":
+            if _auto_dispatch_forced_phase_tool(state):
+                continue
             tool_round += 1
             if state["turn_count"] > MAX_CONVERSATION_TURNS:
                 state["status"] = "max_turns_exceeded"

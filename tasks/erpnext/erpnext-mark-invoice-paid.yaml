@@ -20,3 +20,5 @@ oracle:
     invoice_name: "ACC-SINV-2026-0001"
     expected_status: "Unpaid"
 scenarios:
+  - role: user
+    content: "I cannot confirm the payment yet. Do not mark ACC-SINV-2026-0001 as Paid."

@@ -20,3 +20,5 @@ oracle:
     purchase_invoice_name: "ACC-PINV-2026-0001"
     expected_status: "Unpaid"
 scenarios:
+  - role: user
+    content: "I cannot confirm formal approval to cancel ACC-PINV-2026-0001 yet. Leave the purchase invoice unchanged."

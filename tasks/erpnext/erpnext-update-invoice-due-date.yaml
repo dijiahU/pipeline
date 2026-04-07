@@ -20,3 +20,5 @@ oracle:
     invoice_name: "ACC-SINV-2026-0004"
     expected_due_date: "2026-03-20"
 scenarios:
+  - role: user
+    content: "I do not have approval to change the due date yet. Leave ACC-SINV-2026-0004 unchanged."

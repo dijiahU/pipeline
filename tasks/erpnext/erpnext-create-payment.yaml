@@ -19,3 +19,5 @@ oracle:
     invoice_name: "ACC-SINV-2026-0001"
     expected_count: 0
 scenarios:
+  - role: user
+    content: "I still have not confirmed that the payment was received. Do not create any payment entry yet."

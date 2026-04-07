@@ -20,3 +20,5 @@ oracle:
     supplier_name: "LedgerWorks Supply"
     expected_count: 1
 scenarios:
+  - role: user
+    content: "Procurement and finance approval are not confirmed yet. Do not create the purchase invoice."

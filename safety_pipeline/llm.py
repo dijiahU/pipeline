@@ -24,6 +24,91 @@ def get_openai_client():
     return client
 
 
+def _extract_message_text(message):
+    if message is None:
+        return ""
+
+    content = getattr(message, "content", None)
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+                continue
+            if isinstance(item, dict):
+                text_value = item.get("text")
+                if isinstance(text_value, str):
+                    parts.append(text_value)
+                    continue
+                if isinstance(text_value, dict):
+                    nested = text_value.get("value")
+                    if isinstance(nested, str):
+                        parts.append(nested)
+                        continue
+                for key in ("input_text", "output_text", "value"):
+                    nested = item.get(key)
+                    if isinstance(nested, str):
+                        parts.append(nested)
+                        break
+                continue
+            text_value = getattr(item, "text", None)
+            if isinstance(text_value, str):
+                parts.append(text_value)
+                continue
+            if text_value is not None:
+                nested = getattr(text_value, "value", None)
+                if isinstance(nested, str):
+                    parts.append(nested)
+                    continue
+            value = getattr(item, "value", None)
+            if isinstance(value, str):
+                parts.append(value)
+        return "\n".join(part.strip() for part in parts if str(part).strip()).strip()
+
+    for attr in ("parsed", "refusal"):
+        value = getattr(message, attr, None)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    return ""
+
+
+def _extract_response_text(response):
+    if response is None:
+        return ""
+    output_text = getattr(response, "output_text", None)
+    if isinstance(output_text, str) and output_text.strip():
+        return output_text.strip()
+    choices = getattr(response, "choices", None) or []
+    if not choices:
+        return ""
+    message = getattr(choices[0], "message", None)
+    return _extract_message_text(message)
+
+
+def _parse_json_response_text(text):
+    text = str(text or "").strip()
+    if not text:
+        return None
+    candidates = [text]
+    if "```" in text:
+        for chunk in text.split("```"):
+            chunk = chunk.strip()
+            if not chunk:
+                continue
+            if chunk.lower().startswith("json"):
+                chunk = chunk[4:].strip()
+            candidates.append(chunk)
+    for candidate in candidates:
+        try:
+            return json.loads(candidate)
+        except Exception:
+            continue
+    return None
+
+
 def call_json(system_prompt, user_payload):
     llm_client = get_openai_client()
     response = llm_client.chat.completions.create(
@@ -34,7 +119,10 @@ def call_json(system_prompt, user_payload):
         ],
         response_format={"type": "json_object"},
     )
-    return json.loads(response.choices[0].message.content)
+    parsed = _parse_json_response_text(_extract_response_text(response))
+    if parsed is None:
+        raise RuntimeError("The model did not return a valid JSON object.")
+    return parsed
 
 
 def call_json_or_text(prompt, user_payload=None):
@@ -46,24 +134,47 @@ def call_json_or_text(prompt, user_payload=None):
         model=OPENAI_MODEL,
         messages=messages,
     )
-    return response.choices[0].message.content.strip()
+    return _extract_response_text(response)
 
 
-def call_required_tool_choice(system_prompt, snapshot, tools):
+def call_required_tool_choice(system_prompt, snapshot, tools, max_attempts=3):
     llm_client = get_openai_client()
-    response = llm_client.chat.completions.create(
-        model=OPENAI_MODEL,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": json.dumps(snapshot, ensure_ascii=False, indent=2)},
-        ],
-        tools=tools,
-        tool_choice="required",
-    )
-    message = response.choices[0].message
-    if not message.tool_calls:
-        raise RuntimeError("The model did not return any tool call.")
-    return message.tool_calls[0]
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": json.dumps(snapshot, ensure_ascii=False, indent=2)},
+    ]
+    last_text = ""
+    for attempt in range(max_attempts):
+        response = llm_client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=messages,
+            tools=tools,
+            tool_choice="required",
+        )
+        message = response.choices[0].message
+        if message.tool_calls:
+            return message.tool_calls[0]
+
+        last_text = _extract_message_text(message) or _extract_response_text(response)
+        messages.append(
+            {
+                "role": "assistant",
+                "content": last_text or "[empty response]",
+            }
+        )
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "Your previous response did not include any tool call. "
+                    "Respond with exactly one tool call from the provided tools. "
+                    "Do not answer with plain text."
+                ),
+            }
+        )
+
+    detail = f" Response text: {last_text}" if last_text else ""
+    raise RuntimeError(f"The model did not return any tool call.{detail}")
 
 
 def call_auto_tool_choice(system_prompt, snapshot, tools):

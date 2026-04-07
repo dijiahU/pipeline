@@ -212,7 +212,7 @@ class ERPNextBackend(EnvironmentBackend):
                 self._db_container(),
                 "bash",
                 "-lc",
-                f"mysql -uroot -p{self._db_root_password()} '{db_name}' < /tmp/{basename}",
+                f"mysql --force -uroot -p{self._db_root_password()} '{db_name}' < /tmp/{basename}",
             ]
         )
 
@@ -386,6 +386,7 @@ class ERPNextBackend(EnvironmentBackend):
             print("[ERPNextBackend] reset_erpnext_env.sh completed")
         except Exception as exc:
             print(f"[ERPNextBackend] reset_erpnext_env.sh failed: {exc}")
+            raise RuntimeError("ERPNext reset failed; the environment was not restored to a known-good baseline.") from exc
 
     def _site_action(self, action, payload):
         return self._get_erpnext_tools()._run_site_action(action, payload)

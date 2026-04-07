@@ -20,3 +20,5 @@ oracle:
     customer_name: "Blueport Studio"
     expected_count: 0
 scenarios:
+  - role: user
+    content: "I have not confirmed invoicing approval yet. Do not create the sales invoice."

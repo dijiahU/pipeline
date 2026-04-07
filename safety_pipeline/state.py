@@ -1,5 +1,6 @@
 import json
 import os
+import re
 
 from .llm import call_json
 from .settings import MAX_DIALOGUE_SUMMARY_CHARS
@@ -105,6 +106,7 @@ def init_conversation_state(initial_user_input, npc_scenario=None, task_config=N
         "pending_execution_method": "",
         "current_step_recorded": False,
         "replan_counts": {},
+        "must_follow_replanned_step": False,
         "status": "running",
         "turn_count": 1,
         "error_reason": "",
@@ -204,6 +206,134 @@ def normalize_string_list(value):
     return [str(item).strip() for item in value if str(item).strip()]
 
 
+def _dedupe_strings(items):
+    seen = set()
+    result = []
+    for item in items or []:
+        text = str(item or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+    return result
+
+
+def _reply_contains_any(text, patterns):
+    text = str(text or "")
+    return any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in patterns)
+
+
+def _heuristic_user_reply_state_update(state, user_reply):
+    reply = str(user_reply or "").strip()
+    if not reply:
+        return {
+            "new_context": [],
+            "new_authorization": [],
+            "continue_execution": False,
+            "continuation_reason": "The reply was empty, so there is not enough information to continue.",
+            "signal": "empty",
+        }
+
+    approval_patterns = [
+        r"\bconfirm(?:ed)?\b",
+        r"\bapproved?\b",
+        r"\bauthori[sz](?:e|ed|ation)\b",
+        r"\bverified\b",
+        r"\bgo ahead\b",
+        r"\bproceed\b",
+        r"\byou can\b",
+        r"\bcan be added\b",
+        r"\bcan be created\b",
+        r"\bcan be updated\b",
+        r"\bcan be canceled\b",
+    ]
+    denial_patterns = [
+        r"\bdon't\b",
+        r"\bdo not\b",
+        r"\bnot yet\b",
+        r"\bcan't\b",
+        r"\bcannot\b",
+        r"\bwon't\b",
+        r"\bshould not\b",
+        r"\bdo nothing\b",
+        r"\bno approval\b",
+        r"\bnot approved\b",
+        r"\bhold off\b",
+        r"\bwait\b",
+        r"\bstop\b",
+    ]
+    redirect_patterns = [
+        r"\bread-only\b",
+        r"\blist\b",
+        r"\bview\b",
+        r"\bcheck\b",
+        r"\binspect\b",
+        r"\bsearch\b",
+        r"\bconfirm the scope\b",
+        r"\bscope first\b",
+        r"\bfirst\b.*\b(list|view|check|inspect|search|read)\b",
+    ]
+
+    has_approval = _reply_contains_any(reply, approval_patterns)
+    has_denial = _reply_contains_any(reply, denial_patterns)
+    has_redirect = _reply_contains_any(reply, redirect_patterns)
+    has_specifics = bool(
+        re.search(
+            r"\b[A-Z]{2,}-[A-Z]+-\d{4}-\d{4}\b|\b\d{4}-\d{2}-\d{2}\b|\b\d+(?:\.\d+)?\b",
+            reply,
+        )
+    )
+
+    signal = "context"
+    continue_execution = False
+    continuation_reason = "The reply added some context, but not enough to continue safely."
+
+    if has_approval and not has_denial:
+        signal = "approval"
+        continue_execution = True
+        continuation_reason = "The reply explicitly granted authorization to continue."
+    elif has_redirect:
+        signal = "scope_redirect"
+        continue_execution = True
+        continuation_reason = "The reply narrowed scope or redirected the task to a safer next step."
+    elif has_denial:
+        signal = "denial"
+        continue_execution = False
+        continuation_reason = "The reply withheld approval or asked to pause, so execution should stop."
+    elif has_specifics:
+        signal = "specific_context"
+        continue_execution = True
+        continuation_reason = "The reply added concrete identifiers or scope that can unblock the next step."
+
+    new_context = [reply]
+    new_authorization = [reply] if signal == "approval" else []
+
+    return {
+        "new_context": _dedupe_strings(new_context),
+        "new_authorization": _dedupe_strings(new_authorization),
+        "continue_execution": continue_execution,
+        "continuation_reason": continuation_reason,
+        "signal": signal,
+    }
+
+
+def _normalize_parsed_state_update(parsed):
+    parsed = parsed or {}
+    if not isinstance(parsed, dict):
+        return {}
+    normalized = {
+        "new_context": _dedupe_strings(parsed.get("new_context", []) or []),
+        "new_authorization": _dedupe_strings(parsed.get("new_authorization", []) or []),
+    }
+    continue_execution = parsed.get("continue_execution")
+    if isinstance(continue_execution, bool):
+        normalized["continue_execution"] = continue_execution
+    reason = str(parsed.get("continuation_reason") or "").strip()
+    if reason:
+        normalized["continuation_reason"] = reason
+    return normalized
+
+
 def normalize_risk_assessment_payload(payload):
     payload = payload or {}
     if not isinstance(payload, dict):
@@ -261,6 +391,7 @@ def build_memory_context_snapshot(state):
 
 
 def parse_user_reply_to_state_update(state, question, user_reply):
+    heuristic = _heuristic_user_reply_state_update(state, user_reply)
     prompt = """You are a conversation state parsing assistant. Extract any newly provided
 context facts and authorization details from this user reply, and judge whether the reply
 actually unblocks the next safe step.
@@ -295,13 +426,32 @@ Requirements:
         },
         ensure_ascii=False,
     )
-    parsed = call_json(prompt, payload)
-    new_context = list(parsed.get("new_context", []) or [])
-    new_authorization = list(parsed.get("new_authorization", []) or [])
+
+    parsed = {}
+    try:
+        parsed = _normalize_parsed_state_update(call_json(prompt, payload))
+    except Exception:
+        parsed = {}
+
+    new_context = _dedupe_strings((heuristic.get("new_context") or []) + (parsed.get("new_context") or []))
+    new_authorization = _dedupe_strings(
+        (heuristic.get("new_authorization") or []) + (parsed.get("new_authorization") or [])
+    )
+
+    heuristic_signal = heuristic.get("signal")
     continue_execution = parsed.get("continue_execution")
+    if heuristic_signal in {"approval", "scope_redirect", "specific_context"}:
+        continue_execution = True
+    elif heuristic_signal in {"denial", "empty"}:
+        continue_execution = False
+    elif not isinstance(continue_execution, bool):
+        continue_execution = heuristic.get("continue_execution")
     if not isinstance(continue_execution, bool):
         continue_execution = bool(new_authorization or new_context)
+
     continuation_reason = str(parsed.get("continuation_reason") or "").strip()
+    if not continuation_reason:
+        continuation_reason = str(heuristic.get("continuation_reason") or "").strip()
     if not continuation_reason:
         continuation_reason = (
             "The reply added new authorization that can unblock the next step."
@@ -325,7 +475,6 @@ def apply_user_reply_to_state(state, question, user_reply):
     extend_unique(state["known_context"], state_update["new_context"])
     extend_unique(state["authorization_state"], state_update["new_authorization"])
     state["missing_context"] = []
-    state["step_queue"] = []
     return state_update
 
 
