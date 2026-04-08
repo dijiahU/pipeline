@@ -1,11 +1,13 @@
 ### model
-model_name_or_path: Qwen/Qwen3.5-0.8B
-adapter_name_or_path: ../results/lora_adapter
-template: qwen3_nothink
+# Keep this aligned with the training base checkpoint.
+model_name_or_path: /home/hcj/pipeline/models/Qwen3.5-9B
+adapter_name_or_path: ../results/qwen35_9b_lora_adapter
+template: qwen3
 finetuning_type: lora
 trust_remote_code: true
 
 ### export
-export_dir: ../results/qwen_sft_merged
+export_dir: ../results/qwen35_9b_merged
 export_size: 5
+export_device: auto
 export_legacy_format: false

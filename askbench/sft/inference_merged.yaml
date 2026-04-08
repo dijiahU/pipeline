@@ -1,0 +1,12 @@
+### model
+model_name_or_path: ../results/qwen35_9b_merged
+template: qwen3
+trust_remote_code: true
+infer_backend: huggingface
+infer_dtype: bfloat16
+
+### generation
+do_sample: false
+temperature: 0.7
+top_p: 0.8
+max_new_tokens: 256

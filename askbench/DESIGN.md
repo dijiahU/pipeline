@@ -216,36 +216,39 @@ python gen_traces.py --model gpt54 --prompt explicit_rules
 
 ```bash
 cd askbench/sft
-bash setup.sh                                                    # 安装 + 链接数据
-PYTORCH_ENABLE_MPS_FALLBACK=1 python3 -m llamafactory.cli train train_lora_mac.yaml  # Mac 训练
-python3 -m llamafactory.cli export merge_lora.yaml               # 合并 adapter
-python3 -m llamafactory.cli chat inference.yaml                  # 交互测试
+source ~/miniconda3/etc/profile.d/conda.sh
+bash setup.sh                                                    # 创建 conda 环境 + 安装依赖 + 链接数据
+conda activate /home/hcj/pipeline/.conda-envs/askbench-qwen35
+DISABLE_VERSION_CHECK=1 llamafactory-cli train train_qlora_gpu.yaml  # 单卡 24-48GB 默认
+DISABLE_VERSION_CHECK=1 llamafactory-cli train train_lora_gpu.yaml   # 48GB+ 或多卡 bf16 LoRA
+DISABLE_VERSION_CHECK=1 llamafactory-cli export merge_lora.yaml      # 合并 adapter
+DISABLE_VERSION_CHECK=1 llamafactory-cli chat inference.yaml         # 交互测试
 ```
 
 ### 训练配置
 
 | 配置 | Mac MPS | GPU 集群 |
 |------|---------|---------|
-| 模型 | Qwen2.5-0.5B-Instruct (本地测试) | 可换大模型 |
-| 模板 | qwen | qwen / qwen3_nothink |
-| 精度 | fp32 (MPS 不支持混合精度) | bf16 |
-| Batch | 2 × 4 grad_accum = 有效 8 | 8 × 1 = 有效 8 |
+| 模型 | Qwen2.5-0.5B-Instruct (仅 smoke test) | Qwen3.5-9B |
+| 模板 | qwen | qwen / qwen3 |
+| 精度 | fp32 (MPS 不支持混合精度) | QLoRA 4bit / LoRA bf16 |
+| Batch | 2 × 4 grad_accum = 有效 8 | 1 × 16 grad_accum = 有效 16 |
 | Epochs | 5 | 5 |
-| LoRA | rank=8, alpha=16, target=all | 同左 |
-| LR | 1e-4, cosine schedule | 同左 |
+| LoRA | rank=8, alpha=16, target=all | rank=32, alpha=64, target=all |
+| LR | 1e-4, cosine schedule | 1.5e-4 (QLoRA) / 2e-4 (LoRA) |
+| Context | 2048 | 6144 (QLoRA) / 4096 (LoRA) |
 
 ### 依赖版本
 
-```
-llamafactory==0.9.4
-transformers==4.57.1
-peft==0.17.1
-trl==0.24.0
-datasets==4.0.0
-accelerate==1.11.0
-```
+当前实现改为：
 
-注意：Qwen3.5 需要 transformers>=5.x，与 llamafactory 0.9.4 不兼容。本地测试使用 Qwen2.5-0.5B-Instruct。
+- Miniconda / Anaconda + conda 环境
+- conda 环境默认 Python 3.11
+- 先装仓库 `requirements.txt`
+- `torch` 由训练机器按 CUDA 版本安装
+- `LLaMA-Factory` 直接从 GitHub `main` 安装
+
+注意：旧版 `llamafactory==0.9.4` + `cutoff_len=2048` 只适合本地小模型验证，不适合 Qwen3.5-9B 的正式实验。
 
 ---
 

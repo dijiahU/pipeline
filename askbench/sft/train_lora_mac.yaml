@@ -16,11 +16,13 @@ dataset: askbench_sft
 dataset_dir: .
 template: qwen
 cutoff_len: 2048
+overwrite_cache: true
+packing: false
 preprocessing_num_workers: 4
 dataloader_num_workers: 0
 
 ### output
-output_dir: ../results/lora_adapter
+output_dir: ../results/qwen25_smoke_adapter
 logging_steps: 5
 save_steps: 50
 plot_loss: true
@@ -28,9 +30,8 @@ overwrite_output_dir: true
 save_only_model: false
 report_to: none
 
-### train — Mac MPS (24GB unified memory)
-# Qwen2.5-0.5B-Instruct is ~1GB, very comfortable on Mac
-# MPS does NOT support bf16/fp16 mixed precision reliably
+### train — local smoke test only, not for Qwen3.5-7B
+# Use this file only to verify the AskBench dataset / template pipeline on Mac.
 per_device_train_batch_size: 2
 gradient_accumulation_steps: 4
 learning_rate: 1.0e-4

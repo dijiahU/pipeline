@@ -2,6 +2,12 @@
 流程图.png
 memory/
 __pycache__/
+.codex
+.codex/
+.venv/
+.venv-*/
+.conda-envs/
+.pytest_cache/
 gitlab/
 .env
 .env.*.generated
@@ -12,3 +18,10 @@ docker/erpnext/shared/
 docker/erpnext/baseline/
 docker/openemr/shared/
 docker/openemr/baseline/
+askbench/results/qwen35_9b_lora_adapter/
+askbench/results/qwen35_9b_merged/
+askbench/results/qwen25_smoke_adapter/
+askbench/sft/logs/
+askbench/sft/logs/*.out
+askbench/sft/logs/*.err
+models/
