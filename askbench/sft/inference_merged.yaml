@@ -1,6 +1,6 @@
 ### model
 model_name_or_path: ../results/qwen35_9b_merged
-template: qwen3
+template: qwen3_5
 trust_remote_code: true
 infer_backend: huggingface
 infer_dtype: bfloat16

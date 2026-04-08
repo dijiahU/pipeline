@@ -9,7 +9,7 @@ This directory now contains a practical training path for the AskBench ShareGPT 
   installs `LLaMA-Factory` from GitHub `main`, and links the dataset.
 - `train_qlora_gpu.yaml` is the default 4-bit profile for a single 24 GB to 48 GB GPU.
 - `train_lora_gpu.yaml` is now a conservative bf16 LoRA profile tuned for a single A40 48GB.
-- The current Qwen3.5 path uses the `qwen3` template, so future training and inference run in
+- The current Qwen3.5 path uses the `qwen3_5` template, so future training and inference run in
   thinking mode by default.
 - `train_lora_mac.yaml` is now explicitly a small-model smoke test only.
 - `check_env.py` prints a profile recommendation based on the available hardware.
@@ -104,7 +104,7 @@ DISABLE_VERSION_CHECK=1 llamafactory-cli chat inference.yaml
 - `train_qlora_gpu.yaml` is the safer default for the current 9B checkpoint.
 - `run_askbench_qwen35_train.slurm` now defaults to `train_lora_gpu.yaml`.
 - The bf16 LoRA profile uses `cutoff_len: 4096` to fit more safely on a single A40 48GB.
-- The current Qwen3.5 training / merge / inference YAMLs all use `template: qwen3`.
+- The current Qwen3.5 training / merge / inference YAMLs all use `template: qwen3_5`.
 - If QLoRA runs out of memory, lower `cutoff_len` from `6144` to `4096` before reducing LoRA rank.
 - In `run.slurm`, explicitly source `conda.sh` and `conda activate /home/hcj/pipeline/.conda-envs/askbench-qwen35`
   before running `llamafactory-cli`.

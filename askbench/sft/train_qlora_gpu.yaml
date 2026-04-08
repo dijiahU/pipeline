@@ -21,7 +21,7 @@ double_quantization: true
 ### dataset
 dataset: askbench_sft
 dataset_dir: .
-template: qwen3
+template: qwen3_5
 cutoff_len: 6144
 overwrite_cache: true
 packing: false

@@ -230,7 +230,7 @@ DISABLE_VERSION_CHECK=1 llamafactory-cli chat inference.yaml         # 交互测
 | 配置 | Mac MPS | GPU 集群 |
 |------|---------|---------|
 | 模型 | Qwen2.5-0.5B-Instruct (仅 smoke test) | Qwen3.5-9B |
-| 模板 | qwen | qwen / qwen3 |
+| 模板 | qwen | qwen / qwen3_5 |
 | 精度 | fp32 (MPS 不支持混合精度) | QLoRA 4bit / LoRA bf16 |
 | Batch | 2 × 4 grad_accum = 有效 8 | 1 × 16 grad_accum = 有效 16 |
 | Epochs | 5 | 5 |

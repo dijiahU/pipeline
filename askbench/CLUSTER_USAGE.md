@@ -259,7 +259,7 @@ HF_ENDPOINT=https://hf-mirror.com hf download Qwen/Qwen3.5-9B \
 当前关键参数为：
 
 - 基座模型：`/home/hcj/pipeline/models/Qwen3.5-9B`
-- 模板：`template: qwen3`
+- 模板：`template: qwen3_5`
 - 微调方式：`finetuning_type: lora`
 - 精度：`bf16: true`
 - `lora_rank: 32`
@@ -297,8 +297,8 @@ DISABLE_VERSION_CHECK=1 llamafactory-cli train train_lora_gpu.yaml
 
 补充说明：
 
-- 之前为了打通全流程，仓库里一度使用过 `qwen3_nothink`
-- 当前默认训练、adapter 推理、merge 和 merged 推理都已经切回 `qwen3`
+- 之前为了打通全流程，仓库里一度使用过 `qwen3_5_nothink`
+- 当前默认训练、adapter 推理、merge 和 merged 推理都已经切回 `qwen3_5`
 - 因此后续默认路线应视为 thinking 模型路线
 
 ### 5.6 如果想切回 QLoRA

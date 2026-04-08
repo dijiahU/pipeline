@@ -2,6 +2,6 @@
 # Keep this aligned with the training base checkpoint.
 model_name_or_path: /home/hcj/pipeline/models/Qwen3.5-9B
 adapter_name_or_path: ../results/qwen35_9b_lora_adapter
-template: qwen3
+template: qwen3_5
 finetuning_type: lora
 trust_remote_code: true

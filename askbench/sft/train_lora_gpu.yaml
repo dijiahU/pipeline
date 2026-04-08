@@ -16,7 +16,7 @@ lora_dropout: 0.05
 ### dataset
 dataset: askbench_sft
 dataset_dir: .
-template: qwen3
+template: qwen3_5
 # Conservative bf16 context length for a single A40 48GB.
 cutoff_len: 4096
 overwrite_cache: true
