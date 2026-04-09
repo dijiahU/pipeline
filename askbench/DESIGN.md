@@ -2,7 +2,7 @@
 
 ## Context
 
-目标是**单独测试模型在应该调用 ask_human 时是否能正确调用**的能力。当前 safety_pipeline 的完整流程包含 predict_risk → memory → tool_try → judge → commit 等大量与本实验无关的逻辑。需要构建一个精简的独立测试框架 `askbench/`，只保留 `predict_risk` 和 `ask_human` 两个 flow tool，去除所有服务交互、memory 系统、try/commit/rollback 逻辑。
+目标是**单独测试模型在应该调用 ask_human 时是否能正确调用**的能力。当前 safety_pipeline 的完整流程包含 predict_risk → memory → tool_try → judge → commit 等大量与本实验无关的逻辑。需要构建一个精简的独立测试框架 `askbench/`，保留 `predict_risk` 作为结构化风险理由层，并提供 `ask_human` / `refuse` 两个决策 flow tool，去除 memory 系统、try/commit/rollback 等运行时逻辑。
 
 **实验设计**: 6 个实验 = 3 模型 × 2 prompt 策略
 - 模型: GPT-5.4 / Qwen base / Qwen SFT
@@ -10,8 +10,8 @@
 - 训练数据: 从 175 个 ask_human 任务中选 165 个，用 GPT-5.4 生成正确轨迹 → SFT 训练 Qwen
 
 **简化流程**: 模型只需完成最多 2 轮 tool call 即停止:
-1. Turn 1: 调用 `predict_risk(result=risky)` 或直接调用 `ask_human`
-2. Turn 2 (仅当 Turn 1 是 predict_risk risky 时): 调用 `ask_human`
+1. Turn 1: 必须先调用 `predict_risk`
+2. Turn 2: 根据自己的 risk judgment，自由选择 `ask_human` / `refuse` / 真实工具
 
 ---
 
@@ -85,16 +85,16 @@ askbench/
 |------|------|
 | System Prompt | explicit_rules 全文（安全判断规则） |
 | User Message | `{"user_task": "...", "flow_phase": "need_risk", "service_context": {...}}` |
-| Tools 列表 | 30 个工具 = 2 flow (predict_risk, ask_human) + 28 real (discourse 工具) |
+| Tools 列表 | flow tools (`predict_risk`, `ask_human`, `refuse`) + 当前任务相关 real tools |
 | tool_choice | `"required"` |
 
-### Turn 2 (仅当 Turn 1 返回 predict_risk risky)
+### Turn 2
 
 | 组件 | 内容 |
 |------|------|
 | Messages | Turn 1 全部上下文 + predict_risk 结果 + 更新后的 snapshot |
-| Tools 列表 | 仅 `[ask_human]` |
-| Snapshot 变化 | `flow_phase → "need_risky_branch"`, 新增 `current_risk_assessment` |
+| Tools 列表 | 与当前任务相关的完整动作工具集（`ask_human` / `refuse` / real tools） |
+| Snapshot 变化 | `flow_phase → "need_action"`, 新增 `current_risk_assessment` |
 
 **不包含**: memory 系统、历史经验、plan、try/commit 机制、conversation context。纯测模型即时判断能力。
 
@@ -114,15 +114,14 @@ askbench/
 
 ### Step 3: `schemas.py` — 工具 schema
 
-- **Flow tool schemas**: `predict_risk` (tool, tool_args, description, result, reasoning) + `ask_human` (question)
-- **Real tool schemas**: 从 `tool_schemas/<service>.json` 按服务加载，只作为上下文让模型在 predict_risk 中引用
-- `build_tools_list(service)` → flow tools + real tools
-- `build_risky_branch_tools()` → 仅 `[ask_human]`
+- **Flow tool schemas**: `predict_risk` (tool, tool_args, description, result, reasoning) + `ask_human` (question) + `refuse` (reason)
+- **Real tool schemas**: 从 `tool_schemas/<service>.json` 按服务加载；若 task YAML 有 `required_tools`，则优先缩小到该任务相关工具子集
+- `build_tools_list(service, required_tools)` → flow tools + 当前任务相关 real tools
 
 ### Step 4: `prompts.py` — 两套 system prompt
 
-- **Prompt A (bare)**: 最小化描述，仅说明有 predict_risk 和 ask_human 两个工具
-- **Prompt B (explicit_rules)**: 详细列出何时判 risky / safe 的条件，predict_risk 参数填写规范
+- **Prompt A (bare)**: 最小化描述，要求第一步先 `predict_risk`，第二步自行选择动作
+- **Prompt B (explicit_rules)**: 详细列出何时 ask_human / refuse / 执行，以及 risk judgment 与最终动作的一致性约束
 
 ### Step 5: `tasks.py` — 任务加载与划分
 
@@ -147,13 +146,13 @@ askbench/
 ### Step 7: `runner.py` — 核心 2-turn 流程
 
 ```
-Turn 1: snapshot(need_risk) + all tools → LLM
-  ├─ predict_risk(safe) → "not_asked" → 结束
-  ├─ ask_human(question) → "asked_directly" → 结束
-  └─ predict_risk(risky) → Turn 2
+Turn 1: snapshot(need_risk) + task tool set → LLM
+  └─ predict_risk(safe|risky) → Turn 2
 
-Turn 2: updated snapshot(need_risky_branch) + [ask_human] → LLM
-  └─ ask_human(question) → "asked_after_risky" → 结束
+Turn 2: updated snapshot(need_action) + same task tool set → LLM
+  ├─ ask_human(question) → 结束
+  ├─ refuse(reason) → 结束
+  └─ real_tool(...) → 结束
 ```
 
 ### Step 8: `gen_traces.py` — 批量生成训练轨迹
@@ -184,7 +183,7 @@ python gen_traces.py --model gpt54 --prompt explicit_rules
 
 ### Step 10-11: `evaluate.py` + `benchmark.py`
 
-评估指标：accuracy, risk_detection_rate, ask_rate, error_rate + 按服务分组
+评估指标：accuracy, risk_detection_rate, consistency_rate, ask_rate, error_rate + 按服务分组
 
 6 组实验矩阵：
 
@@ -198,9 +197,9 @@ python gen_traces.py --model gpt54 --prompt explicit_rules
 
 ## 关键设计决策
 
-1. **Real tool schema 只作上下文，不执行**: predict_risk 需要引用 real tool name 和 args，所以必须提供 real tool schema。但不需要任何服务后端运行。
+1. **Real tool schema 既作上下文也作候选动作空间**: predict_risk 需要引用 real tool name 和 args；第二轮真实工具也仍然对模型可见。若 task YAML 给出 `required_tools`，则优先使用 oracle 工具子集以减少上下文噪声。
 
-2. **Turn 2 只给 ask_human**: 当 predict_risk(risky) 后，第二轮只提供 ask_human 一个工具。这符合原 pipeline 的 `need_risky_branch` 逻辑（原版还有 replan/refuse，但本实验只关心 ask_human）。
+2. **predict_risk 是结构化理由层，不再硬锁分支**: 第二轮仍然让模型自由选择 ask_human / refuse / real tool，用于同时评估最终决策和与 risk judgment 的一致性。
 
 3. **无 memory 注入**: 去掉 plan_memory 和 tool_memory，纯测模型的即时判断能力，不依赖历史经验。
 

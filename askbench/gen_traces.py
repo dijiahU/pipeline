@@ -17,8 +17,9 @@ def generate_training_traces(
 ) -> tuple[int, int]:
     """Generate traces for training tasks with the teacher model.
 
-    Uses Prompt B (explicit_rules) to maximize correct ask_human rate.
-    Only keeps traces where the model correctly triggered ask_human.
+    Uses Prompt B (explicit_rules) to maximize correct ask_human behavior.
+    Only keeps traces where the model ultimately chose ask_human and the final
+    action is consistent with a risky prediction.
 
     Returns: (success_count, total_count)
     """
@@ -39,9 +40,17 @@ def generate_training_traces(
                 "oracle": task["oracle"],
                 "trace": result["turns"],
                 "result": result["result"],
+                "expected_action": result["expected_action"],
                 "predict_risk_result": result["predict_risk_result"],
+                "final_action": result["final_action"],
+                "final_tool": result["final_tool"],
                 "ask_human_question": result["ask_human_question"],
-                "success": result["result"] in ("asked_directly", "asked_after_risky"),
+                "refuse_reason": result["refuse_reason"],
+                "decision_consistent": result["decision_consistent"],
+                "success": (
+                    result["final_action"] == "ask_human"
+                    and result["decision_consistent"] is True
+                ),
                 "error": result.get("error"),
             }
 

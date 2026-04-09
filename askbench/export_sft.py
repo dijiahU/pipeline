@@ -5,7 +5,7 @@ import os
 
 from config import RESULTS_DIR, SFT_OUTPUT_PATH, TRACES_PATH
 from prompts import get_prompt
-from schemas import build_tools_list, build_service_context, load_real_tool_schemas
+from schemas import build_tools_list, build_service_context
 
 
 def load_traces(traces_path: str | None = None) -> list[dict]:
@@ -23,13 +23,15 @@ def load_traces(traces_path: str | None = None) -> list[dict]:
     return traces
 
 
-def _tools_to_llamafactory(service: str) -> str:
+def _tools_to_llamafactory(trace: dict) -> str:
     """Convert tool schemas to LLaMA-Factory format (JSON string).
 
     LLaMA-Factory expects: "[{name, description, parameters}, ...]" as a string.
     Our schemas are: [{type: function, function: {name, description, parameters}}, ...]
     """
-    raw_tools = build_tools_list(service)
+    service = trace["service"]
+    oracle = trace.get("oracle") or {}
+    raw_tools = build_tools_list(service, oracle.get("required_tools") or [])
     lf_tools = []
     for t in raw_tools:
         func = t["function"]
@@ -48,7 +50,7 @@ def _validate_predict_risk_tool(trace: dict) -> bool:
     first_turn = trace["trace"][0]
     if first_turn["tool"] == "predict_risk":
         pr_tool = first_turn["args"].get("tool", "")
-        if pr_tool in ("predict_risk", "ask_human"):
+        if pr_tool in ("predict_risk", "ask_human", "refuse"):
             return False
     return True
 
@@ -75,7 +77,7 @@ def trace_to_sft_record(trace: dict) -> dict | None:
 
     service = trace["service"]
     system_prompt = get_prompt("explicit_rules")
-    tools_str = _tools_to_llamafactory(service)
+    tools_str = _tools_to_llamafactory(trace)
 
     # Build the same snapshot the runner would build
     snapshot = {
@@ -86,26 +88,10 @@ def trace_to_sft_record(trace: dict) -> dict | None:
 
     turns = trace["trace"]
     result_type = trace["result"]
+    final_action = trace.get("final_action")
     conversations = []
 
-    if result_type == "asked_directly":
-        # Single turn: human → function_call(ask_human)
-        # Position 1 (odd): human
-        conversations.append({
-            "from": "human",
-            "value": json.dumps(snapshot, ensure_ascii=False, indent=2),
-        })
-        # Position 2 (even): function_call
-        ask_turn = turns[0]
-        conversations.append({
-            "from": "function_call",
-            "value": json.dumps({
-                "name": "ask_human",
-                "arguments": ask_turn["args"],
-            }, ensure_ascii=False),
-        })
-
-    elif result_type == "asked_after_risky":
+    if final_action == "ask_human" and result_type == "asked_after_risky":
         # Two turns: human → function_call(predict_risk) → observation → function_call(ask_human)
         pr_turn = turns[0]
         ah_turn = turns[1]
@@ -129,9 +115,9 @@ def trace_to_sft_record(trace: dict) -> dict | None:
         observation_content = {
             "accepted": True,
             "stored_as": "current_risk_assessment",
-            "next_phase": "need_risky_branch",
+            "next_phase": "need_action",
             "updated_context": {
-                "flow_phase": "need_risky_branch",
+                "flow_phase": "need_action",
                 "current_risk_assessment": {
                     "result": "risky",
                     "reasoning": pr_turn["args"].get("reasoning", ""),
@@ -153,7 +139,6 @@ def trace_to_sft_record(trace: dict) -> dict | None:
                 "arguments": ah_turn["args"],
             }, ensure_ascii=False),
         })
-
     else:
         return None
 
