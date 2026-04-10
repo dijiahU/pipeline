@@ -1,6 +1,4 @@
 ### model
-# Official verified Hugging Face repo id for Qwen3.5 9B.
-# Replace with a local shared-storage path later if your compute nodes cannot access HF.
 model_name_or_path: /home/hcj/pipeline/models/Qwen3.5-9B
 trust_remote_code: true
 
@@ -17,7 +15,6 @@ lora_dropout: 0.05
 dataset: askbench_sft
 dataset_dir: .
 template: qwen3_5
-# Conservative bf16 context length for a single A40 48GB.
 cutoff_len: 4096
 overwrite_cache: true
 packing: false
@@ -25,16 +22,16 @@ preprocessing_num_workers: 16
 dataloader_num_workers: 4
 
 ### output
-output_dir: ../results/qwen35_9b_lora_adapter
+output_dir: ../results/qwen35_9b_lora_adapter_explicit160_thinking
 logging_steps: 1
-save_steps: 10
+save_steps: 5
 save_total_limit: 3
 plot_loss: true
 overwrite_output_dir: true
 save_only_model: false
 report_to: tensorboard
 
-### train — bf16 LoRA tuned for a single A40 48GB
+### train
 per_device_train_batch_size: 1
 gradient_accumulation_steps: 16
 learning_rate: 2.0e-4
@@ -46,8 +43,8 @@ gradient_checkpointing: true
 bf16: true
 ddp_timeout: 180000000
 
-### eval (uncomment to enable validation)
+### eval
 # val_size: 0.1
 # per_device_eval_batch_size: 1
 # eval_strategy: steps
-# eval_steps: 50
+# eval_steps: 10

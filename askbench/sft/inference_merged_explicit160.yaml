@@ -1,5 +1,5 @@
 ### model
-model_name_or_path: ../results/qwen35_9b_merged
+model_name_or_path: ../results/qwen35_9b_merged_explicit160_thinking
 template: qwen3_5
 trust_remote_code: true
 infer_backend: huggingface

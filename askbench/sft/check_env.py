@@ -53,11 +53,11 @@ def main() -> int:
 
         best_gpu_mem = max(total_memories)
         if best_gpu_mem >= 48:
-            print("Recommended profile: train_lora_gpu.yaml")
+            print("Recommended profile: train_lora_gpu_explicit160.yaml")
             print("Why: enough VRAM for bf16 LoRA with the longer AskBench context.")
         elif best_gpu_mem >= 24:
             print("Recommended profile: train_qlora_gpu.yaml")
-            print("Why: 4-bit QLoRA is the practical default on 24-48 GB cards.")
+            print("Why: 4-bit QLoRA is the fallback path when the explicit160 bf16 profile does not fit.")
             print("If you hit OOM, lower cutoff_len from 6144 to 4096 first.")
         else:
             print("Recommended profile: none")

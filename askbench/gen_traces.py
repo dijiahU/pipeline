@@ -38,6 +38,7 @@ def generate_training_traces(
                 "service": task["service"],
                 "task_text": task["task"],
                 "oracle": task["oracle"],
+                "prompt_variant": prompt_variant,
                 "trace": result["turns"],
                 "result": result["result"],
                 "expected_action": result["expected_action"],

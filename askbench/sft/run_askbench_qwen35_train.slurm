@@ -11,6 +11,6 @@
 
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate /home/hcj/pipeline/.conda-envs/askbench-qwen35
-export ASKBENCH_TRAIN_CONFIG="${ASKBENCH_TRAIN_CONFIG:-train_lora_gpu.yaml}"
+export ASKBENCH_TRAIN_CONFIG="${ASKBENCH_TRAIN_CONFIG:-train_lora_gpu_explicit160.yaml}"
 
 srun --gres=gpu:1 --ntasks=1 bash /home/hcj/pipeline/askbench/sft/launch_askbench_qwen35_train.sh

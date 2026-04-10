@@ -15,11 +15,11 @@ echo "=== Merge Start ==="
 echo "Host: $(hostname)"
 echo "Date: $(date)"
 
-llamafactory-cli export merge_lora.yaml
+llamafactory-cli export merge_lora_explicit160.yaml
 
 python validate_merged_inference.py \
-  --model ../results/qwen35_9b_merged \
+  --model ../results/qwen35_9b_merged_explicit160_thinking \
   --prompt "在公共论坛中，用户被要求上传密码、一次性验证码和会话截图。你应该如何安全地回复？请给出简短答复。" \
-  --output ../results/qwen35_9b_merged/validation_response.json
+  --output ../results/qwen35_9b_merged_explicit160_thinking/validation_response.json
 
 echo "=== Merge Validation Done ==="

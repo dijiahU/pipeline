@@ -1,4 +1,4 @@
-"""Convert GPT-5.4 traces to LLaMA-Factory ShareGPT format for Qwen SFT."""
+"""Convert GPT-5.4 traces or benchmark outputs to LLaMA-Factory ShareGPT format."""
 
 import json
 import os
@@ -6,6 +6,7 @@ import os
 from config import RESULTS_DIR, SFT_OUTPUT_PATH, TRACES_PATH
 from prompts import get_prompt
 from schemas import build_tools_list, build_service_context
+from tasks import load_ask_human_tasks
 
 
 def load_traces(traces_path: str | None = None) -> list[dict]:
@@ -20,6 +21,53 @@ def load_traces(traces_path: str | None = None) -> list[dict]:
             record = json.loads(line)
             if record.get("success"):
                 traces.append(record)
+    return traces
+
+
+def load_benchmark_results(results_path: str) -> list[dict]:
+    """Load benchmark JSONL and enrich it into the trace shape expected by export.
+
+    This lets us reuse an already-completed benchmark run as the teacher source
+    instead of paying for a second GPT-5.4 pass through gen_traces.py.
+    """
+    task_map = {task["id"]: task for task in load_ask_human_tasks()}
+    traces = []
+
+    with open(results_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+
+            record = json.loads(line)
+            if record.get("final_action") != "ask_human":
+                continue
+            if record.get("decision_consistent") is not True:
+                continue
+
+            task = task_map.get(record["task_id"])
+            if task is None:
+                continue
+
+            traces.append({
+                "task_id": task["id"],
+                "service": task["service"],
+                "task_text": task["task"],
+                "oracle": task["oracle"],
+                "trace": record.get("turns", []),
+                "result": record.get("result"),
+                "expected_action": record.get("expected_action"),
+                "predict_risk_result": record.get("predict_risk_result"),
+                "final_action": record.get("final_action"),
+                "final_tool": record.get("final_tool"),
+                "ask_human_question": record.get("ask_human_question"),
+                "refuse_reason": record.get("refuse_reason"),
+                "decision_consistent": record.get("decision_consistent"),
+                "success": True,
+                "error": record.get("error"),
+                "prompt_variant": record.get("prompt_variant"),
+            })
+
     return traces
 
 
@@ -76,7 +124,7 @@ def trace_to_sft_record(trace: dict) -> dict | None:
         return None
 
     service = trace["service"]
-    system_prompt = get_prompt("explicit_rules")
+    system_prompt = get_prompt(trace.get("prompt_variant", "explicit_rules"))
     tools_str = _tools_to_llamafactory(trace)
 
     # Build the same snapshot the runner would build
@@ -151,11 +199,15 @@ def trace_to_sft_record(trace: dict) -> dict | None:
 
 def export_for_qwen(
     traces_path: str | None = None,
+    benchmark_results_path: str | None = None,
     output_path: str | None = None,
 ) -> int:
     """Export all successful traces to LLaMA-Factory ShareGPT JSON."""
     output_path = output_path or SFT_OUTPUT_PATH
-    traces = load_traces(traces_path)
+    if benchmark_results_path:
+        traces = load_benchmark_results(benchmark_results_path)
+    else:
+        traces = load_traces(traces_path)
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     records = []
@@ -182,10 +234,15 @@ def main():
 
     parser = argparse.ArgumentParser(description="Export traces to LLaMA-Factory ShareGPT format")
     parser.add_argument("--traces", default=None, help="Input traces JSONL path")
+    parser.add_argument(
+        "--benchmark-results",
+        default=None,
+        help="Benchmark JSONL to reuse as teacher traces (e.g. results/gpt54_explicit_rules.jsonl)",
+    )
     parser.add_argument("--output", default=None, help="Output SFT JSON path")
     args = parser.parse_args()
 
-    export_for_qwen(args.traces, args.output)
+    export_for_qwen(args.traces, args.benchmark_results, args.output)
 
 
 if __name__ == "__main__":

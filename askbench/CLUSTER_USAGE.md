@@ -252,9 +252,10 @@ HF_ENDPOINT=https://hf-mirror.com hf download Qwen/Qwen3.5-9B \
 
 当前默认正式训练配置文件是：
 
-- [train_lora_gpu.yaml](/home/hcj/pipeline/askbench/sft/train_lora_gpu.yaml)
+- [train_lora_gpu_explicit160.yaml](/home/hcj/pipeline/askbench/sft/train_lora_gpu_explicit160.yaml)
 
 这不是 QLoRA，而是已经验证可启动的 bf16 LoRA 配置，针对单张 A40 48GB 收紧过参数。
+旧的非 `explicit160` bf16 train / merge / inference YAML 已经删除，避免误跑到旧链路。
 
 当前关键参数为：
 
@@ -273,7 +274,7 @@ HF_ENDPOINT=https://hf-mirror.com hf download Qwen/Qwen3.5-9B \
 对应输出目录：
 
 ```text
-/home/hcj/pipeline/askbench/results/qwen35_9b_lora_adapter
+/home/hcj/pipeline/askbench/results/qwen35_9b_lora_adapter_explicit160_thinking
 ```
 
 ### 5.5 bf16 LoRA 是否已经验证过
@@ -283,12 +284,12 @@ HF_ENDPOINT=https://hf-mirror.com hf download Qwen/Qwen3.5-9B \
 在交互式计算节点里，下面这条命令已经成功启动训练并进入 step 进度：
 
 ```bash
-DISABLE_VERSION_CHECK=1 llamafactory-cli train train_lora_gpu.yaml
+DISABLE_VERSION_CHECK=1 llamafactory-cli train train_lora_gpu_explicit160.yaml
 ```
 
 实际看到过的训练启动信息包括：
 
-- `Num examples = 154`
+- `Num examples = 160`
 - `Num Epochs = 5`
 - `Total optimization steps = 50`
 - `Number of trainable parameters = 86,556,672`
@@ -327,7 +328,7 @@ DISABLE_VERSION_CHECK=1 llamafactory-cli train train_lora_gpu.yaml
 - `#SBATCH --mem-per-cpu=2G`
 - `#SBATCH --time=2-00:00:00`
 - 显式激活 conda
-- 默认 `ASKBENCH_TRAIN_CONFIG=train_lora_gpu.yaml`
+- 默认 `ASKBENCH_TRAIN_CONFIG=train_lora_gpu_explicit160.yaml`
 - 通过 `srun` 启动 `launch_askbench_qwen35_train.sh`
 
 ### 6.2 启动脚本
@@ -470,7 +471,7 @@ Qwen3_5Config
 
 ```bash
 cd /home/hcj/pipeline/askbench/sft
-DISABLE_VERSION_CHECK=1 llamafactory-cli train train_lora_gpu.yaml
+DISABLE_VERSION_CHECK=1 llamafactory-cli train train_lora_gpu_explicit160.yaml
 ```
 
 这一步的目标不是跑完整训练，而是确认：
@@ -595,7 +596,7 @@ tail -n 200 /home/hcj/pipeline/askbench/sft/logs/<job_name>_<jobid>.err
 当前默认输出目录：
 
 ```text
-/home/hcj/pipeline/askbench/results/qwen35_9b_lora_adapter
+/home/hcj/pipeline/askbench/results/qwen35_9b_lora_adapter_explicit160_thinking
 ```
 
 训练过程中和训练结束后，常见产物会出现在这里，例如：
@@ -611,12 +612,12 @@ tail -n 200 /home/hcj/pipeline/askbench/sft/logs/<job_name>_<jobid>.err
 
 ### 10.1 当前状态
 
-当前 [train_lora_gpu.yaml](/home/hcj/pipeline/askbench/sft/train_lora_gpu.yaml) 已经调整为：
+当前 [train_lora_gpu_explicit160.yaml](/home/hcj/pipeline/askbench/sft/train_lora_gpu_explicit160.yaml) 已经调整为：
 
 - `plot_loss: true`
 - `report_to: tensorboard`
 - `logging_steps: 1`
-- `save_steps: 10`
+- `save_steps: 5`
 
 并且 `tensorboard` 已经安装到 conda 环境里。
 
@@ -642,7 +643,7 @@ tail -n 200 /home/hcj/pipeline/askbench/sft/logs/<job_name>_<jobid>.err
 ```bash
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate /home/hcj/pipeline/.conda-envs/askbench-qwen35
-tensorboard --logdir /home/hcj/pipeline/askbench/results/qwen35_9b_lora_adapter --port 6006
+tensorboard --logdir /home/hcj/pipeline/askbench/results/qwen35_9b_lora_adapter_explicit160_thinking --port 6006
 ```
 
 然后根据本机访问方式转发或打开对应端口。
@@ -723,7 +724,7 @@ python -m pip install torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 \
 
 如果仍然 OOM，优先顺序是：
 
-1. 把 [train_lora_gpu.yaml](/home/hcj/pipeline/askbench/sft/train_lora_gpu.yaml) 的 `cutoff_len` 从 `4096` 降到 `3072`
+1. 把 [train_lora_gpu_explicit160.yaml](/home/hcj/pipeline/askbench/sft/train_lora_gpu_explicit160.yaml) 的 `cutoff_len` 从 `4096` 降到 `3072`
 2. 如果还是不稳，再切回 [train_qlora_gpu.yaml](/home/hcj/pipeline/askbench/sft/train_qlora_gpu.yaml)
 
 不建议第一步就改 LoRA rank。
@@ -754,10 +755,10 @@ python -m pip install torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 \
 训练与导出：
 
 - [train_qlora_gpu.yaml](/home/hcj/pipeline/askbench/sft/train_qlora_gpu.yaml)
-- [train_lora_gpu.yaml](/home/hcj/pipeline/askbench/sft/train_lora_gpu.yaml)
-- [merge_lora.yaml](/home/hcj/pipeline/askbench/sft/merge_lora.yaml)
-- [inference.yaml](/home/hcj/pipeline/askbench/sft/inference.yaml)
-- [inference_merged.yaml](/home/hcj/pipeline/askbench/sft/inference_merged.yaml)
+- [train_lora_gpu_explicit160.yaml](/home/hcj/pipeline/askbench/sft/train_lora_gpu_explicit160.yaml)
+- [merge_lora_explicit160.yaml](/home/hcj/pipeline/askbench/sft/merge_lora_explicit160.yaml)
+- [inference_explicit160.yaml](/home/hcj/pipeline/askbench/sft/inference_explicit160.yaml)
+- [inference_merged_explicit160.yaml](/home/hcj/pipeline/askbench/sft/inference_merged_explicit160.yaml)
 - [validate_merged_inference.py](/home/hcj/pipeline/askbench/sft/validate_merged_inference.py)
 - [merge_and_validate_merged.sh](/home/hcj/pipeline/askbench/sft/merge_and_validate_merged.sh)
 
@@ -770,12 +771,91 @@ Slurm：
 模型与结果：
 
 - `/home/hcj/pipeline/models/Qwen3.5-9B`
-- `/home/hcj/pipeline/askbench/results/qwen35_9b_lora_adapter`
-- `/home/hcj/pipeline/askbench/results/qwen35_9b_merged`
+- `/home/hcj/pipeline/askbench/results/qwen35_9b_lora_adapter_explicit160_thinking`
+- `/home/hcj/pipeline/askbench/results/qwen35_9b_merged_explicit160_thinking`
 
 ---
 
 ## 13. 建议的实际使用顺序
+
+### 先说结论：要不要先启动 tmux
+
+建议先启动 `tmux`，再提交训练。
+
+原因是：
+
+- `sbatch` 提交出去的正式训练本身不依赖你的 SSH 连接，所以就算不进 `tmux`，训练通常也不会因为 Mac 合盖而停
+- 但你提交任务、看日志、查 `squeue`、开 `tensorboard`、做交互式调试，这些登录节点上的操作会依赖当前 shell；如果 SSH 断开，这些前台命令会一起结束
+
+所以最稳的实际流程是：
+
+1. SSH 到 `manage`
+2. 先进入 `tmux`
+3. 在 `tmux` 里执行 `sbatch`
+4. 在 `tmux` 的另一个窗口里看日志
+5. 断线后重新 `tmux attach`
+
+### 一套可直接照抄的完整命令清单
+
+下面这套命令默认：
+
+- conda 环境已经装好
+- 模型已经在 `/home/hcj/pipeline/models/Qwen3.5-9B`
+- 当前训练主线使用 `train_lora_gpu_explicit160.yaml`
+
+#### 1. 登录并进入 tmux
+
+```bash
+ssh hcj@<login-host>
+cd /home/hcj/pipeline/askbench/sft
+bash tmux_askbench.sh
+```
+
+#### 2. 在 `shell` 窗口里提交训练
+
+```bash
+cd /home/hcj/pipeline/askbench/sft
+source ~/miniconda3/etc/profile.d/conda.sh
+conda activate /home/hcj/pipeline/.conda-envs/askbench-qwen35
+ASKBENCH_TRAIN_CONFIG=train_lora_gpu_explicit160.yaml sbatch run_askbench_qwen35_train.slurm
+```
+
+提交后记下输出里的 job id。
+
+#### 3. 切到 `monitor` 窗口看状态和日志
+
+```bash
+squeue -u "$USER"
+scontrol show job <jobid>
+tail -n 50 -f /home/hcj/pipeline/askbench/sft/logs/hcj_askbench_qwen35_sft_<jobid>.out
+tail -n 50 -f /home/hcj/pipeline/askbench/sft/logs/hcj_askbench_qwen35_sft_<jobid>.err
+```
+
+#### 4. 临时离开 tmux
+
+```text
+Ctrl+b d
+```
+
+#### 5. Mac 合盖后重新连回
+
+```bash
+ssh hcj@<login-host>
+tmux ls
+tmux attach -t askbench
+```
+
+#### 6. 训练完成后合并和验证
+
+```bash
+cd /home/hcj/pipeline/askbench/sft
+source ~/miniconda3/etc/profile.d/conda.sh
+conda activate /home/hcj/pipeline/.conda-envs/askbench-qwen35
+srun -N 1 -n 1 -p gpu --gres=gpu:1 \
+  --cpus-per-task=4 --mem-per-cpu=2G \
+  --time=01:30:00 \
+  bash /home/hcj/pipeline/askbench/sft/merge_and_validate_merged.sh
+```
 
 ### 第一步：在登录节点检查环境
 
@@ -829,14 +909,16 @@ conda activate /home/hcj/pipeline/.conda-envs/askbench-qwen35
 cd /home/hcj/pipeline/askbench/sft
 python check_env.py
 python -c "from transformers import AutoConfig; cfg = AutoConfig.from_pretrained('/home/hcj/pipeline/models/Qwen3.5-9B', trust_remote_code=True); print(type(cfg).__name__)"
-DISABLE_VERSION_CHECK=1 llamafactory-cli train train_lora_gpu.yaml
+DISABLE_VERSION_CHECK=1 llamafactory-cli train train_lora_gpu_explicit160.yaml
 ```
 
 ### 第四步：确认无误后正式提交
 
 ```bash
 cd /home/hcj/pipeline/askbench/sft
-sbatch run_askbench_qwen35_train.slurm
+source ~/miniconda3/etc/profile.d/conda.sh
+conda activate /home/hcj/pipeline/.conda-envs/askbench-qwen35
+ASKBENCH_TRAIN_CONFIG=train_lora_gpu_explicit160.yaml sbatch run_askbench_qwen35_train.slurm
 ```
 
 ### 第五步：看状态和日志
@@ -853,14 +935,14 @@ tail -f /home/hcj/pipeline/askbench/sft/logs/<job_name>_<jobid>.out
 ```bash
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate /home/hcj/pipeline/.conda-envs/askbench-qwen35
-tensorboard --logdir /home/hcj/pipeline/askbench/results/qwen35_9b_lora_adapter --port 6006
+tensorboard --logdir /home/hcj/pipeline/askbench/results/qwen35_9b_lora_adapter_explicit160_thinking --port 6006
 ```
 
 ### 第七步：训练完成后合并 LoRA
 
 当前可复用脚本：
 
-- [merge_lora.yaml](/home/hcj/pipeline/askbench/sft/merge_lora.yaml)
+- [merge_lora_explicit160.yaml](/home/hcj/pipeline/askbench/sft/merge_lora_explicit160.yaml)
 - [merge_and_validate_merged.sh](/home/hcj/pipeline/askbench/sft/merge_and_validate_merged.sh)
 
 推荐直接在计算节点执行：
@@ -874,13 +956,13 @@ srun -N 1 -n 1 -p gpu --gres=gpu:1 \
 
 这一步会做两件事：
 
-1. 把 [qwen35_9b_lora_adapter](/home/hcj/pipeline/askbench/results/qwen35_9b_lora_adapter) 合并进基座模型
+1. 把 [qwen35_9b_lora_adapter_explicit160_thinking](/home/hcj/pipeline/askbench/results/qwen35_9b_lora_adapter_explicit160_thinking) 合并进基座模型
 2. 立即加载 merged 模型，跑一条最小验证推理
 
 合并后的目录是：
 
 ```text
-/home/hcj/pipeline/askbench/results/qwen35_9b_merged
+/home/hcj/pipeline/askbench/results/qwen35_9b_merged_explicit160_thinking
 ```
 
 ### 第八步：查看 merged 模型和验证结果
@@ -896,25 +978,170 @@ srun -N 1 -n 1 -p gpu --gres=gpu:1 \
 查看方式：
 
 ```bash
-find /home/hcj/pipeline/askbench/results/qwen35_9b_merged -maxdepth 2 -type f | sort
-cat /home/hcj/pipeline/askbench/results/qwen35_9b_merged/validation_response.json
+find /home/hcj/pipeline/askbench/results/qwen35_9b_merged_explicit160_thinking -maxdepth 2 -type f | sort
+cat /home/hcj/pipeline/askbench/results/qwen35_9b_merged_explicit160_thinking/validation_response.json
 ```
 
 需要注意：
 
 - 当前 `validate_merged_inference.py` 走的是 `transformers` 直接加载 merged 模型
 - 这条验证的目的主要是确认 merged 模型可以正常加载并生成
-- 如果想要更贴近 LLaMA-Factory 模板效果，后续应优先使用 [inference_merged.yaml](/home/hcj/pipeline/askbench/sft/inference_merged.yaml) 配合 `llamafactory-cli chat`
+- 如果想要更贴近 LLaMA-Factory 模板效果，后续应优先使用 [inference_merged_explicit160.yaml](/home/hcj/pipeline/askbench/sft/inference_merged_explicit160.yaml) 配合 `llamafactory-cli chat`
 
 ---
 
-## 14. 信息来源
+## 14. tmux / screen 进程守护
 
-### 14.1 本仓库文档
+### 14.1 为什么需要 tmux
+
+如果你在 Mac 上合盖，SSH 连接大概率会断。
+
+这时有两种情况需要区分：
+
+- 如果你已经用 `sbatch` 提交了正式训练，训练会继续在 Slurm 里跑，不依赖你本地 SSH 是否还连着
+- 如果你正在做交互式调试，例如 `srun --pty bash`、下载模型、`tail -f` 日志、启动 `tensorboard`，这些命令应该放在 `tmux` 里，否则断线后会一起中断
+
+结论：
+
+- 正式训练主要靠 `sbatch`
+- 交互式工作主要靠 `tmux`
+
+### 14.2 当前机器可用情况
+
+当前登录节点已经有：
+
+- `tmux 3.2a`
+- `screen 4.08.00`
+
+建议优先使用 `tmux`。
+
+### 14.3 推荐用法
+
+仓库里已经提供了一个简单入口：
+
+- [tmux_askbench.sh](/home/hcj/pipeline/askbench/sft/tmux_askbench.sh)
+
+使用方式：
+
+```bash
+cd /home/hcj/pipeline/askbench/sft
+bash tmux_askbench.sh
+```
+
+它会创建或直接进入一个名为 `askbench` 的 tmux session，并打开 3 个窗口：
+
+- `shell`：主工作窗口
+- `monitor`：看 `squeue`、`scontrol`、`tail -f logs/...`
+- `notes`：常用命令提示
+
+如果你想自定义 session 名：
+
+```bash
+cd /home/hcj/pipeline/askbench/sft
+bash tmux_askbench.sh askbench-debug
+```
+
+### 14.4 最常用操作
+
+进入 session：
+
+```bash
+cd /home/hcj/pipeline/askbench/sft
+bash tmux_askbench.sh
+```
+
+临时离开但不杀进程：
+
+```text
+Ctrl+b d
+```
+
+查看当前 session：
+
+```bash
+tmux ls
+```
+
+重新连回去：
+
+```bash
+tmux attach -t askbench
+```
+
+关闭整个 session：
+
+```bash
+tmux kill-session -t askbench
+```
+
+### 14.5 结合 Slurm 的正确姿势
+
+推荐流程：
+
+1. SSH 登录到 `manage`
+2. 进入 tmux
+3. 在 tmux 里启动交互式调试或日志监控
+4. Mac 合盖或网络断开后，重新 SSH 登录
+5. 执行 `tmux attach -t askbench` 继续
+
+示例：
+
+```bash
+ssh hcj@<login-host>
+cd /home/hcj/pipeline/askbench/sft
+bash tmux_askbench.sh
+```
+
+然后在 `shell` 窗口里做交互式调试：
+
+```bash
+srun -N 1 -n 1 -p gpu --gres=gpu:1 --cpus-per-task=4 --mem-per-cpu=2G --time=00:30:00 --pty bash
+```
+
+在 `monitor` 窗口里看日志：
+
+```bash
+squeue -u "$USER"
+tail -f /home/hcj/pipeline/askbench/sft/logs/<job_name>_<jobid>.err
+```
+
+### 14.6 screen 备用方案
+
+如果你更习惯 `screen`，最小用法是：
+
+```bash
+screen -S askbench
+```
+
+分离：
+
+```text
+Ctrl+a d
+```
+
+查看 session：
+
+```bash
+screen -ls
+```
+
+重新连接：
+
+```bash
+screen -r askbench
+```
+
+但在这台机器上，我建议还是优先用 `tmux`，因为窗口管理更清楚，也更适合同时盯训练和日志。
+
+---
+
+## 15. 信息来源
+
+### 15.1 本仓库文档
 
 - [ASPIRE_slurm_tutorial.md](/home/hcj/pipeline/askbench/ASPIRE_slurm_tutorial.md)
 
-### 14.2 学院集群手册
+### 15.2 学院集群手册
 
 - 首页：http://10.15.89.177:8889/
 - 作业：http://10.15.89.177:8889/job/index.html
@@ -922,12 +1149,12 @@ cat /home/hcj/pipeline/askbench/results/qwen35_9b_merged/validation_response.jso
 - 系统与资源：http://10.15.89.177:8889/system/index.html
 - 帐号和权限：http://10.15.89.177:8889/accounts/index.html
 
-### 14.3 官方模型信息
+### 15.3 官方模型信息
 
 - Qwen3.5 Transformers 文档：https://huggingface.co/docs/transformers/main/en/model_doc/qwen3_5
 - Qwen3.5-9B 模型页：https://huggingface.co/Qwen/Qwen3.5-9B
 
-### 14.4 当前本地集群的实测命令
+### 15.4 当前本地集群的实测命令
 
 本文档中的本地集群结论来自对以下命令的实际查询和实际训练：
 
@@ -941,7 +1168,7 @@ squeue -u "$USER"
 scontrol show job -d <jobid>
 srun -N 1 -n 1 -p gpu --gres=gpu:1 --time=00:01:00 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 ssh gpu1 hostname
-DISABLE_VERSION_CHECK=1 llamafactory-cli train train_lora_gpu.yaml
+DISABLE_VERSION_CHECK=1 llamafactory-cli train train_lora_gpu_explicit160.yaml
 sbatch run_askbench_qwen35_train.slurm
 ```
 

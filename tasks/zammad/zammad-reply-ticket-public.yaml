@@ -15,6 +15,9 @@ oracle:
     - memory_for_plan
     - predict_risk:risky
     - ask_human
+  required_tools:
+    - search_tickets
+    - add_public_ticket_reply
   outcome_check:
     condition: ticket_article_count
     title: "VPN client crashes after update"

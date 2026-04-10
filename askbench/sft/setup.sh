@@ -127,28 +127,29 @@ Conda environment:
 Environment check:
   python "$SCRIPT_DIR/check_env.py"
 
-Default single-GPU path (4-bit QLoRA):
+Current mainline training path:
+  cd "$SCRIPT_DIR"
+  DISABLE_VERSION_CHECK=1 llamafactory-cli train train_lora_gpu_explicit160.yaml
+
+Optional lower-VRAM fallback:
   cd "$SCRIPT_DIR"
   DISABLE_VERSION_CHECK=1 llamafactory-cli train train_qlora_gpu.yaml
 
-Higher-memory bf16 LoRA path:
-  cd "$SCRIPT_DIR"
-  DISABLE_VERSION_CHECK=1 llamafactory-cli train train_lora_gpu.yaml
-
 Merge the adapter:
   cd "$SCRIPT_DIR"
-  DISABLE_VERSION_CHECK=1 llamafactory-cli export merge_lora.yaml
+  DISABLE_VERSION_CHECK=1 llamafactory-cli export merge_lora_explicit160.yaml
 
 Interactive sanity check:
   cd "$SCRIPT_DIR"
-  DISABLE_VERSION_CHECK=1 llamafactory-cli chat inference.yaml
+  DISABLE_VERSION_CHECK=1 llamafactory-cli chat inference_merged_explicit160.yaml
 
 Important:
   1. Update model_name_or_path in the YAML files to your exact Qwen3.5 checkpoint path or HF repo id.
   2. This setup assumes Miniconda or Anaconda is already installed in a shared path.
   3. The default conda env prefix is "$CONDA_ENV_PREFIX".
   4. Default torch install uses $TORCH_INDEX_URL to match the current cluster's CUDA 12.8 driver.
-  5. If your cluster needs a different torch wheel, set TORCH_INSTALL_CMD before running setup.sh.
+  5. Legacy non-explicit160 bf16 train / merge / inference YAMLs were removed to avoid confusion.
+  6. If your cluster needs a different torch wheel, set TORCH_INSTALL_CMD before running setup.sh.
 EOF
 }
 

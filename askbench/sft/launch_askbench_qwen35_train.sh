@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
-TRAIN_CONFIG="${ASKBENCH_TRAIN_CONFIG:-train_lora_gpu.yaml}"
+TRAIN_CONFIG="${ASKBENCH_TRAIN_CONFIG:-train_lora_gpu_explicit160.yaml}"
 
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate /home/hcj/pipeline/.conda-envs/askbench-qwen35

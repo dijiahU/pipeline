@@ -7,8 +7,9 @@ This directory now contains a practical training path for the AskBench ShareGPT 
 
 - `setup.sh` now bootstraps a dedicated conda environment, installs repository dependencies,
   installs `LLaMA-Factory` from GitHub `main`, and links the dataset.
-- `train_qlora_gpu.yaml` is the default 4-bit profile for a single 24 GB to 48 GB GPU.
-- `train_lora_gpu.yaml` is now a conservative bf16 LoRA profile tuned for a single A40 48GB.
+- `train_lora_gpu_explicit160.yaml` is the only bf16 LoRA mainline kept in this repo.
+- The legacy non-`explicit160` train / merge / inference YAMLs were removed to avoid mixing runs.
+- `train_qlora_gpu.yaml` is kept only as a lower-VRAM fallback profile.
 - The current Qwen3.5 path uses the `qwen3_5` template, so future training and inference run in
   thinking mode by default.
 - `train_lora_mac.yaml` is now explicitly a small-model smoke test only.
@@ -62,22 +63,22 @@ bash setup.sh
 
 ## Train
 
-Default single-GPU path:
+Current mainline path:
+
+```bash
+cd /home/hcj/pipeline/askbench/sft
+source ~/miniconda3/etc/profile.d/conda.sh
+conda activate /home/hcj/pipeline/.conda-envs/askbench-qwen35
+DISABLE_VERSION_CHECK=1 llamafactory-cli train train_lora_gpu_explicit160.yaml
+```
+
+Optional lower-VRAM fallback:
 
 ```bash
 cd /home/hcj/pipeline/askbench/sft
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate /home/hcj/pipeline/.conda-envs/askbench-qwen35
 DISABLE_VERSION_CHECK=1 llamafactory-cli train train_qlora_gpu.yaml
-```
-
-Conservative bf16 path:
-
-```bash
-cd /home/hcj/pipeline/askbench/sft
-source ~/miniconda3/etc/profile.d/conda.sh
-conda activate /home/hcj/pipeline/.conda-envs/askbench-qwen35
-DISABLE_VERSION_CHECK=1 llamafactory-cli train train_lora_gpu.yaml
 ```
 
 Mac smoke test only:
@@ -95,14 +96,15 @@ PYTORCH_ENABLE_MPS_FALLBACK=1 DISABLE_VERSION_CHECK=1 llamafactory-cli train tra
 cd /home/hcj/pipeline/askbench/sft
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate /home/hcj/pipeline/.conda-envs/askbench-qwen35
-DISABLE_VERSION_CHECK=1 llamafactory-cli export merge_lora.yaml
-DISABLE_VERSION_CHECK=1 llamafactory-cli chat inference.yaml
+DISABLE_VERSION_CHECK=1 llamafactory-cli export merge_lora_explicit160.yaml
+DISABLE_VERSION_CHECK=1 llamafactory-cli chat inference_merged_explicit160.yaml
 ```
 
 ## Notes
 
-- `train_qlora_gpu.yaml` is the safer default for the current 9B checkpoint.
-- `run_askbench_qwen35_train.slurm` now defaults to `train_lora_gpu.yaml`.
+- `train_lora_gpu_explicit160.yaml` is the default training entrypoint.
+- `train_qlora_gpu.yaml` is only a fallback when bf16 LoRA does not fit.
+- `run_askbench_qwen35_train.slurm` now defaults to `train_lora_gpu_explicit160.yaml`.
 - The bf16 LoRA profile uses `cutoff_len: 4096` to fit more safely on a single A40 48GB.
 - The current Qwen3.5 training / merge / inference YAMLs all use `template: qwen3_5`.
 - If QLoRA runs out of memory, lower `cutoff_len` from `6144` to `4096` before reducing LoRA rank.

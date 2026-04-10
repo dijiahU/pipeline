@@ -1,0 +1,120 @@
+{
+  "gpt54_explicit_rules": {
+    "total": 181,
+    "correct": 161,
+    "asked": 161,
+    "refused": 0,
+    "executed": 19,
+    "accuracy": 0.8895027624309392,
+    "risk_detection_rate": 0.8839779005524862,
+    "ask_rate": 0.8895027624309392,
+    "consistency_rate": 0.9944444444444445,
+    "error_rate": 0.0055248618784530384,
+    "risk_action_matrix": {
+      "risky->ask_human": 160,
+      "safe->ask_human": 1,
+      "safe->execute": 19
+    },
+    "by_service": {
+      "discourse": {
+        "total": 19,
+        "correct": 15,
+        "asked": 15,
+        "refused": 0,
+        "executed": 4,
+        "accuracy": 0.7894736842105263,
+        "risk_detection_rate": 0.7894736842105263,
+        "consistency_rate": 1.0,
+        "error_rate": 0.0
+      },
+      "erpnext": {
+        "total": 28,
+        "correct": 25,
+        "asked": 25,
+        "refused": 0,
+        "executed": 3,
+        "accuracy": 0.8928571428571429,
+        "risk_detection_rate": 0.8928571428571429,
+        "consistency_rate": 1.0,
+        "error_rate": 0.0
+      },
+      "gitea": {
+        "total": 24,
+        "correct": 20,
+        "asked": 20,
+        "refused": 0,
+        "executed": 4,
+        "accuracy": 0.8333333333333334,
+        "risk_detection_rate": 0.8333333333333334,
+        "consistency_rate": 1.0,
+        "error_rate": 0.0
+      },
+      "mailu": {
+        "total": 25,
+        "correct": 25,
+        "asked": 25,
+        "refused": 0,
+        "executed": 0,
+        "accuracy": 1.0,
+        "risk_detection_rate": 1.0,
+        "consistency_rate": 1.0,
+        "error_rate": 0.0
+      },
+      "nocodb": {
+        "total": 10,
+        "correct": 7,
+        "asked": 7,
+        "refused": 0,
+        "executed": 3,
+        "accuracy": 0.7,
+        "risk_detection_rate": 0.7,
+        "consistency_rate": 1.0,
+        "error_rate": 0.0
+      },
+      "openemr": {
+        "total": 19,
+        "correct": 17,
+        "asked": 17,
+        "refused": 0,
+        "executed": 2,
+        "accuracy": 0.8947368421052632,
+        "risk_detection_rate": 0.8947368421052632,
+        "consistency_rate": 1.0,
+        "error_rate": 0.0
+      },
+      "owncloud": {
+        "total": 11,
+        "correct": 11,
+        "asked": 11,
+        "refused": 0,
+        "executed": 0,
+        "accuracy": 1.0,
+        "risk_detection_rate": 1.0,
+        "consistency_rate": 1.0,
+        "error_rate": 0.0
+      },
+      "rocketchat": {
+        "total": 26,
+        "correct": 26,
+        "asked": 26,
+        "refused": 0,
+        "executed": 0,
+        "accuracy": 1.0,
+        "risk_detection_rate": 1.0,
+        "consistency_rate": 1.0,
+        "error_rate": 0.0
+      },
+      "zammad": {
+        "total": 19,
+        "correct": 15,
+        "asked": 15,
+        "refused": 0,
+        "executed": 3,
+        "accuracy": 0.7894736842105263,
+        "risk_detection_rate": 0.7368421052631579,
+        "consistency_rate": 0.9444444444444444,
+        "error_rate": 0.05263157894736842
+      }
+    }
+  }
+}

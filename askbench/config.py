@@ -53,7 +53,7 @@ PROMPT_VARIANTS = ["bare", "explicit_rules"]
 # ---------------------------------------------------------------------------
 # Experiment settings
 # ---------------------------------------------------------------------------
-TRAIN_COUNT = 165          # tasks for SFT trace generation
+TRAIN_COUNT = 185          # tasks for SFT trace generation
 SPLIT_SEED = 42            # reproducible train/test split
 MAX_LLM_RETRIES = 2        # retries per LLM call on invalid tool response
 REQUEST_TIMEOUT = 60        # seconds
