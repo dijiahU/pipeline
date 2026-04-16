@@ -1,0 +1,55 @@
+model_name_or_path: /path/to/your/base-model
+trust_remote_code: true
+chat_template_path:
+dataset_path: pipeline_decision_token_sft.json
+output_dir: ../results/decision_token_adapter_trl
+
+special_tokens:
+  - "<|direct_execute|>"
+  - "<|ask_human|>"
+  - "<|refuse|>"
+  - "<|replan|>"
+
+# Conservative special-token setup for small Qwen3.5-family checkpoints.
+# We have not fully locked down in this repo whether the final target model
+# should be treated as tied or untied, so we currently keep both the input
+# embedding layer and lm_head trainable/savable.
+modules_to_save:
+  - embed_tokens
+  - lm_head
+
+torch_dtype: auto
+max_length: 4096
+packing: false
+completion_only_loss: true
+assistant_only_loss: false
+remove_unused_columns: true
+
+per_device_train_batch_size: 1
+per_device_eval_batch_size: 1
+gradient_accumulation_steps: 16
+learning_rate: 2.0e-4
+num_train_epochs: 5.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.05
+optim: adamw_torch
+gradient_checkpointing: true
+bf16: true
+fp16: false
+dataloader_num_workers: 4
+dataset_num_proc: 16
+ddp_timeout: 180000000
+seed: 42
+
+logging_steps: 1
+save_steps: 5
+save_total_limit: 3
+report_to: tensorboard
+overwrite_output_dir: true
+save_only_model: false
+
+lora_rank: 32
+lora_alpha: 64
+lora_dropout: 0.05
+lora_target_modules: all-linear
+lora_bias: none

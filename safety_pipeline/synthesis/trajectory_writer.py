@@ -1,8 +1,8 @@
 import copy
 
 from .. import runtime
-from ..state import build_dialogue_context_snapshot
-from .pass1_runner import run_task_pure
+from ..state import compact_risk_record
+from .pass1_runner import pass1_steps, replay_state_before_step, run_task_pure
 from .pass2_reviewer import review_trace
 
 
@@ -10,31 +10,23 @@ def _service_context():
     return runtime.build_runtime_service_context()
 
 
-def _predict_call(decision, next_phase):
-    return {
-        "tool_name": "predict_risk",
-        "arguments": {
-            "tool": decision.get("tool", ""),
-            "tool_args": decision.get("tool_args") or {},
-            "description": decision.get("description", ""),
-            "result": decision.get("result", ""),
-            "reasoning": decision.get("reasoning", ""),
-        },
-        "result": {
-            "accepted": True,
-            "stored_as": "current_risk_assessment",
-            "next_phase": next_phase,
-        },
+def _risk_record(decision):
+    decision = decision or {}
+    risk = {
+        "result": str(decision.get("result") or "").strip(),
+        "reasoning": str(decision.get("reasoning") or "").strip(),
     }
+    return {key: value for key, value in risk.items() if value}
 
 
-def _base_case(task_text, state_before, step_index, step, flow_tool_calls, decision, outcome, *, decision_reason="", observed_result=None, final_reply=""):
+def _base_case(task_text, state_before, step_index, step, flow_tool_calls, decision, outcome, *, risk=None, decision_reason="", observed_result=None, final_reply=""):
     service_context = _service_context()
     case = {
         "task": task_text,
         "turn_id": state_before.get("turn_count", 1),
         "step_index": step_index,
-        "dialogue_snapshot": build_dialogue_context_snapshot(state_before),
+        "trace_format_version": runtime.DECISION_TRACE_FORMAT_VERSION,
+        "context_snapshot": _context_snapshot(state_before),
         "flow_tool_calls": flow_tool_calls,
         "step": step,
         "decision": decision,
@@ -42,12 +34,9 @@ def _base_case(task_text, state_before, step_index, step, flow_tool_calls, decis
         "service_id": service_context.get("service_id", ""),
         "environment": service_context.get("environment", ""),
     }
-    if flow_tool_calls and flow_tool_calls[0].get("tool_name") == "predict_risk":
-        predict_args = flow_tool_calls[0].get("arguments") or {}
-        case["risk"] = {
-            "result": predict_args.get("result", ""),
-            "reasoning": predict_args.get("reasoning", ""),
-        }
+    normalized_risk = _risk_record(risk)
+    if normalized_risk:
+        case["risk"] = normalized_risk
     if decision_reason:
         case["decision_reason"] = decision_reason
     if observed_result is not None:
@@ -57,12 +46,32 @@ def _base_case(task_text, state_before, step_index, step, flow_tool_calls, decis
     return case
 
 
-def _dialogue_snapshot_with_reply(state_before, question, reply_text):
-    state_copy = copy.deepcopy(state_before)
-    state_copy.setdefault("dialogue_history", [])
-    state_copy["dialogue_history"].append({"role": "assistant", "content": question})
-    state_copy["dialogue_history"].append({"role": "user", "content": reply_text})
-    return build_dialogue_context_snapshot(state_copy)
+def _context_snapshot(state_before, human_feedback=None):
+    snapshot = {}
+    prior_steps = []
+    for item in list((state_before or {}).get("results") or [])[-2:]:
+        prior_steps.append(
+            {
+                "tool": item.get("tool", ""),
+                "tool_args": item.get("args") or {},
+                "observation": runtime.summarize_trace_value(item.get("result")),
+            }
+        )
+    if prior_steps:
+        snapshot["prior_steps"] = prior_steps
+    if human_feedback:
+        snapshot["human_feedback"] = human_feedback
+    return snapshot
+
+
+def _context_snapshot_with_reply(state_before, question, reply_text):
+    return _context_snapshot(
+        state_before,
+        human_feedback={
+            "question": question,
+            "reply": reply_text,
+        },
+    )
 
 
 def _case_to_trace(case):
@@ -71,7 +80,7 @@ def _case_to_trace(case):
         "step_index": case.get("step_index", 0),
         "step": case.get("step") or {},
         "flow_tool_calls": case.get("flow_tool_calls") or [],
-        "risk": runtime.compact_risk_record(case.get("risk")),
+        "risk": compact_risk_record(case.get("risk")),
         "execution": {
             "method": case.get("decision", ""),
             "result": case.get("observed_result"),
@@ -114,9 +123,10 @@ def splice(pass1_trace, pass2_decisions, task_config, replan_depth=0):
     session_cases = []
     final_status = pass1_trace.get("final_status", "done")
     final_response = pass1_trace.get("final_response", "")
+    steps = pass1_steps(pass1_trace)
 
-    for step, decision in zip(pass1_trace.get("steps", []), pass2_decisions):
-        state_before = copy.deepcopy(step.get("state_snapshot_at_step") or {})
+    for step, decision in zip(steps, pass2_decisions):
+        state_before = replay_state_before_step(task_config, pass1_trace, step.get("step_index", 0))
         real_step = {
             "tool": step.get("tool", ""),
             "args": step.get("tool_args") or {},
@@ -125,7 +135,6 @@ def splice(pass1_trace, pass2_decisions, task_config, replan_depth=0):
 
         if decision["result"] == "direct_execute":
             calls = [
-                _predict_call(decision, "need_next_or_done"),
                 {
                     "tool_name": "direct_tool",
                     "arguments": {},
@@ -145,6 +154,7 @@ def splice(pass1_trace, pass2_decisions, task_config, replan_depth=0):
                     calls,
                     "direct_tool",
                     "executed",
+                    risk=decision,
                     observed_result=step.get("observation"),
                 )
             )
@@ -153,9 +163,8 @@ def splice(pass1_trace, pass2_decisions, task_config, replan_depth=0):
         if decision["result"] == "ask_human":
             question = decision["question"]
             reply_text = decision["reply_text"]
-            dialogue_snapshot = _dialogue_snapshot_with_reply(state_before, question, reply_text)
+            context_snapshot = _context_snapshot_with_reply(state_before, question, reply_text)
             ask_calls = [
-                _predict_call(decision, "need_action_branch"),
                 {
                     "tool_name": "ask_human",
                     "arguments": {"question": question},
@@ -170,10 +179,10 @@ def splice(pass1_trace, pass2_decisions, task_config, replan_depth=0):
                 ask_calls,
                 "ask_human",
                 "ask_human_feedback",
+                risk=decision,
                 decision_reason=question,
                 observed_result={"human_reply": reply_text},
             )
-            ask_case["dialogue_snapshot"] = dialogue_snapshot
             session_cases.append(ask_case)
 
             if decision["synthetic_user_reply"] == "reject":
@@ -184,7 +193,6 @@ def splice(pass1_trace, pass2_decisions, task_config, replan_depth=0):
             execute_decision = dict(decision)
             execute_decision["result"] = "direct_execute"
             exec_calls = [
-                _predict_call(execute_decision, "need_next_or_done"),
                 {
                     "tool_name": "direct_tool",
                     "arguments": {},
@@ -203,15 +211,15 @@ def splice(pass1_trace, pass2_decisions, task_config, replan_depth=0):
                 exec_calls,
                 "direct_tool",
                 "executed",
+                risk=execute_decision,
                 observed_result=step.get("observation"),
             )
-            exec_case["dialogue_snapshot"] = dialogue_snapshot
+            exec_case["context_snapshot"] = context_snapshot
             session_cases.append(exec_case)
             continue
 
         if decision["result"] == "refuse":
             calls = [
-                _predict_call(decision, "need_action_branch"),
                 {
                     "tool_name": "refuse",
                     "arguments": {"reason": decision["reason"]},
@@ -227,6 +235,7 @@ def splice(pass1_trace, pass2_decisions, task_config, replan_depth=0):
                     calls,
                     "refuse",
                     "refused",
+                    risk=decision,
                     decision_reason=decision["reason"],
                     observed_result={"reason": decision["reason"]},
                 )
@@ -241,7 +250,6 @@ def splice(pass1_trace, pass2_decisions, task_config, replan_depth=0):
                 refusal["result"] = "refuse"
                 refusal["reason"] = decision.get("reason", "") or decision.get("reasoning", "")
                 calls = [
-                    _predict_call(refusal, "need_action_branch"),
                     {
                         "tool_name": "refuse",
                         "arguments": {"reason": refusal["reason"]},
@@ -257,6 +265,7 @@ def splice(pass1_trace, pass2_decisions, task_config, replan_depth=0):
                         calls,
                         "refuse",
                         "refused",
+                        risk=refusal,
                         decision_reason=refusal["reason"],
                         observed_result={"reason": refusal["reason"]},
                     )
@@ -267,7 +276,6 @@ def splice(pass1_trace, pass2_decisions, task_config, replan_depth=0):
 
             new_step = decision["new_step"]
             calls = [
-                _predict_call(decision, "need_action_branch"),
                 {
                     "tool_name": "replan",
                     "arguments": {"reasoning": decision["reason"], "new_step": new_step},
@@ -283,6 +291,7 @@ def splice(pass1_trace, pass2_decisions, task_config, replan_depth=0):
                     calls,
                     "replan",
                     "replanned_step",
+                    risk=decision,
                     decision_reason=decision["reason"],
                     observed_result=new_step,
                 )

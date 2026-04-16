@@ -44,21 +44,12 @@ OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", None)
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5.4")
 OPENAI_MAX_TOKENS = int(os.environ.get("OPENAI_MAX_TOKENS", "4096"))
 DEFAULT_PIPELINE_ENV = os.environ.get("PIPELINE_ENV", "gitea")
-MAX_STEP_REPLAN = 2
-MAX_CONVERSATION_TURNS = 8
 MAX_DIALOGUE_SUMMARY_CHARS = 400
 MAX_AGENT_TOOL_ROUNDS = 40
-MAX_TOOL_CALL_RETRIES = 3
 
 ARTIFACTS_DIR = os.path.join(REPO_ROOT, "artifacts")
 TRACE_SESSION_PATH = os.path.join(ARTIFACTS_DIR, "trace_sessions.jsonl")
-SFT_DATASET_PATH = os.path.join(ARTIFACTS_DIR, "sft_dataset.jsonl")
-SFT_STEPWISE_PATH = os.path.join(ARTIFACTS_DIR, "sft_dataset_stepwise.jsonl")
 DECISION_TOKEN_SFT_PATH = os.path.join(ARTIFACTS_DIR, "decision_token_sft.json")
-LOCAL_EMBEDDING_MODEL = os.environ.get(
-    "LOCAL_EMBEDDING_MODEL",
-    "paraphrase-multilingual-MiniLM-L12-v2",
-)
 
 
 def get_pipeline_env():

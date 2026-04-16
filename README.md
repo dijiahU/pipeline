@@ -2,9 +2,9 @@
 
 A decision-driven safety pipeline for multi-service admin tasks.
 
-The current runtime is built around one safety gate:
+The current runtime is built around one step-level safety decision:
 
-`predict_risk -> direct_execute / ask_human / refuse / replan`
+`direct_execute / ask_human / refuse / replan`
 
 The old speculative execution path is gone. There is no checkpoint rollback workflow, no tool-memory branch, and no scenario-specific memory retrieval in the runtime.
 
@@ -142,22 +142,6 @@ If you do not want `ask_human` to block on terminal input:
 PIPELINE_NONINTERACTIVE=1 python -m safety_pipeline --task-file tasks/gitea/openclaw-read-readme.yaml
 ```
 
-## Task Evaluation
-
-Run the evaluator:
-
-```bash
-python -m safety_pipeline.evaluation --task-file tasks/gitea/gitea-read-issue-detail.yaml
-python -m safety_pipeline.evaluation --task-file tasks/openemr/openemr-view-patient.yaml --eval-only
-```
-
-The evaluator checks:
-
-- `tool_coverage_check`
-- `decision_check`
-- `outcome_check`
-- `behavior_check`
-
 ## Two-Pass Synthesis
 
 Synthetic trace generation now uses two passes:
@@ -165,6 +149,7 @@ Synthetic trace generation now uses two passes:
 1. Pass 1 executes a pure real-tool trajectory.
 2. Pass 2 reviews each step and labels it as `direct_execute`, `ask_human`, `refuse`, or `replan`.
 3. The writer splices those reviewed decisions back into pipeline-shaped session cases.
+4. After synthesis finishes, `artifacts/decision_token_sft.json` is refreshed from `artifacts/trace_sessions.jsonl`.
 
 Example:
 
@@ -184,12 +169,21 @@ python -m safety_pipeline.synthesis \
 
 This repo now includes a minimal SFT path for smaller models under [askbench/sft/](/home/hcj/pipeline/askbench/sft).
 
-Training targets use one leading decision token followed by compact branch-specific JSON:
+The exported dataset now uses TRL's conversational `prompt/completion` format.
+The proposed tool call is part of the prompt context under `assistant_proposed_tool_call`, not the completion target:
 
-- `<|direct_execute|>{"tool":"...","tool_args":{...},"description":"..."}`
-- `<|ask_human|>{"question":"..."}`
-- `<|refuse|>{"reason":"..."}`
-- `<|replan|>{"reason":"...","new_step":{"tool":"...","args":{...},"description":"..."}}`
+- `<|direct_execute|>{"reasoning":"..."}`
+- `<|ask_human|>{"reasoning":"..."}`
+- `<|refuse|>{"reasoning":"..."}`
+- `<|replan|>{"reasoning":"..."}`
+
+Exporter behavior:
+
+- the current decision point becomes `prompt -> completion`
+- the exported SFT trajectory still accumulates prior turns as a prefix conversation
+- each user-side snapshot is fresh-style and self-contained for the current decision point
+- only a compact recent real-tool summary is carried inside the current prompt snapshot under `prior_steps`
+- the completion target contains only the current decision token plus reasoning
 
 Quick start:
 
@@ -199,11 +193,16 @@ bash setup.sh
 python check_env.py
 ```
 
-Then update `model_name_or_path` in [train_lora_gpu_decision_tokens.yaml](/home/hcj/pipeline/askbench/sft/train_lora_gpu_decision_tokens.yaml) and train:
+Then update `model_name_or_path` in [train_trl_decision_tokens.yaml](/Users/rick/Desktop/pipline/pipeline/askbench/sft/train_trl_decision_tokens.yaml) and train:
 
 ```bash
-DISABLE_VERSION_CHECK=1 llamafactory-cli train train_lora_gpu_decision_tokens.yaml
+python train_decision_tokens_trl.py --config train_trl_decision_tokens.yaml
 ```
+
+Training note:
+
+- The current default keeps `embed_tokens` and `lm_head` trainable alongside LoRA so the four decision special tokens have stable first-token probabilities for thresholding.
+- This repo has not yet finalized whether the intended small `Qwen3.5` checkpoint should be treated as tied or untied, so the training config currently uses the more conservative setting.
 
 On Slurm:
 
@@ -224,11 +223,11 @@ Current exported artifacts are written under `artifacts/`:
 - `artifacts/trace_sessions.jsonl`
   - session-level traces collected from runtime and synthesis
 - `artifacts/decision_token_sft.json`
-  - decision-token SFT dataset for smaller deployment models
+  - TRL prompt/completion dataset for the decision-token safety model
 
 ## Notes
 
 - Task YAML files should declare `service`, `environment`, and `oracle`.
 - `scripts/setup_env.sh` and `scripts/reset_env.sh` are Gitea convenience wrappers for local Docker setup, not universal service dispatchers.
 - The runtime no longer uses historical memory retrieval.
-- The online runtime still follows the structured `predict_risk` workflow; the decision-token path is the training/export path for smaller models.
+- The synthesis pipeline is the primary path for generating decision-token training data.

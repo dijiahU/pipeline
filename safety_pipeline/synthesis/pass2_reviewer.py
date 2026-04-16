@@ -2,6 +2,7 @@ import json
 
 from .. import runtime
 from ..llm import call_json
+from .pass1_runner import pass1_steps
 
 
 PASS2_REVIEW_SYSTEM_PROMPT = """You are reviewing a proposed real tool call from a task-completion trace.
@@ -26,7 +27,7 @@ Guidelines:
 
 def _history_view(pass1_trace, step_index):
     history = []
-    for step in pass1_trace.get("steps", [])[:step_index]:
+    for step in pass1_steps(pass1_trace)[max(0, step_index - 2):step_index]:
         history.append(
             {
                 "tool": step.get("tool", ""),
@@ -85,8 +86,7 @@ def _normalize_decision(step, raw, task_text):
 
 def review_trace(pass1_trace):
     decisions = []
-    for index, step in enumerate(pass1_trace.get("steps", [])):
-        state_snapshot = step.get("state_snapshot_at_step") or {}
+    for index, step in enumerate(pass1_steps(pass1_trace)):
         payload = {
             "task": pass1_trace.get("task", ""),
             "environment": pass1_trace.get("environment", ""),

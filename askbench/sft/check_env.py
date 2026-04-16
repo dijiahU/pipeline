@@ -1,4 +1,4 @@
-"""Minimal hardware check for the decision-token SFT path."""
+"""Minimal hardware and dependency check for the TRL decision-token SFT path."""
 
 from __future__ import annotations
 
@@ -26,9 +26,18 @@ def _format_gb(value: float) -> str:
 
 
 def main() -> int:
-    print("=== AskBench Decision-Token SFT Environment Check ===")
+    print("=== AskBench TRL Decision-Token SFT Environment Check ===")
     print(f"Python: {platform.python_version()}")
     print(f"Platform: {platform.platform()}")
+
+    transformers = _safe_import("transformers")
+    trl = _safe_import("trl")
+    peft = _safe_import("peft")
+    datasets = _safe_import("datasets")
+    print(f"transformers: {getattr(transformers, '__version__', 'missing') if transformers else 'missing'}")
+    print(f"trl: {getattr(trl, '__version__', 'missing') if trl else 'missing'}")
+    print(f"peft: {getattr(peft, '__version__', 'missing') if peft else 'missing'}")
+    print(f"datasets: {getattr(datasets, '__version__', 'missing') if datasets else 'missing'}")
 
     torch = _safe_import("torch")
     if torch is None:
@@ -53,8 +62,8 @@ def main() -> int:
 
         best_gpu_mem = max(total_memories)
         if best_gpu_mem >= 16:
-            print("Recommended profile: train_lora_gpu_decision_tokens.yaml")
-            print("Why: enough VRAM for the current decision-token LoRA path on a smaller base model.")
+            print("Recommended profile: train_trl_decision_tokens.yaml")
+            print("Why: enough VRAM for the current TRL + LoRA decision-token path on a smaller instruct model.")
         else:
             print("Recommended profile: none")
             print("Why: GPUs under 16 GB are likely too tight for practical fine-tuning.")

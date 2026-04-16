@@ -11,5 +11,5 @@
 
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate /home/hcj/pipeline/.conda-envs/askbench-decision-sft
-export ASKBENCH_TRAIN_CONFIG="${ASKBENCH_TRAIN_CONFIG:-train_lora_gpu_decision_tokens.yaml}"
+export ASKBENCH_TRAIN_CONFIG="${ASKBENCH_TRAIN_CONFIG:-train_trl_decision_tokens.yaml}"
 srun --gres=gpu:1 --ntasks=1 bash /home/hcj/pipeline/askbench/sft/launch_decision_token_train.sh

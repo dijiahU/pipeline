@@ -5,7 +5,7 @@ import os
 from ..session_store import append_session_record
 from ..settings import TRACE_SESSION_PATH, set_pipeline_env
 from ..task_catalog import iter_task_files
-from ..runtime import load_task_file
+from ..runtime import export_decision_token_sft, load_task_file
 from .pass1_runner import run_task_pure
 from .pass2_reviewer import review_trace
 from .trajectory_writer import splice
@@ -39,6 +39,8 @@ def main():
         traces.append(trace)
         print(json.dumps({"task_file": task_file, "final_status": trace.get("final_status", "")}, ensure_ascii=False))
 
+    decision_export = export_decision_token_sft(verbose=False)
+
     if args.out:
         output_dir = os.path.dirname(args.out)
         if output_dir:
@@ -47,7 +49,17 @@ def main():
             for trace in traces:
                 fh.write(json.dumps(trace, ensure_ascii=False) + "\n")
 
-    print(json.dumps({"trace_sessions": TRACE_SESSION_PATH, "trace_count": len(traces)}, ensure_ascii=False))
+    print(
+        json.dumps(
+            {
+                "trace_sessions": TRACE_SESSION_PATH,
+                "trace_count": len(traces),
+                "decision_token_sft": decision_export.get("output_path", ""),
+                "decision_token_count": decision_export.get("count", 0),
+            },
+            ensure_ascii=False,
+        )
+    )
 
 
 if __name__ == "__main__":

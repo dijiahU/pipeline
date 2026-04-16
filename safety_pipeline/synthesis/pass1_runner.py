@@ -23,9 +23,6 @@ def _ensure_state(task_config, initial_state=None):
         state = copy.deepcopy(initial_state)
 
     state.setdefault("results", [])
-    state.setdefault("known_context", [])
-    state.setdefault("authorization_state", [])
-    state.setdefault("dialogue_history", [{"role": "user", "content": task_config["task"]}])
     state.setdefault("turn_count", 1)
     state.setdefault("last_tool_error", "")
     return state
@@ -42,10 +39,31 @@ def _build_pass1_snapshot(state):
     return snapshot
 
 
+def _build_tool_call_message(validated_step):
+    return {
+        "role": "assistant",
+        "tool_call": {
+            "tool": validated_step["tool"],
+            "tool_args": validated_step["args"],
+            "description": validated_step["description"],
+        },
+    }
+
+
+def _build_tool_observation_message(tool_name, observation):
+    return {
+        "role": "tool",
+        "tool": tool_name,
+        "observation": observation,
+    }
+
+
 def _build_real_tool_schemas(state):
     required_real_tools, _ = runtime.build_required_real_tool_schemas(state)
-    retrieved_real_tools = runtime.build_retrieved_real_tool_schemas(state, top_k=12)
-    visible_real_tools = runtime.merge_real_tool_schemas(required_real_tools, retrieved_real_tools)
+    visible_real_tools = runtime.merge_real_tool_schemas(
+        required_real_tools,
+        runtime.get_tool_schemas(allow_empty=True),
+    )
     return visible_real_tools or list(runtime.get_tool_schemas(allow_empty=True))
 
 
@@ -61,28 +79,59 @@ def _validate_real_tool_call(task_text, tool_name, tool_args):
     )
 
 
-def _execute_validated_step(state, validated_step, steps):
-    state_before = copy.deepcopy(state)
+def _execute_validated_step(state, validated_step, transcript):
     tool_name = validated_step["tool"]
     tool_args = validated_step["args"]
     observation = runtime.execute_real_tool(tool_name, tool_args)
+    transcript.append(_build_tool_call_message(validated_step))
+    transcript.append(_build_tool_observation_message(tool_name, observation))
     runtime.update_state_from_execution(state, tool_name, tool_args, observation, "pass1_execute")
-    steps.append(
-        {
-            "step_index": len(steps),
-            "tool": tool_name,
-            "tool_args": tool_args,
-            "description": validated_step["description"],
-            "observation": observation,
-            "state_snapshot_at_step": state_before,
-        }
-    )
     return observation
+
+
+def pass1_steps(pass1_trace):
+    transcript = list((pass1_trace or {}).get("transcript") or [])
+    extracted = []
+    pending_call = None
+
+    for item in transcript:
+        if not isinstance(item, dict):
+            continue
+        role = item.get("role")
+        if role == "assistant" and isinstance(item.get("tool_call"), dict):
+            pending_call = item["tool_call"]
+            continue
+        if role == "tool" and pending_call:
+            extracted.append(
+                {
+                    "step_index": len(extracted),
+                    "tool": pending_call.get("tool", ""),
+                    "tool_args": pending_call.get("tool_args") or {},
+                    "description": pending_call.get("description", ""),
+                    "observation": item.get("observation"),
+                }
+            )
+            pending_call = None
+
+    return extracted
+
+
+def replay_state_before_step(task_config, pass1_trace, step_index):
+    state = _ensure_state(task_config)
+    for step in pass1_steps(pass1_trace)[:step_index]:
+        runtime.update_state_from_execution(
+            state,
+            step.get("tool", ""),
+            step.get("tool_args") or {},
+            step.get("observation"),
+            "pass1_execute",
+        )
+    return state
 
 
 def run_task_pure(task_config, initial_state=None, injected_first_step=None):
     state = _ensure_state(task_config, initial_state=initial_state)
-    steps = []
+    transcript = [{"role": "user", "content": task_config["task"]}]
     final_response = ""
     final_status = "running"
 
@@ -92,7 +141,7 @@ def run_task_pure(task_config, initial_state=None, injected_first_step=None):
             context_label="injected_first_step",
             fallback_text=task_config["task"],
         )
-        _execute_validated_step(state, validated_injected, steps)
+        _execute_validated_step(state, validated_injected, transcript)
 
     for _ in range(MAX_AGENT_TOOL_ROUNDS):
         available_tools = _build_real_tool_schemas(state)
@@ -121,7 +170,7 @@ def run_task_pure(task_config, initial_state=None, injected_first_step=None):
             continue
 
         state["last_tool_error"] = ""
-        _execute_validated_step(state, validated_step, steps)
+        _execute_validated_step(state, validated_step, transcript)
     else:
         final_status = "max_tool_rounds_exceeded"
 
@@ -131,8 +180,7 @@ def run_task_pure(task_config, initial_state=None, injected_first_step=None):
     return {
         "task": task_config["task"],
         "environment": task_config.get("environment", ""),
-        "steps": steps,
+        "transcript": transcript,
         "final_status": final_status,
         "final_response": final_response,
-        "state": copy.deepcopy(state),
     }

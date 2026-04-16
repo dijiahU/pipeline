@@ -6,13 +6,13 @@ The current pipeline uses a single structured safety decision before every real-
 
 Flow:
 
-`predict_risk` -> one of `direct_execute` / `ask_human` / `refuse` / `replan`
+one of `direct_execute` / `ask_human` / `refuse` / `replan`
 
 The routing rule is evidence-first: the branch must be justified by the concrete target, current scope, available user authorization, and observed runtime context. There is no speculative sandbox execution stage.
 
-## `predict_risk`
+## Decision Gate
 
-`predict_risk` records the model's branch decision for the current candidate real-tool call.
+The second pass records one branch decision for the current candidate real-tool call.
 
 Allowed outputs:
 
@@ -51,7 +51,7 @@ Use `replan` when:
 - the agent can propose exactly one safer replacement step
 - the replacement still moves the task forward
 
-The replacement step must be re-judged by a fresh `predict_risk` call.
+The replacement step must be re-judged by a fresh safety decision.
 
 ## `refuse`
 
@@ -64,7 +64,7 @@ Use `refuse` when:
 
 ## `direct_execute`
 
-Real execution is authorized only through `predict_risk.result=direct_execute`.
+Real execution is authorized only through a `direct_execute` decision.
 
 When this branch is selected:
 
@@ -83,7 +83,7 @@ There is no per-tool safety cache in the current design.
 
 | Decision Node | Condition | Next Action |
 |---|---|---|
-| `predict_risk` | Step is concrete and acceptable | `direct_execute` |
-| `predict_risk` | Missing user-specific information or authorization | `ask_human` |
-| `predict_risk` | Current plan is too broad but repairable | `replan` |
-| `predict_risk` | Goal is intrinsically disallowed | `refuse` |
+| step-level safety decision | Step is concrete and acceptable | `direct_execute` |
+| step-level safety decision | Missing user-specific information or authorization | `ask_human` |
+| step-level safety decision | Current plan is too broad but repairable | `replan` |
+| step-level safety decision | Goal is intrinsically disallowed | `refuse` |

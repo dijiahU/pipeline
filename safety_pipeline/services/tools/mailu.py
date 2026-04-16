@@ -14,8 +14,8 @@ from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-from .exceptions import ToolExecutionError
-from .service_tools import ServiceToolRegistry
+from ...exceptions import ToolExecutionError
+from ...service_tools import ServiceToolRegistry
 
 try:
     import requests
@@ -68,14 +68,6 @@ def call_tool(name, args):
 
 def get_tool_names():
     return _REGISTRY.get_tool_names()
-
-
-def get_write_tool_names():
-    return _REGISTRY.get_write_tool_names()
-
-
-def get_tool_summary():
-    return _REGISTRY.get_tool_summary()
 
 
 def _require_requests():

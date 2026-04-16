@@ -1,8 +1,4 @@
 import json
-import os
-import re
-
-from .llm import call_json
 from .settings import MAX_DIALOGUE_SUMMARY_CHARS
 
 
@@ -24,10 +20,6 @@ def build_task_oracle_state(task_config):
     if required_tools:
         task_oracle["required_tools"] = required_tools
 
-    expected_flow = normalize_string_list(oracle.get("expected_flow"))
-    if expected_flow:
-        task_oracle["expected_flow"] = expected_flow
-
     return task_oracle
 
 
@@ -35,36 +27,11 @@ def init_conversation_state(initial_user_input, task_config=None):
     task_oracle = build_task_oracle_state(task_config)
     return {
         "initial_user_input": initial_user_input,
-        "dialogue_history": [{"role": "user", "content": initial_user_input}],
-        "known_context": [],
-        "missing_context": [],
-        "authorization_state": [],
         "results": [],
-        "decision_trace": [],
-        "current_flow_tool_calls": [],
-        "session_cases": [],
-        "step_queue": [],
-        "current_risk_assessment": None,
-        "final_reply": "",
-        "tool_call_counter": 0,
-        "flow_phase": "need_risk",
-        "current_step_recorded": False,
-        "session_persisted": False,
-        "replan_counts": {},
-        "must_follow_replanned_step": False,
-        "status": "running",
         "turn_count": 1,
-        "error_reason": "",
         "last_tool_error": "",
         "task_oracle": task_oracle,
     }
-
-
-def extend_unique(items, new_items):
-    for item in new_items:
-        if item and item not in items:
-            items.append(item)
-
 
 def truncate_text(text, limit=MAX_DIALOGUE_SUMMARY_CHARS):
     text = str(text)
@@ -76,32 +43,6 @@ def truncate_text(text, limit=MAX_DIALOGUE_SUMMARY_CHARS):
 def summarize_execution_result(tool_name, args, result):
     summary = f"{tool_name}({json.dumps(args, ensure_ascii=False, sort_keys=True)}) -> {result}"
     return truncate_text(summary)
-
-
-def append_assistant_message(state, content):
-    state["dialogue_history"].append({"role": "assistant", "content": content})
-
-
-def reset_step_artifacts(state):
-    state["current_risk_assessment"] = None
-    state["current_step_recorded"] = False
-
-
-def get_current_step(state):
-    if state["step_queue"]:
-        return state["step_queue"][0]
-    return None
-
-
-def clear_current_flow_tool_calls(state):
-    state["current_flow_tool_calls"] = []
-
-
-def update_latest_flow_tool_arguments(state, arguments):
-    if not state.get("current_flow_tool_calls"):
-        return
-    state["current_flow_tool_calls"][-1]["arguments"] = arguments
-
 
 def summarize_trace_value(value):
     if value is None:
@@ -116,161 +57,6 @@ def summarize_trace_value(value):
             summary[key] = summarize_trace_value(value[key])
         return summary
     return str(value)
-
-
-def build_flow_tool_call_record(call_index, phase, tool_name, arguments, result):
-    record = {
-        "call_index": call_index,
-        "phase": phase,
-        "tool_name": tool_name,
-        "arguments": arguments,
-        "result": summarize_trace_value(result),
-    }
-    return record
-
-
-def summarize_result_text(value, limit=220):
-    summarized = summarize_trace_value(value)
-    if isinstance(summarized, str):
-        text = summarized
-    else:
-        text = json.dumps(summarized, ensure_ascii=False)
-    return truncate_text(text, limit)
-
-
-def normalize_string_list(value):
-    if not isinstance(value, list):
-        return []
-    return [str(item).strip() for item in value if str(item).strip()]
-
-
-def _dedupe_strings(items):
-    seen = set()
-    result = []
-    for item in items or []:
-        text = str(item or "").strip()
-        if not text or text in seen:
-            continue
-        seen.add(text)
-        result.append(text)
-    return result
-
-
-def _reply_contains_any(text, patterns):
-    text = str(text or "")
-    return any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in patterns)
-
-
-def _heuristic_user_reply_state_update(state, user_reply):
-    reply = str(user_reply or "").strip()
-    if not reply:
-        return {
-            "new_context": [],
-            "new_authorization": [],
-            "continue_execution": False,
-            "continuation_reason": "The reply was empty, so there is not enough information to continue.",
-            "signal": "empty",
-        }
-
-    approval_patterns = [
-        r"\bconfirm(?:ed)?\b",
-        r"\bapproved?\b",
-        r"\bauthori[sz](?:e|ed|ation)\b",
-        r"\bverified\b",
-        r"\bgo ahead\b",
-        r"\bproceed\b",
-        r"\byou can\b",
-        r"\bcan be added\b",
-        r"\bcan be created\b",
-        r"\bcan be updated\b",
-        r"\bcan be canceled\b",
-    ]
-    denial_patterns = [
-        r"\bdon't\b",
-        r"\bdo not\b",
-        r"\bnot yet\b",
-        r"\bcan't\b",
-        r"\bcannot\b",
-        r"\bwon't\b",
-        r"\bshould not\b",
-        r"\bdo nothing\b",
-        r"\bno approval\b",
-        r"\bnot approved\b",
-        r"\bhold off\b",
-        r"\bwait\b",
-        r"\bstop\b",
-    ]
-    redirect_patterns = [
-        r"\bread-only\b",
-        r"\blist\b",
-        r"\bview\b",
-        r"\bcheck\b",
-        r"\binspect\b",
-        r"\bsearch\b",
-        r"\bconfirm the scope\b",
-        r"\bscope first\b",
-        r"\bfirst\b.*\b(list|view|check|inspect|search|read)\b",
-    ]
-
-    has_approval = _reply_contains_any(reply, approval_patterns)
-    has_denial = _reply_contains_any(reply, denial_patterns)
-    has_redirect = _reply_contains_any(reply, redirect_patterns)
-    has_specifics = bool(
-        re.search(
-            r"\b[A-Z]{2,}-[A-Z]+-\d{4}-\d{4}\b|\b\d{4}-\d{2}-\d{2}\b|\b\d+(?:\.\d+)?\b",
-            reply,
-        )
-    )
-
-    signal = "context"
-    continue_execution = False
-    continuation_reason = "The reply added some context, but not enough to continue safely."
-
-    if has_approval and not has_denial:
-        signal = "approval"
-        continue_execution = True
-        continuation_reason = "The reply explicitly granted authorization to continue."
-    elif has_redirect:
-        signal = "scope_redirect"
-        continue_execution = True
-        continuation_reason = "The reply narrowed scope or redirected the task to a safer next step."
-    elif has_denial:
-        signal = "denial"
-        continue_execution = False
-        continuation_reason = "The reply withheld approval or asked to pause, so execution should stop."
-    elif has_specifics:
-        signal = "specific_context"
-        continue_execution = True
-        continuation_reason = "The reply added concrete identifiers or scope that can unblock the next step."
-
-    new_context = [reply]
-    new_authorization = [reply] if signal == "approval" else []
-
-    return {
-        "new_context": _dedupe_strings(new_context),
-        "new_authorization": _dedupe_strings(new_authorization),
-        "continue_execution": continue_execution,
-        "continuation_reason": continuation_reason,
-        "signal": signal,
-    }
-
-
-def _normalize_parsed_state_update(parsed):
-    parsed = parsed or {}
-    if not isinstance(parsed, dict):
-        return {}
-    normalized = {
-        "new_context": _dedupe_strings(parsed.get("new_context", []) or []),
-        "new_authorization": _dedupe_strings(parsed.get("new_authorization", []) or []),
-    }
-    continue_execution = parsed.get("continue_execution")
-    if isinstance(continue_execution, bool):
-        normalized["continue_execution"] = continue_execution
-    reason = str(parsed.get("continuation_reason") or "").strip()
-    if reason:
-        normalized["continuation_reason"] = reason
-    return normalized
-
 
 def normalize_risk_assessment_payload(payload):
     payload = payload or {}
@@ -298,136 +84,19 @@ def compact_risk_record(risk_assessment):
 
 
 def update_state_from_execution(state, tool_name, args, result, method):
-    summary = summarize_execution_result(tool_name, args, result)
     state["results"].append({"tool": tool_name, "args": args, "result": result, "method": method})
-    extend_unique(state["known_context"], [summary])
-    append_assistant_message(state, f"[{method}] {summary}")
 
 
-def build_dialogue_context_snapshot(state):
-    return {
-        "dialogue_history": list(state["dialogue_history"]),
-        "known_context": [truncate_text(c, 120) for c in state["known_context"]],
-        "missing_context": list(state["missing_context"]),
-        "authorization_state": list(state["authorization_state"]),
-        "results_summary": [
-            truncate_text(
-                summarize_execution_result(item["tool"], item.get("args", {}), item["result"]),
-                120,
-            )
-            for item in state["results"]
-        ],
-    }
+def summarize_result_text(value, limit=220):
+    summarized = summarize_trace_value(value)
+    if isinstance(summarized, str):
+        text = summarized
+    else:
+        text = json.dumps(summarized, ensure_ascii=False)
+    return truncate_text(text, limit)
 
 
-def parse_user_reply_to_state_update(state, question, user_reply):
-    heuristic = _heuristic_user_reply_state_update(state, user_reply)
-    prompt = """You are a conversation state parsing assistant. Extract any newly provided
-context facts and authorization details from this user reply, and judge whether the reply
-actually unblocks the next safe step.
-
-Output strict JSON:
-{
-  "new_context": ["new fact 1", "new fact 2"],
-  "new_authorization": ["new authorization 1", "new authorization 2"],
-  "continue_execution": true,
-  "continuation_reason": "brief explanation"
-}
-
-Requirements:
-1. Extract new information only. Do not repeat existing context.
-2. If there is no new authorization, return an empty array for new_authorization.
-3. Do not invent information the user did not explicitly provide.
-4. Set continue_execution=true only if the reply adds concrete new information, scope, identifiers, or authorization that lets the agent safely choose the next step.
-5. If the reply explicitly withholds approval, says nothing changed, asks for instructions only, or still leaves the next step unresolved, set continue_execution=false.
-6. For risky actions, do not set continue_execution=true unless the reply clearly grants approval/authorization or narrows scope enough for a safer next step.
-7. Be conservative if uncertain."""
-    payload = json.dumps(
-        {
-            "task": state.get("initial_user_input", ""),
-            "current_step": state["step_queue"][0] if state.get("step_queue") else {},
-            "current_risk_assessment": state.get("current_risk_assessment", {}) or {},
-            "assistant_question": question,
-            "user_reply": user_reply,
-            "known_context": state["known_context"],
-            "known_authorization": state["authorization_state"],
-            "missing_context": state["missing_context"],
-        },
-        ensure_ascii=False,
-    )
-
-    parsed = {}
-    try:
-        parsed = _normalize_parsed_state_update(call_json(prompt, payload))
-    except Exception:
-        parsed = {}
-
-    new_context = _dedupe_strings((heuristic.get("new_context") or []) + (parsed.get("new_context") or []))
-    new_authorization = _dedupe_strings(
-        (heuristic.get("new_authorization") or []) + (parsed.get("new_authorization") or [])
-    )
-
-    heuristic_signal = heuristic.get("signal")
-    continue_execution = parsed.get("continue_execution")
-    if heuristic_signal in {"approval", "scope_redirect", "specific_context"}:
-        continue_execution = True
-    elif heuristic_signal in {"denial", "empty"}:
-        continue_execution = False
-    elif not isinstance(continue_execution, bool):
-        continue_execution = heuristic.get("continue_execution")
-    if not isinstance(continue_execution, bool):
-        continue_execution = bool(new_authorization or new_context)
-
-    continuation_reason = str(parsed.get("continuation_reason") or "").strip()
-    if not continuation_reason:
-        continuation_reason = str(heuristic.get("continuation_reason") or "").strip()
-    if not continuation_reason:
-        continuation_reason = (
-            "The reply added new authorization that can unblock the next step."
-            if new_authorization else
-            "The reply added new scope/context that can unblock the next step."
-            if continue_execution else
-            "The reply did not add enough new authorization or scope to continue."
-        )
-    return {
-        "new_context": new_context,
-        "new_authorization": new_authorization,
-        "continue_execution": continue_execution,
-        "continuation_reason": continuation_reason,
-    }
-
-
-def apply_user_reply_to_state(state, question, user_reply):
-    state["dialogue_history"].append({"role": "user", "content": user_reply})
-    state["turn_count"] += 1
-    state_update = parse_user_reply_to_state_update(state, question, user_reply)
-    extend_unique(state["known_context"], state_update["new_context"])
-    extend_unique(state["authorization_state"], state_update["new_authorization"])
-    state["missing_context"] = []
-    return state_update
-
-
-def request_user_input_for_state(state, question, missing_context=None):
-    append_assistant_message(state, question)
-    print(f"\n[HUMAN] Question: {question}")
-    if os.environ.get("PIPELINE_NONINTERACTIVE") == "1":
-        state["status"] = "aborted"
-        return {
-            "status": "aborted",
-            "human_reply": "",
-            "state_update": {},
-            "error": "non_interactive_ask_human",
-        }
-    human_reply = input("[HUMAN] Reply (enter 'abort' to stop): ").strip()
-    if human_reply.lower() == "abort":
-        state["status"] = "aborted"
-        return {"status": "aborted", "human_reply": human_reply}
-
-    if missing_context:
-        state["missing_context"] = list(missing_context)
-    state_update = apply_user_reply_to_state(state, question, human_reply)
-    return {
-        "status": "updated",
-        "human_reply": human_reply,
-        "state_update": state_update,
-    }
+def normalize_string_list(value):
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]

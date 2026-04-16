@@ -21,7 +21,7 @@ python check_env.py
 
 然后手动修改：
 
-- `train_lora_gpu_decision_tokens.yaml`
+- `train_trl_decision_tokens.yaml`
   - 把 `model_name_or_path` 改成真实基础模型路径或 HF repo id
 
 ## 3. 交互式调试
@@ -41,7 +41,7 @@ source ~/miniconda3/etc/profile.d/conda.sh
 conda activate /home/hcj/pipeline/.conda-envs/askbench-decision-sft
 cd /home/hcj/pipeline/askbench/sft
 python check_env.py
-DISABLE_VERSION_CHECK=1 llamafactory-cli train train_lora_gpu_decision_tokens.yaml
+python train_decision_tokens_trl.py --config train_trl_decision_tokens.yaml
 ```
 
 ## 4. 正式提交

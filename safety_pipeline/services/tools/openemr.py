@@ -4,8 +4,8 @@ import re
 import subprocess
 from datetime import datetime, timedelta
 
-from .exceptions import ToolExecutionError
-from .service_tools import ServiceToolRegistry
+from ...exceptions import ToolExecutionError
+from ...service_tools import ServiceToolRegistry
 
 
 _REGISTRY = ServiceToolRegistry(service_id="openemr")
@@ -33,14 +33,6 @@ def call_tool(name, args):
 
 def get_tool_names():
     return _REGISTRY.get_tool_names()
-
-
-def get_write_tool_names():
-    return _REGISTRY.get_write_tool_names()
-
-
-def get_tool_summary():
-    return _REGISTRY.get_tool_summary()
 
 
 def _db_container():

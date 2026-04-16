@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
-TRAIN_CONFIG="${ASKBENCH_TRAIN_CONFIG:-train_lora_gpu_decision_tokens.yaml}"
+TRAIN_CONFIG="${ASKBENCH_TRAIN_CONFIG:-train_trl_decision_tokens.yaml}"
 
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate /home/hcj/pipeline/.conda-envs/askbench-decision-sft
@@ -43,4 +43,4 @@ python check_env.py
 export DISABLE_VERSION_CHECK=1
 export PYTHONUNBUFFERED=1
 
-llamafactory-cli train "$TRAIN_CONFIG"
+python train_decision_tokens_trl.py --config "$TRAIN_CONFIG"
