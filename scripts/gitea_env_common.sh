@@ -1,5 +1,45 @@
 #!/usr/bin/env bash
 
+detect_gitea_container_runtime() {
+  if command -v docker >/dev/null 2>&1; then
+    printf '%s\n' "docker"
+    return 0
+  fi
+
+  echo "[gitea] Docker is required for Gitea setup, but docker is not available in PATH." >&2
+  return 1
+}
+
+stop_gitea_service() {
+  local _runtime="$1"
+  local compose_path="$2"
+  local _instance_name="$3"
+
+  docker compose -f "${compose_path}" stop gitea >/dev/null 2>&1 || true
+  docker compose -f "${compose_path}" rm -f gitea >/dev/null 2>&1 || true
+}
+
+start_gitea_service() {
+  local _runtime="$1"
+  local _root_dir="$2"
+  local compose_path="$3"
+  local _instance_name="$4"
+  local _base_url="$5"
+  local label="${6:-setup}"
+
+  echo "[${label}] Starting Gitea container from ${compose_path} ..."
+  docker compose -f "${compose_path}" up -d
+}
+
+reset_gitea_service_state() {
+  local runtime="$1"
+  local _root_dir="$2"
+  local compose_path="$3"
+  local instance_name="$4"
+
+  stop_gitea_service "${runtime}" "${compose_path}" "${instance_name}"
+}
+
 wait_for_gitea_api() {
   local base_url="$1"
   local max_wait="${2:-120}"
@@ -36,29 +76,36 @@ resolve_repo_path() {
 }
 
 ensure_gitea_admin_user() {
-  local container_name="$1"
-  local username="$2"
-  local password="$3"
-  local email="$4"
-  local label="${5:-setup}"
+  local _runtime="$1"
+  local container_name="$2"
+  local username="$3"
+  local password="$4"
+  local email="$5"
+  local label="${6:-setup}"
+  local log_file
+  log_file="$(mktemp /tmp/gitea-admin-create.XXXXXX.log)"
 
   echo "[${label}] Ensuring admin user ${username} exists ..."
-  if docker exec --user git "${container_name}" gitea admin user create \
+  if docker exec --user git "${container_name}" \
+    gitea --config /data/gitea/conf/app.ini admin user create \
     --admin \
     --username "${username}" \
     --password "${password}" \
     --email "${email}" \
-    --must-change-password=false >/tmp/gitea-admin-create.log 2>&1; then
+    --must-change-password=false >"${log_file}" 2>&1; then
     echo "[${label}] Admin user ${username} created"
+    rm -f "${log_file}"
     return 0
   fi
 
-  if grep -qi "already exists" /tmp/gitea-admin-create.log; then
+  if grep -qi "already exists" "${log_file}"; then
     echo "[${label}] Admin user ${username} already exists"
+    rm -f "${log_file}"
     return 0
   fi
 
-  cat /tmp/gitea-admin-create.log
+  cat "${log_file}"
+  rm -f "${log_file}"
   return 1
 }
 

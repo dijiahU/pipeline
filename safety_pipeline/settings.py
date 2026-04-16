@@ -47,21 +47,18 @@ DEFAULT_PIPELINE_ENV = os.environ.get("PIPELINE_ENV", "gitea")
 MAX_STEP_REPLAN = 2
 MAX_CONVERSATION_TURNS = 8
 MAX_DIALOGUE_SUMMARY_CHARS = 400
-PLAN_MEMORY_TOP_K = 6
 MAX_AGENT_TOOL_ROUNDS = 40
 MAX_TOOL_CALL_RETRIES = 3
 
-MEMORY_DIR = os.path.join(REPO_ROOT, "memory")
-EXPERIENCE_MEMORY_PATH = os.path.join(MEMORY_DIR, "experience_memory.json")
-TOOL_MEMORY_PATH = os.path.join(MEMORY_DIR, "tool_memory.json")
-SFT_DATASET_PATH = os.path.join(MEMORY_DIR, "sft_dataset.jsonl")
-SFT_STEPWISE_PATH = os.path.join(MEMORY_DIR, "sft_dataset_stepwise.jsonl")
+ARTIFACTS_DIR = os.path.join(REPO_ROOT, "artifacts")
+TRACE_SESSION_PATH = os.path.join(ARTIFACTS_DIR, "trace_sessions.jsonl")
+SFT_DATASET_PATH = os.path.join(ARTIFACTS_DIR, "sft_dataset.jsonl")
+SFT_STEPWISE_PATH = os.path.join(ARTIFACTS_DIR, "sft_dataset_stepwise.jsonl")
+DECISION_TOKEN_SFT_PATH = os.path.join(ARTIFACTS_DIR, "decision_token_sft.json")
 LOCAL_EMBEDDING_MODEL = os.environ.get(
     "LOCAL_EMBEDDING_MODEL",
     "paraphrase-multilingual-MiniLM-L12-v2",
 )
-PLAN_MEMORY_FAISS_PATH = os.path.join(MEMORY_DIR, "plan_memory.faiss")
-PLAN_MEMORY_META_PATH = os.path.join(MEMORY_DIR, "plan_memory_meta.json")
 
 
 def get_pipeline_env():

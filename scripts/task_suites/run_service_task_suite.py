@@ -12,7 +12,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TASKS_ROOT = REPO_ROOT / "tasks"
-REPORTS_ROOT = REPO_ROOT / "memory" / "task_suite_reports"
+REPORTS_ROOT = REPO_ROOT / "artifacts" / "task_suite_reports"
 
 
 def discover_task_files(service_id):

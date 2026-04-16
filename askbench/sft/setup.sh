@@ -3,8 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
-RESULTS_DIR="$(cd "$SCRIPT_DIR/../results" && pwd)"
-CONDA_ENV_NAME="${ASKBENCH_CONDA_ENV:-askbench-qwen35}"
+CONDA_ENV_NAME="${ASKBENCH_CONDA_ENV:-askbench-decision-sft}"
 CONDA_ENV_PREFIX="${ASKBENCH_CONDA_PREFIX:-$ROOT_DIR/.conda-envs/$CONDA_ENV_NAME}"
 CONDA_HOME="${CONDA_HOME:-$HOME/miniconda3}"
 CONDA_SH="${CONDA_SH:-$CONDA_HOME/etc/profile.d/conda.sh}"
@@ -57,7 +56,7 @@ setup_conda_env() {
 import sys
 if sys.version_info < (3, 11):
     raise SystemExit(
-        "Python 3.11+ is required for current Qwen3.5 fine-tuning. "
+        "Python 3.11+ is required for the current decision-token fine-tuning path. "
         f"Detected: {sys.version.split()[0]}"
     )
 print(f"Using Python {sys.version.split()[0]} in active conda env")
@@ -100,17 +99,21 @@ install_llamafactory() {
 
 link_dataset() {
     echo "[5/5] Linking training data"
-    ln -sfn ../results/sft_train.json "$SCRIPT_DIR/sft_train.json"
+    if [ -f "$ROOT_DIR/artifacts/decision_token_sft.json" ]; then
+        ln -sfn ../../artifacts/decision_token_sft.json "$SCRIPT_DIR/pipeline_decision_token_sft.json"
+    else
+        printf '[]\n' > "$SCRIPT_DIR/pipeline_decision_token_sft.json"
+    fi
 
     python - <<PY
 import json
 from pathlib import Path
 script_dir = Path(r"$SCRIPT_DIR")
-dataset_path = script_dir / "sft_train.json"
+decision_dataset_path = script_dir / "pipeline_decision_token_sft.json"
 info_path = script_dir / "dataset_info.json"
-records = json.loads(dataset_path.read_text())
+decision_records = json.loads(decision_dataset_path.read_text())
 info = json.loads(info_path.read_text())
-print(f"  Training records: {len(records)}")
+print(f"  Decision-token records: {len(decision_records)}")
 print(f"  Registered datasets: {list(info.keys())}")
 PY
 }
@@ -129,31 +132,19 @@ Environment check:
 
 Current mainline training path:
   cd "$SCRIPT_DIR"
-  DISABLE_VERSION_CHECK=1 llamafactory-cli train train_lora_gpu_explicit160.yaml
-
-Optional lower-VRAM fallback:
-  cd "$SCRIPT_DIR"
-  DISABLE_VERSION_CHECK=1 llamafactory-cli train train_qlora_gpu.yaml
-
-Merge the adapter:
-  cd "$SCRIPT_DIR"
-  DISABLE_VERSION_CHECK=1 llamafactory-cli export merge_lora_explicit160.yaml
-
-Interactive sanity check:
-  cd "$SCRIPT_DIR"
-  DISABLE_VERSION_CHECK=1 llamafactory-cli chat inference_merged_explicit160.yaml
+  DISABLE_VERSION_CHECK=1 llamafactory-cli train train_lora_gpu_decision_tokens.yaml
 
 Important:
-  1. Update model_name_or_path in the YAML files to your exact Qwen3.5 checkpoint path or HF repo id.
-  2. This setup assumes Miniconda or Anaconda is already installed in a shared path.
-  3. The default conda env prefix is "$CONDA_ENV_PREFIX".
-  4. Default torch install uses $TORCH_INDEX_URL to match the current cluster's CUDA 12.8 driver.
-  5. Legacy non-explicit160 bf16 train / merge / inference YAMLs were removed to avoid confusion.
+  1. Update model_name_or_path in train_lora_gpu_decision_tokens.yaml to your actual base-model path or HF repo id.
+  2. Default output_dir is ../results/decision_token_adapter and will be created by LLaMA-Factory.
+  3. This setup assumes Miniconda or Anaconda is already installed in a shared path.
+  4. The default conda env prefix is "$CONDA_ENV_PREFIX".
+  5. Default torch install uses $TORCH_INDEX_URL to match the current cluster's CUDA 12.8 driver.
   6. If your cluster needs a different torch wheel, set TORCH_INSTALL_CMD before running setup.sh.
 EOF
 }
 
-echo "=== AskBench Qwen3.5 SFT Setup ==="
+echo "=== AskBench Decision-Token SFT Setup ==="
 load_conda
 setup_conda_env
 install_project_deps

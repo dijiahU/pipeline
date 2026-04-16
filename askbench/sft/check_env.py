@@ -1,4 +1,4 @@
-"""Minimal hardware check for AskBench SFT profiles."""
+"""Minimal hardware check for the decision-token SFT path."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ def _format_gb(value: float) -> str:
 
 
 def main() -> int:
-    print("=== AskBench SFT Environment Check ===")
+    print("=== AskBench Decision-Token SFT Environment Check ===")
     print(f"Python: {platform.python_version()}")
     print(f"Platform: {platform.platform()}")
 
@@ -52,23 +52,18 @@ def main() -> int:
             print(f"GPU {idx}: {props.name} ({_format_gb(mem_gb)})")
 
         best_gpu_mem = max(total_memories)
-        if best_gpu_mem >= 48:
-            print("Recommended profile: train_lora_gpu_explicit160.yaml")
-            print("Why: enough VRAM for bf16 LoRA with the longer AskBench context.")
-        elif best_gpu_mem >= 24:
-            print("Recommended profile: train_qlora_gpu.yaml")
-            print("Why: 4-bit QLoRA is the fallback path when the explicit160 bf16 profile does not fit.")
-            print("If you hit OOM, lower cutoff_len from 6144 to 4096 first.")
+        if best_gpu_mem >= 16:
+            print("Recommended profile: train_lora_gpu_decision_tokens.yaml")
+            print("Why: enough VRAM for the current decision-token LoRA path on a smaller base model.")
         else:
             print("Recommended profile: none")
-            print("Why: GPUs under 24 GB are likely too tight for Qwen3.5-9B AskBench SFT.")
+            print("Why: GPUs under 16 GB are likely too tight for practical fine-tuning.")
 
         return 0
 
     if mps_available:
         print("MPS: available")
-        print("Recommendation: use train_lora_mac.yaml only as a small-model smoke test.")
-        print("Qwen3.5-9B training is not recommended on MPS for this dataset.")
+        print("Recommendation: use this machine only for smoke tests, setup, or preprocessing.")
         return 0
 
     print("CUDA: unavailable")
@@ -79,7 +74,7 @@ def main() -> int:
     else:
         print("nvidia-smi: not found")
 
-    print("Recommendation: this machine is suitable only for setup / preprocessing, not Qwen3.5-9B training.")
+    print("Recommendation: this machine is suitable only for setup / preprocessing, not GPU fine-tuning.")
     return 0
 
 

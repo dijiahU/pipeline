@@ -1,31 +1,13 @@
 import os
-import shutil
-import stat
 import subprocess
-import tempfile
-import time
 
 from .backend_abc import EnvironmentBackend
 from .settings import REPO_ROOT, reload_runtime_env
 
 
-def _ignore_sockets(directory, entries):
-    """shutil.copytree ignore function: skip Unix socket files."""
-    ignored = []
-    for entry in entries:
-        full_path = os.path.join(directory, entry)
-        try:
-            if stat.S_ISSOCK(os.lstat(full_path).st_mode):
-                ignored.append(entry)
-        except OSError:
-            pass
-    return ignored
-
-
 class DiscourseBackend(EnvironmentBackend):
     def __init__(self):
         self._discourse_tools = None
-        self._active_try_checkpoint = None
 
     def _get_discourse_tools(self):
         if self._discourse_tools is not None:
@@ -52,159 +34,9 @@ class DiscourseBackend(EnvironmentBackend):
     def execute_tool(self, name, args):
         return self._get_discourse_tools().call_tool(name, args)
 
-    def _container_name(self):
-        return os.environ.get("DISCOURSE_CONTAINER_NAME", "pipeline-discourse")
-
-    def _shared_dir(self):
-        return os.environ.get("DISCOURSE_SHARED_DIR", os.path.join(REPO_ROOT, "docker", "discourse", "shared", "standalone"))
-
-    def _base_url(self):
-        return os.environ.get("DISCOURSE_BASE_URL", "http://localhost:4200").rstrip("/")
-
-    def _run_command(self, cmd):
-        result = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True)
-        if result.returncode != 0:
-            detail = result.stderr.strip() or result.stdout.strip() or "unknown error"
-            raise RuntimeError(f"Command failed: {' '.join(cmd)}\n{detail}")
-        return result.stdout.strip()
-
-    def _wait_for_discourse(self, timeout=360, interval=5):
-        import requests
-
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            try:
-                resp = requests.get(f"{self._base_url()}/srv/status", timeout=10)
-                if resp.status_code == 200:
-                    return
-            except Exception:
-                pass
-            time.sleep(interval)
-        raise RuntimeError("Timed out waiting for Discourse to become ready")
-
-    def _stop_container(self):
-        subprocess.run(["docker", "stop", self._container_name()], cwd=REPO_ROOT, capture_output=True, text=True)
-
-    def _start_container(self):
-        subprocess.run(["docker", "start", self._container_name()], cwd=REPO_ROOT, capture_output=True, text=True, check=True)
-        self._wait_for_discourse()
-
-    def _create_try_checkpoint(self):
-        if self._active_try_checkpoint is not None:
-            raise RuntimeError("An uncleared try snapshot already exists.")
-        checkpoint_root = tempfile.mkdtemp(prefix="discourse-try-backup-")
-        snapshot_dir = os.path.join(checkpoint_root, "shared")
-        self._stop_container()
-        try:
-            shutil.copytree(self._shared_dir(), snapshot_dir, ignore=_ignore_sockets)
-        finally:
-            self._start_container()
-        checkpoint = {"kind": "shared_dir_copy", "checkpoint_root": checkpoint_root, "snapshot_dir": snapshot_dir}
-        self._active_try_checkpoint = checkpoint
-        return checkpoint
-
-    def _restore_from_checkpoint(self, checkpoint):
-        if not checkpoint:
-            return
-        self._stop_container()
-        try:
-            shutil.rmtree(self._shared_dir(), ignore_errors=True)
-            shutil.copytree(checkpoint["snapshot_dir"], self._shared_dir(), ignore=_ignore_sockets)
-        finally:
-            self._start_container()
-
-    def _discard_checkpoint_data(self, checkpoint):
-        if not checkpoint:
-            return
-        shutil.rmtree(checkpoint.get("checkpoint_root", ""), ignore_errors=True)
-
-    def _build_try_summary(self, name, args, exec_result, state_changed):
-        affected_sample = []
-        if "topic_id" in args:
-            affected_sample.append(f"topic#{args.get('topic_id')}")
-        if "user_id" in args:
-            affected_sample.append(f"user#{args.get('user_id')}")
-        if "username" in args:
-            affected_sample.append(str(args.get("username")))
-        if "category" in args:
-            affected_sample.append(f"category:{args.get('category')}")
-        if "name" in args:
-            affected_sample.append(f"category:{args.get('name')}")
-        if "title" in args:
-            affected_sample.append(str(args.get("title")))
-        if "new_title" in args:
-            affected_sample.append(str(args.get("new_title")))
-        return {
-            "exec_status": "success",
-            "state_changed": state_changed,
-            "affected_objects_count": len([item for item in affected_sample if item]),
-            "affected_objects_sample": [item for item in affected_sample if item],
-            "unexpected_side_effect": False,
-            "observed_effects": [f"tool_try executed {name} for real"] if state_changed else [f"Read-only tool {name} executed successfully"],
-            "summary": (
-                f"tool_try executed {name} for real. The current result can be rolled back during unsafe->ask_human."
-                if state_changed
-                else f"{name} completed successfully with no side effects."
-            ),
-            "exec_result": exec_result,
-        }
-
-    def run_try(self, name, args):
-        dt = self._get_discourse_tools()
-        is_write_tool = name in set(self.get_write_tool_names())
-
-        if is_write_tool:
-            self._create_try_checkpoint()
-            try:
-                exec_result = dt.call_tool(name, args)
-            except Exception:
-                try:
-                    self.rollback_try()
-                except Exception:
-                    self._active_try_checkpoint = None
-                raise
-            return {
-                "summary": self._build_try_summary(name, args, exec_result, state_changed=True),
-                "exec_result_raw": exec_result,
-            }
-
-        exec_result = dt.call_tool(name, args)
-        return {
-            "summary": self._build_try_summary(name, args, exec_result, state_changed=False),
-            "exec_result_raw": exec_result,
-        }
-
-    def commit_try(self):
-        if self._active_try_checkpoint is None:
-            return False
-        checkpoint = self._active_try_checkpoint
-        self._active_try_checkpoint = None
-        self._discard_checkpoint_data(checkpoint)
-        return True
-
-    def rollback_try(self):
-        if self._active_try_checkpoint is None:
-            return False
-        checkpoint = self._active_try_checkpoint
-        try:
-            self._restore_from_checkpoint(checkpoint)
-        finally:
-            self._active_try_checkpoint = None
-            self._discard_checkpoint_data(checkpoint)
-        return True
-
-    def discard_try(self):
-        if self._active_try_checkpoint is None:
-            return False
-        checkpoint = self._active_try_checkpoint
-        self._active_try_checkpoint = None
-        self._discard_checkpoint_data(checkpoint)
-        return True
-
     def reset(self):
         script_path = os.path.join(REPO_ROOT, "scripts", "reset_discourse_env.sh")
         try:
-            self.discard_try()
             subprocess.run(["bash", script_path], cwd=REPO_ROOT, check=True)
             reload_runtime_env()
             print("[DiscourseBackend] reset_discourse_env.sh completed")

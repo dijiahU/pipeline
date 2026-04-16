@@ -1,7 +1,7 @@
 import re
 from collections import Counter
 
-from .memory import get_local_embedding_model
+from .embeddings import get_local_embedding_model
 
 
 def _normalize_text(text):

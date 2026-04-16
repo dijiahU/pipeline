@@ -14,8 +14,7 @@ class ServiceSpec:
     def to_dict(self):
         return asdict(self)
 
-
-TARGET_SERVICE_SPECS = {
+SERVICE_SPECS = {
     "gitea": ServiceSpec(
         service_id="gitea",
         display_name="Gitea",
@@ -91,33 +90,13 @@ TARGET_SERVICE_SPECS = {
 }
 
 
-COMPAT_SERVICE_SPECS = {}
-
-
-ALL_SERVICE_SPECS = {
-    **TARGET_SERVICE_SPECS,
-    **COMPAT_SERVICE_SPECS,
-}
-
-
 def get_service_spec(service_id):
-    return ALL_SERVICE_SPECS.get(service_id)
-
-
-def list_target_service_specs():
-    return list(TARGET_SERVICE_SPECS.values())
-
-
-def list_runtime_service_specs():
-    return list(COMPAT_SERVICE_SPECS.values())
+    return SERVICE_SPECS.get(service_id)
 
 
 def list_all_service_specs():
-    return list(ALL_SERVICE_SPECS.values())
+    return list(SERVICE_SPECS.values())
 
 
-def build_service_summary(include_compat=True):
-    specs = list_target_service_specs()
-    if include_compat:
-        specs += list_runtime_service_specs()
-    return [spec.to_dict() for spec in specs]
+def build_service_summary():
+    return [spec.to_dict() for spec in list_all_service_specs()]

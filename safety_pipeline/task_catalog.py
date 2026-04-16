@@ -60,13 +60,13 @@ def list_task_specs(tasks_root=TASKS_ROOT):
     return sorted(tasks, key=lambda item: (item.service, item.task_id, item.relative_path))
 
 
-def build_service_task_index(include_compat=True, tasks_root=TASKS_ROOT):
+def build_service_task_index(tasks_root=TASKS_ROOT):
     index = {
         item["service_id"]: {
             "service": item,
             "tasks": [],
         }
-        for item in build_service_summary(include_compat=include_compat)
+        for item in build_service_summary()
     }
 
     for task in list_task_specs(tasks_root):

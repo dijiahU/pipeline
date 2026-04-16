@@ -1,11 +1,10 @@
 {
-  "askbench_sft": {
-    "file_name": "sft_train.json",
+  "pipeline_decision_token_sft": {
+    "file_name": "pipeline_decision_token_sft.json",
     "formatting": "sharegpt",
     "columns": {
       "messages": "conversations",
-      "system": "system",
-      "tools": "tools"
+      "system": "system"
     }
   }
 }

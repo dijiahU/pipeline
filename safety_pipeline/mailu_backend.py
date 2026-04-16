@@ -1,17 +1,7 @@
-"""
-Mailu mail-service backend.
+"""Mailu mail-service backend."""
 
-Admin data is backed up from the SQLite DB with docker cp.
-Mail data is backed up from Maildir with docker exec tar.
-Email sending operations are treated as irreversible.
-"""
-
-import json
 import os
-import shutil
 import subprocess
-import tempfile
-import time
 
 from .backend_abc import EnvironmentBackend
 from .settings import REPO_ROOT, reload_runtime_env
@@ -20,7 +10,6 @@ from .settings import REPO_ROOT, reload_runtime_env
 class MailuBackend(EnvironmentBackend):
     def __init__(self):
         self._mailu_tools = None
-        self._active_try_checkpoint = None
 
     def _get_mailu_tools(self):
         if self._mailu_tools is not None:
@@ -51,228 +40,15 @@ class MailuBackend(EnvironmentBackend):
     def execute_tool(self, name, args):
         return self._get_mailu_tools().call_tool(name, args)
 
-    def _admin_container(self):
-        return os.environ.get("MAILU_ADMIN_CONTAINER", "pipeline-mailu-admin")
-
-    def _dovecot_container(self):
-        return os.environ.get("MAILU_DOVECOT_CONTAINER", "pipeline-mailu-dovecot")
-
-    def _postfix_container(self):
-        return os.environ.get("MAILU_POSTFIX_CONTAINER", "pipeline-mailu-postfix")
-
-    def _redis_container(self):
-        return os.environ.get("MAILU_REDIS_CONTAINER", "pipeline-mailu-redis")
-
     def _base_url(self):
         return os.environ.get("MAILU_BASE_URL", "http://localhost:8443").rstrip("/")
 
     def _api_token(self):
         return os.environ.get("MAILU_API_TOKEN", "")
 
-    _IRREVERSIBLE_TOOLS = {"send_email", "send_email_with_attachment"}
-
-    def _run_cmd(self, cmd, check=True):
-        result = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True)
-        if check and result.returncode != 0:
-            detail = result.stderr.strip() or result.stdout.strip() or "unknown error"
-            raise RuntimeError(f"Command failed: {' '.join(cmd)}\n{detail}")
-        return result.stdout.strip()
-
-    def _capture_container_tar(self, container, source_path, output_path, pre_command=None):
-        if pre_command:
-            self._run_cmd(["docker", "exec", container] + list(pre_command))
-        result = subprocess.run(
-            ["docker", "exec", container, "tar", "cf", "-", source_path],
-            cwd=REPO_ROOT,
-            capture_output=True,
-        )
-        if result.returncode != 0:
-            detail = (
-                result.stderr.decode("utf-8", errors="replace").strip()
-                or result.stdout.decode("utf-8", errors="replace").strip()
-                or "unknown error"
-            )
-            raise RuntimeError(f"Command failed: docker exec {container} tar cf - {source_path}\n{detail}")
-        with open(output_path, "wb") as fh:
-            fh.write(result.stdout)
-
-    def _restore_container_tar(self, container, tar_path):
-        if not tar_path or not os.path.exists(tar_path):
-            return
-        with open(tar_path, "rb") as fh:
-            result = subprocess.run(
-                ["docker", "cp", "-", f"{container}:/"],
-                input=fh.read(),
-                cwd=REPO_ROOT,
-                capture_output=True,
-            )
-        if result.returncode != 0:
-            detail = (
-                result.stderr.decode("utf-8", errors="replace").strip()
-                or result.stdout.decode("utf-8", errors="replace").strip()
-                or "unknown error"
-            )
-            raise RuntimeError(f"Command failed: docker cp - {container}:/\n{detail}")
-
-    def _create_try_checkpoint(self):
-        if self._active_try_checkpoint is not None:
-            raise RuntimeError("An uncleared try snapshot already exists.")
-        checkpoint_root = tempfile.mkdtemp(prefix="mailu-try-backup-")
-        db_path = os.path.join(checkpoint_root, "main.db")
-        mail_tar = os.path.join(checkpoint_root, "mail.tar")
-        queue_tar = os.path.join(checkpoint_root, "queue.tar")
-        redis_tar = os.path.join(checkpoint_root, "redis.tar")
-        self._run_cmd([
-            "docker", "cp",
-            f"{self._admin_container()}:/data/main.db",
-            db_path,
-        ])
-        self._capture_container_tar(self._dovecot_container(), "/mail", mail_tar)
-        self._capture_container_tar(self._postfix_container(), "/queue", queue_tar)
-        self._capture_container_tar(self._redis_container(), "/data", redis_tar, pre_command=["redis-cli", "SAVE"])
-        checkpoint = {
-            "kind": "mailu_db_mail",
-            "checkpoint_root": checkpoint_root,
-            "db_path": db_path,
-            "mail_tar": mail_tar,
-            "queue_tar": queue_tar,
-            "redis_tar": redis_tar,
-        }
-        self._active_try_checkpoint = checkpoint
-        return checkpoint
-
-    def _restore_from_checkpoint(self, checkpoint):
-        if not checkpoint:
-            return
-        containers_to_stop = [
-            self._admin_container(),
-            self._dovecot_container(),
-            self._postfix_container(),
-            self._redis_container(),
-        ]
-        subprocess.run(["docker", "stop"] + containers_to_stop, cwd=REPO_ROOT, capture_output=True, text=True)
-        try:
-            self._run_cmd([
-                "docker", "cp",
-                checkpoint["db_path"],
-                f"{self._admin_container()}:/data/main.db",
-            ])
-            self._restore_container_tar(self._dovecot_container(), checkpoint.get("mail_tar"))
-            self._restore_container_tar(self._postfix_container(), checkpoint.get("queue_tar"))
-            self._restore_container_tar(self._redis_container(), checkpoint.get("redis_tar"))
-        finally:
-            subprocess.run(["docker", "start", self._redis_container()], cwd=REPO_ROOT, capture_output=True, text=True)
-            subprocess.run(
-                ["docker", "start", self._admin_container(), self._dovecot_container(), self._postfix_container()],
-                cwd=REPO_ROOT,
-                capture_output=True,
-                text=True,
-            )
-            time.sleep(5)
-
-    def _discard_checkpoint_data(self, checkpoint):
-        if not checkpoint:
-            return
-        shutil.rmtree(checkpoint.get("checkpoint_root", ""), ignore_errors=True)
-
-    def _build_try_summary(self, name, args, exec_result, state_changed):
-        affected_sample = []
-        irreversible = name in self._IRREVERSIBLE_TOOLS
-
-        if "domain" in args:
-            affected_sample.append(f"domain:{args.get('domain')}")
-        if "email" in args:
-            affected_sample.append(f"user:{args.get('email')}")
-        if "alias_email" in args:
-            affected_sample.append(f"alias:{args.get('alias_email')}")
-        if "from_email" in args:
-            affected_sample.append(f"from:{args.get('from_email')}")
-        if "to_email" in args:
-            affected_sample.append(f"to:{args.get('to_email')}")
-        if "relay_name" in args:
-            affected_sample.append(f"relay:{args.get('relay_name')}")
-        if "alternative_name" in args:
-            affected_sample.append(f"alt_domain:{args.get('alternative_name')}")
-        if "destination" in args:
-            affected_sample.append(f"destination:{args.get('destination')}")
-        if "subject" in args:
-            affected_sample.append(f"subject:{args.get('subject')}")
-
-        if irreversible and state_changed:
-            summary_text = f"tool_try executed {name} for real. This action is irreversible because the email has already been sent."
-        elif state_changed:
-            summary_text = f"tool_try executed {name} for real. The current result can be rolled back during unsafe->ask_human."
-        else:
-            summary_text = f"{name} completed successfully with no side effects."
-
-        return {
-            "exec_status": "success",
-            "state_changed": state_changed,
-            "irreversible": irreversible,
-            "affected_objects_count": len([i for i in affected_sample if i]),
-            "affected_objects_sample": [i for i in affected_sample if i],
-            "unexpected_side_effect": False,
-            "observed_effects": [f"tool_try executed {name} for real"] if state_changed else [f"Read-only tool {name} executed successfully"],
-            "summary": summary_text,
-            "exec_result": exec_result,
-        }
-
-    def run_try(self, name, args):
-        mt = self._get_mailu_tools()
-        is_write_tool = name in set(self.get_write_tool_names())
-
-        if is_write_tool:
-            self._create_try_checkpoint()
-            try:
-                exec_result = mt.call_tool(name, args)
-            except Exception:
-                try:
-                    self.rollback_try()
-                except Exception:
-                    self._active_try_checkpoint = None
-                raise
-            return {
-                "summary": self._build_try_summary(name, args, exec_result, state_changed=True),
-                "exec_result_raw": exec_result,
-            }
-
-        exec_result = mt.call_tool(name, args)
-        return {
-            "summary": self._build_try_summary(name, args, exec_result, state_changed=False),
-            "exec_result_raw": exec_result,
-        }
-
-    def commit_try(self):
-        if self._active_try_checkpoint is None:
-            return False
-        checkpoint = self._active_try_checkpoint
-        self._active_try_checkpoint = None
-        self._discard_checkpoint_data(checkpoint)
-        return True
-
-    def rollback_try(self):
-        if self._active_try_checkpoint is None:
-            return False
-        checkpoint = self._active_try_checkpoint
-        try:
-            self._restore_from_checkpoint(checkpoint)
-        finally:
-            self._active_try_checkpoint = None
-            self._discard_checkpoint_data(checkpoint)
-        return True
-
-    def discard_try(self):
-        if self._active_try_checkpoint is None:
-            return False
-        checkpoint = self._active_try_checkpoint
-        self._active_try_checkpoint = None
-        self._discard_checkpoint_data(checkpoint)
-        return True
-
     def reset(self):
         script_path = os.path.join(REPO_ROOT, "scripts", "reset_mailu_env.sh")
         try:
-            self.discard_try()
             subprocess.run(["bash", script_path], cwd=REPO_ROOT, check=True)
             reload_runtime_env()
             print("[MailuBackend] reset_mailu_env.sh completed")

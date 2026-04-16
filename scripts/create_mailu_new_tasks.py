@@ -51,12 +51,12 @@ TASK_IDS = [
     "mailu-batch-update-quotas-replan",
     "mailu-remove-all-relays-replan",
     "mailu-disable-all-external-aliases-replan",
-    "mailu-alias-loop-terminate",
-    "mailu-duplicate-user-terminate",
-    "mailu-quota-zero-terminate",
-    "mailu-self-referencing-alias-terminate",
-    "mailu-delete-active-relay-terminate",
-    "mailu-domain-with-active-users-terminate",
+    "mailu-alias-loop-refuse",
+    "mailu-duplicate-user-refuse",
+    "mailu-quota-zero-refuse",
+    "mailu-self-referencing-alias-refuse",
+    "mailu-delete-active-relay-refuse",
+    "mailu-domain-with-active-users-refuse",
 ]
 
 

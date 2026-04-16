@@ -31,58 +31,7 @@ def build_task_oracle_state(task_config):
     return task_oracle
 
 
-def normalize_npc_scenario(npc_scenario):
-    if not npc_scenario:
-        return None
-
-    if isinstance(npc_scenario, dict):
-        normalized = dict(npc_scenario)
-        script = []
-        for item in normalized.get("script") or []:
-            if not isinstance(item, dict):
-                continue
-            content = str(item.get("content") or item.get("response") or "").strip()
-            if not content:
-                continue
-            script.append(
-                {
-                    "role": str(item.get("role") or "user").strip() or "user",
-                    "content": content,
-                }
-            )
-        if script:
-            normalized["script"] = script
-        normalized.setdefault("script_index", 0)
-        return normalized
-
-    if isinstance(npc_scenario, list):
-        script = []
-        for item in npc_scenario:
-            if not isinstance(item, dict):
-                continue
-            content = str(item.get("response") or item.get("content") or "").strip()
-            if not content:
-                continue
-            script.append(
-                {
-                    "role": str(item.get("role") or "user").strip() or "user",
-                    "content": content,
-                }
-            )
-        if not script:
-            return None
-        return {
-            "name": "scripted_human",
-            "role": "human",
-            "public_info": "Use the scripted task replies when the agent asks follow-up questions.",
-            "script": script,
-            "script_index": 0,
-        }
-
-    return None
-
-
-def init_conversation_state(initial_user_input, npc_scenario=None, task_config=None):
+def init_conversation_state(initial_user_input, task_config=None):
     task_oracle = build_task_oracle_state(task_config)
     return {
         "initial_user_input": initial_user_input,
@@ -93,25 +42,20 @@ def init_conversation_state(initial_user_input, npc_scenario=None, task_config=N
         "results": [],
         "decision_trace": [],
         "current_flow_tool_calls": [],
+        "session_cases": [],
         "step_queue": [],
-        "current_plan_memory": None,
         "current_risk_assessment": None,
-        "current_tool_memory": None,
-        "current_try_result": None,
-        "current_try_exec_result": None,
-        "current_try_judgment": None,
         "final_reply": "",
         "tool_call_counter": 0,
-        "flow_phase": "need_step",
-        "pending_execution_method": "",
+        "flow_phase": "need_risk",
         "current_step_recorded": False,
+        "session_persisted": False,
         "replan_counts": {},
         "must_follow_replanned_step": False,
         "status": "running",
         "turn_count": 1,
         "error_reason": "",
         "last_tool_error": "",
-        "npc_scenario": normalize_npc_scenario(npc_scenario),
         "task_oracle": task_oracle,
     }
 
@@ -139,13 +83,7 @@ def append_assistant_message(state, content):
 
 
 def reset_step_artifacts(state):
-    state["current_plan_memory"] = None
     state["current_risk_assessment"] = None
-    state["current_tool_memory"] = None
-    state["current_try_result"] = None
-    state["current_try_exec_result"] = None
-    state["current_try_judgment"] = None
-    state["pending_execution_method"] = ""
     state["current_step_recorded"] = False
 
 
@@ -191,7 +129,7 @@ def build_flow_tool_call_record(call_index, phase, tool_name, arguments, result)
     return record
 
 
-def summarize_result_for_memory(value, limit=220):
+def summarize_result_text(value, limit=220):
     summarized = summarize_trace_value(value)
     if isinstance(summarized, str):
         text = summarized
@@ -359,14 +297,6 @@ def compact_risk_record(risk_assessment):
     }
 
 
-def get_case_risk_assessment(case):
-    case = case or {}
-    normalized = normalize_risk_assessment_payload(case.get("risk"))
-    if normalized:
-        return normalized
-    return normalize_risk_assessment_payload(case.get("risk_assessment"))
-
-
 def update_state_from_execution(state, tool_name, args, result, method):
     summary = summarize_execution_result(tool_name, args, result)
     state["results"].append({"tool": tool_name, "args": args, "result": result, "method": method})
@@ -374,7 +304,7 @@ def update_state_from_execution(state, tool_name, args, result, method):
     append_assistant_message(state, f"[{method}] {summary}")
 
 
-def build_memory_context_snapshot(state):
+def build_dialogue_context_snapshot(state):
     return {
         "dialogue_history": list(state["dialogue_history"]),
         "known_context": [truncate_text(c, 120) for c in state["known_context"]],
@@ -417,7 +347,6 @@ Requirements:
             "task": state.get("initial_user_input", ""),
             "current_step": state["step_queue"][0] if state.get("step_queue") else {},
             "current_risk_assessment": state.get("current_risk_assessment", {}) or {},
-            "current_try_judgment": state.get("current_try_judgment", {}) or {},
             "assistant_question": question,
             "user_reply": user_reply,
             "known_context": state["known_context"],

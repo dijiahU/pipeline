@@ -31,22 +31,6 @@ class EnvironmentBackend(ABC):
         """Execute a tool for real and return the result string."""
 
     @abstractmethod
-    def run_try(self, name, args):
-        """Run a try execution and return {"summary": dict, "exec_result_raw": str}."""
-
-    @abstractmethod
-    def commit_try(self):
-        """Commit the try result and clean up the temporary snapshot."""
-
-    @abstractmethod
-    def rollback_try(self):
-        """Roll back to the pre-try environment state and clean up the snapshot."""
-
-    @abstractmethod
-    def discard_try(self):
-        """Discard the try snapshot without rolling back the current environment."""
-
-    @abstractmethod
     def reset(self):
         """Reset the environment between episodes."""
 

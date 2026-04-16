@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""
-Smoke test: run one representative task per service through the full pipeline + evaluation.
-
-Usage:
-    python scripts/smoke_test_all_services.py [--services gitea,discourse] [--timeout 120]
-"""
+"""Smoke test: run representative tasks per service through pipeline + evaluation."""
 
 import argparse
 import json
@@ -26,43 +21,43 @@ from safety_pipeline.environment import get_backend
 from safety_pipeline.runtime import load_task_file, pipeline as run_pipeline
 from safety_pipeline.settings import set_pipeline_env
 
-# Representative read + rollback-path tasks per service.
+# Representative read task + high-risk control-path task per service.
 SMOKE_TASKS = {
     "gitea": [
         "tasks/gitea/gitea-review-issue-thread.yaml",
-        "tasks/gitea/gitea-force-push-main-terminate.yaml",
+        "tasks/gitea/gitea-force-push-main-refuse.yaml",
     ],
     "discourse": [
         "tasks/discourse/discourse-view-topic-posts.yaml",
-        "tasks/discourse/discourse-close-downtime-thread-terminate.yaml",
+        "tasks/discourse/discourse-close-downtime-thread-refuse.yaml",
     ],
     "zammad": [
         "tasks/zammad/zammad-view-ticket-history.yaml",
-        "tasks/zammad/zammad-tag-invoice-urgent-terminate.yaml",
+        "tasks/zammad/zammad-tag-invoice-urgent-refuse.yaml",
     ],
     "rocketchat": [
         "tasks/rocketchat/rocketchat-read-messages.yaml",
-        "tasks/rocketchat/rocketchat-create-status-bridge-terminate.yaml",
+        "tasks/rocketchat/rocketchat-create-status-bridge-refuse.yaml",
     ],
     "owncloud": [
         "tasks/owncloud/owncloud-list-documents.yaml",
-        "tasks/owncloud/owncloud-delete-api-rollout-folder-terminate.yaml",
+        "tasks/owncloud/owncloud-delete-api-rollout-folder-refuse.yaml",
     ],
     "mailu": [
         "tasks/mailu/mailu-list-users.yaml",
-        "tasks/mailu/mailu-self-referencing-alias-terminate.yaml",
+        "tasks/mailu/mailu-self-referencing-alias-refuse.yaml",
     ],
     "nocodb": [
         "tasks/nocodb/nocodb-list-databases.yaml",
-        "tasks/nocodb/nocodb-delete-task-table-cleanup-terminate.yaml",
+        "tasks/nocodb/nocodb-delete-task-table-cleanup-refuse.yaml",
     ],
     "erpnext": [
         "tasks/erpnext/erpnext-list-companies.yaml",
-        "tasks/erpnext/erpnext-record-large-acme-wire-terminate.yaml",
+        "tasks/erpnext/erpnext-record-large-acme-wire-refuse.yaml",
     ],
     "openemr": [
         "tasks/openemr/openemr-list-patients.yaml",
-        "tasks/openemr/openemr-create-dr-patel-double-book-terminate.yaml",
+        "tasks/openemr/openemr-create-dr-patel-double-book-refuse.yaml",
     ],
 }
 
@@ -104,11 +99,7 @@ def run_single_task(task_path, timeout=180):
     previous_noninteractive = os.environ.get("PIPELINE_NONINTERACTIVE")
     os.environ["PIPELINE_NONINTERACTIVE"] = "1"
     try:
-        pipeline_result = run_pipeline(
-            task_config["task"],
-            npc_scenario=task_config.get("scenarios") or None,
-            task_config=task_config,
-        )
+        pipeline_result = run_pipeline(task_config["task"], task_config=task_config)
     finally:
         if previous_noninteractive is None:
             os.environ.pop("PIPELINE_NONINTERACTIVE", None)
